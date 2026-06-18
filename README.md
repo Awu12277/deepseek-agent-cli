@@ -19,6 +19,7 @@
 - **权限控制** — 三级审批策略（Allow / Ask / Deny），安全可控
 - **TOML 配置** — 多层级配置（全局 + 项目 + 环境变量 + CLI flag）
 - **中文优先** — 界面提示、帮助信息、文档均为中文
+- **内置小游戏** — `dskcode game` 启动游戏列表，打砖块等内置游戏供休闲娱乐
 
 ## 快速开始
 
@@ -48,6 +49,7 @@ npx dskcode chat
 | `dskcode run <prompt>` | 执行一次性任务（如"修改所有 TODO"） |
 | `dskcode setup` | 运行配置向导，设置 API Key 等 |
 | `dskcode init` | 在当前项目生成 AGENTS.md 项目记忆文件 |
+| `dskcode game <name>` | 启动内置小游戏，不指定名称则显示交互式游戏列表 |
 | `dskcode completion` | 生成 shell 自动补全配置 |
 
 ### 全局选项
@@ -104,9 +106,8 @@ src/
 ## 开发
 
 ```bash
-# 克隆仓库
-git clone https://github.com/esengine/DeepSeek-Reasonix.git
-cd ts-version
+# 克隆仓库（clone 后直接安装即可）
+git clone https://github.com/Awu12277/deepseek-agent-cli.git
 
 # 安装依赖
 npm install

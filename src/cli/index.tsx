@@ -2,8 +2,14 @@ import { Command } from "commander";
 import { loadConfigMiddleware } from "./middleware.js";
 import { customHelp } from "./help.js";
 import { renderApp, ChatSession } from "../ui/index.js";
+import { initGames } from "../game/registry.js";
+import { listGames, getGame } from "../game/index.js";
+import type { Game } from "../game/index.js";
+import { GamePicker } from "../ui/GamePicker.js";
+import { render } from "ink";
+import chalk from "chalk";
 
-const SUBCOMMANDS = ["chat", "run", "setup", "init", "completion"];
+const SUBCOMMANDS = ["chat", "run", "setup", "init", "completion", "game"];
 
 export function createCli(): Command {
   const program = new Command();
@@ -107,10 +113,57 @@ _dskcode_completion() {
     "setup:运行配置向导"
     "init:生成项目记忆文件"
     "completion:输出 shell 自动补全说明"
+    "game:内置小游戏"
   )
   _describe 'dskcode commands' commands
 }
 compdef _dskcode_completion dskcode`);
+      }
+    });
+
+  // game — 游戏模式
+  initGames();
+
+  program
+    .command("game")
+    .description("启动内置小游戏")
+    .argument("[name]", "游戏名称，不指定则显示交互式游戏列表")
+    .action(async function (name?: string) {
+      if (name) {
+        const game = getGame(name);
+        if (!game) {
+          console.error(`未找到游戏 "${name}"。使用 dskcode game 查看可用游戏列表。`);
+          process.exit(1);
+        }
+        console.log(`正在启动: ${game.name} — ${game.description}\n`);
+        await game.play();
+      } else {
+        const games = listGames();
+        if (games.length === 0) {
+          console.log("暂无可用游戏。");
+          return;
+        }
+
+        const selectedGame = await new Promise<Game | null>((resolve) => {
+          const { unmount } = render(
+            <GamePicker
+              games={games}
+              onSelect={(game) => {
+                unmount();
+                resolve(game);
+              }}
+              onExit={() => {
+                unmount();
+                resolve(null);
+              }}
+            />,
+          );
+        });
+
+        if (selectedGame) {
+          console.log(`\n  启动游戏: ${chalk.green(selectedGame.name)}\n`);
+          await selectedGame.play();
+        }
       }
     });
 
