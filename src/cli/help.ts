@@ -6,7 +6,7 @@ export function customHelp(program: Command): string {
 
   lines.push("");
   lines.push(chalk.bold("用法:"));
-  lines.push(`  ${chalk.cyan("dsk")} ${chalk.dim("[global-options]")} ${chalk.green("<command>")} ${chalk.dim("[options]")}`);
+  lines.push(`  ${chalk.cyan("dskcode")} ${chalk.dim("[global-options]")} ${chalk.green("<command>")} ${chalk.dim("[options]")}`);
   lines.push("");
 
   const globalOpts = program.options.filter(
@@ -43,13 +43,13 @@ export function customHelp(program: Command): string {
 
   lines.push(chalk.bold("示例:"));
   lines.push(`  ${chalk.dim("# 启动交互式对话")}`);
-  lines.push("  dsk chat");
+  lines.push("  dskcode chat");
   lines.push(`  ${chalk.dim("# 让 AI 执行一个任务")}`);
-  lines.push("  dsk run 修改所有 TODO 注释");
+  lines.push("  dskcode run 修改所有 TODO 注释");
   lines.push(`  ${chalk.dim("# 运行配置向导")}`);
-  lines.push("  dsk setup");
+  lines.push("  dskcode setup");
   lines.push(`  ${chalk.dim("# 生成 shell 自动补全")}`);
-  lines.push("  dsk completion");
+  lines.push("  dskcode completion");
   lines.push("");
 
   return lines.join("\n");

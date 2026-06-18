@@ -30,7 +30,7 @@ export interface PluginConfig {
   env?: Record<string, string>;
 }
 
-/** dsk 的根配置 */
+/** dskcode 的根配置 */
 export interface Config {
   /** 默认 Provider 名称（必须匹配 TOML 中某个 provider 的 name 字段） */
   defaultProvider: string;

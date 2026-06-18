@@ -1,10 +1,10 @@
 {
   "name": "dskcode",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A DeepSeek-native AI coding agent for your terminal",
   "type": "module",
   "bin": {
-    "dsk": "dist/index.js"
+    "dskcode": "dist/index.js"
   },
   "exports": {
     ".": {

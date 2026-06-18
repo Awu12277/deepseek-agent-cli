@@ -10,7 +10,7 @@ export function createCli(): Command {
   program.exitOverride();
 
   program
-    .name("dsk")
+    .name("dskcode")
     .description("基于 DeepSeek 的 AI 编程助手终端工具")
     .version("0.0.0", "-V, --version", "显示版本号")
     .option("--verbose", "开启详细日志输出")
@@ -20,7 +20,7 @@ export function createCli(): Command {
 
   program.hook("preAction", async (thisCommand) => {
     const ctx = await loadConfigMiddleware.call(thisCommand);
-    (thisCommand as unknown as Record<string, unknown>).dskCtx = ctx;
+    (thisCommand as unknown as Record<string, unknown>).dskcodeCtx = ctx;
   });
 
   // chat — 交互式对话
@@ -29,11 +29,11 @@ export function createCli(): Command {
     .description("启动交互式对话会话")
     .action(async function () {
       if (!process.stdin.isTTY) {
-        console.error("dsk chat 需要交互式终端。如需执行一次性任务，请使用 dsk run。");
+        console.error("dskcode chat 需要交互式终端。如需执行一次性任务，请使用 dskcode run。");
         process.exit(1);
       }
 
-      const ctx = (this as unknown as Record<string, unknown>).dskCtx as
+      const ctx = (this as unknown as Record<string, unknown>).dskcodeCtx as
         | { verbose: boolean; config: { providers: unknown[]; tools: unknown[] } }
         | undefined;
 
@@ -55,7 +55,7 @@ export function createCli(): Command {
     .argument("[prompt...]", "任务描述")
     .option("--model <name>", "指定使用的模型")
     .action(async function (_prompt: string[]) {
-      console.log("dsk run — 待实现（第07章）");
+      console.log("dskcode run — 待实现（第07章）");
     });
 
   // setup
@@ -65,7 +65,7 @@ export function createCli(): Command {
     .option("--export", "以 JSON 格式导出配置")
     .option("--test", "测试 API Key 连通性")
     .action(async function () {
-      console.log("dsk setup — 待实现（第14章）");
+      console.log("dskcode setup — 待实现（第14章）");
     });
 
   // init
@@ -73,7 +73,7 @@ export function createCli(): Command {
     .command("init")
     .description("在当前项目下生成项目记忆文件（AGENTS.md）")
     .action(async function () {
-      console.log("dsk init — 待实现（第11章）");
+      console.log("dskcode init — 待实现（第11章）");
     });
 
   // completion
@@ -83,12 +83,12 @@ export function createCli(): Command {
     .argument("[shell]", "shell 类型", /^(bash|zsh)$/i)
     .action(async function (shell?: string) {
       if (!shell) {
-        console.log("请指定 shell 类型：dsk completion bash 或 dsk completion zsh");
+        console.log("请指定 shell 类型：dskcode completion bash 或 dskcode completion zsh");
         return;
       }
       if (shell === "bash") {
-        console.log(`# dsk bash 自动补全
-_dsk_completion() {
+        console.log(`# dskcode bash 自动补全
+_dskcode_completion() {
   local cur=\${COMP_WORDS[COMP_CWORD]}
   if [[ \${COMP_CWORD} -eq 1 ]]; then
     COMPREPLY=( $(compgen -W "${SUBCOMMANDS.join(" ")}" -- "\${cur}") )
@@ -96,10 +96,10 @@ _dsk_completion() {
   fi
   COMPREPLY=( $(compgen -W "--verbose --config --model" -- "\${cur}") )
 }
-complete -F _dsk_completion dsk`);
+complete -F _dskcode_completion dskcode`);
       } else {
-        console.log(`# dsk zsh 自动补全
-_dsk_completion() {
+        console.log(`# dskcode zsh 自动补全
+_dskcode_completion() {
   local -a commands
   commands=(
     "chat:启动交互式对话会话"
@@ -108,9 +108,9 @@ _dsk_completion() {
     "init:生成项目记忆文件"
     "completion:输出 shell 自动补全说明"
   )
-  _describe 'dsk commands' commands
+  _describe 'dskcode commands' commands
 }
-compdef _dsk_completion dsk`);
+compdef _dskcode_completion dskcode`);
       }
     });
 

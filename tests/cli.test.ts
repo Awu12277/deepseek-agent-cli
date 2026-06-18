@@ -5,8 +5,8 @@ import { ExitCode } from "../src/cli/exit-codes.js";
 describe("createCli", () => {
   const cli = createCli();
 
-  it("should return a Command instance with name dsk", () => {
-    expect(cli.name()).toBe("dsk");
+  it("should return a Command instance with name dskcode", () => {
+    expect(cli.name()).toBe("dskcode");
   });
 
   it("should have a description", () => {
@@ -55,19 +55,19 @@ describe("createCli", () => {
 
   it("should output version with --version (exitCode=0)", async () => {
     await expect(
-      cli.parseAsync(["node", "dsk", "--version"]),
+      cli.parseAsync(["node", "dskcode", "--version"]),
     ).rejects.toMatchObject({ exitCode: ExitCode.SUCCESS });
   });
 
   it("should output help with --help (exitCode=0)", async () => {
     await expect(
-      cli.parseAsync(["node", "dsk", "--help"]),
+      cli.parseAsync(["node", "dskcode", "--help"]),
     ).rejects.toMatchObject({ exitCode: ExitCode.SUCCESS });
   });
 
   it("run subcommand should exit with SUCCESS", async () => {
     await expect(
-      cli.parseAsync(["node", "dsk", "run", "test"]),
+      cli.parseAsync(["node", "dskcode", "run", "test"]),
     ).resolves.toBeDefined();
   });
 });

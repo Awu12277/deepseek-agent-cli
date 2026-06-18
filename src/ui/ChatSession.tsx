@@ -28,7 +28,7 @@ const COMMANDS: Record<string, { desc: string; handler: () => string }> = {
       ].join("\n"),
   },
   "/clear": { desc: "清空对话历史", handler: () => "" },
-  "/version": { desc: "显示版本信息", handler: () => "dsk v0.0.0" },
+  "/version": { desc: "显示版本信息", handler: () => "dskcode v0.0.0" },
 };
 
 interface ChatMessage {
@@ -93,7 +93,7 @@ export function ChatSession({ providerCount, toolCount, verbose }: ChatSessionPr
     setMessages((prev) => [
       ...prev,
       { role: "user", content: trimmed },
-      { role: "assistant", content: "dsk AI — 待实现（第07章）。当前为 CLI 框架演示模式。" },
+      { role: "assistant", content: "dskcode AI — 待实现（第07章）。当前为 CLI 框架演示模式。" },
     ]);
     setInput("");
   }, []);

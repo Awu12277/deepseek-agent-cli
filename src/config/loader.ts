@@ -31,8 +31,8 @@ export const defaultConfig: Config = {
  *
  * 解析顺序（后加载的优先级更高）：
  *   1. 内置默认值
- *   2. 用户全局 ~/.config/dsk.toml
- *   3. 项目本地 .dsk.toml（或通过 --config 指定的路径）
+ *   2. 用户全局 ~/.config/dskcode.toml
+ *   3. 项目本地 .dskcode.toml（或通过 --config 指定的路径）
  */
 export async function loadConfig(configPath?: string): Promise<Config> {
   const candidates: string[] = [];
@@ -41,8 +41,8 @@ export async function loadConfig(configPath?: string): Promise<Config> {
     candidates.push(configPath);
   } else {
     candidates.push(
-      join(process.env.HOME ?? process.env.USERPROFILE ?? "~", ".config", "dsk.toml"),
-      join(process.cwd(), ".dsk.toml"),
+      join(process.env.HOME ?? process.env.USERPROFILE ?? "~", ".config", "dskcode.toml"),
+      join(process.cwd(), ".dskcode.toml"),
     );
   }
 

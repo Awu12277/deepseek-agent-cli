@@ -8,7 +8,7 @@
 
 一个 CLI 项目的基础设施，看起来全是配置，踩坑了才知道疼。本文用实际代码带你搭一套**能直接上生产**的 TypeScript CLI 工程：
 
-- ESM 双格式输出，`npx dsk` 直接跑
+- ESM 双格式输出，`npx dskcode` 直接跑
 - 严格模式 tsconfig，类型安全拉满
 - Vitest 测试 + ESLint flat config + Prettier
 - tsup 单文件打包，< 2KB 产物
@@ -19,7 +19,7 @@
 ```bash
 $ node dist/index.js --help
 
-Usage: dsk [options] [command]
+Usage: dskcode [options] [command]
 
 基于 DeepSeek 的 AI 编程助手终端工具
 
@@ -62,11 +62,11 @@ npm init -y
 
 ```json
 {
-  "name": "dsk",
+  "name": "dskcode",
   "version": "0.0.0",
   "type": "module",
   "bin": {
-    "dsk": "./dist/index.js"
+    "dskcode": "./dist/index.js"
   },
   "exports": {
     ".": {
@@ -84,7 +84,7 @@ npm init -y
 
 **`"type": "module"`** 让 Node 把 `.js` 文件当作 ESM 处理。CLI 项目用 ESM 写 import/export 比 CJS 的 `require` 更清爽，而且 Node 18+ 的 ESM 支持已经很稳了。代价是少部分 CJS-only 的包用不了，但我们的依赖（`commander`、`smol-toml`）都支持 ESM。
 
-**`bin.dsk`** 指向打包后的入口。`npx dsk` 就是执行这个文件。等发布到 npm，用户 `npm install -g dsk` 之后直接在终端敲 `dsk` 就能用。
+**`bin.dskcode`** 指向打包后的入口。`npx dskcode` 就是执行这个文件。等发布到 npm，用户 `npm install -g dskcode` 之后直接在终端敲 `dskcode` 就能用。
 
 **`exports`** 是 ESM 包的标配，限制外部只能 import 我们暴露的入口，防止别人 import 内部模块。
 
@@ -257,7 +257,7 @@ export function createCli(): Command {
   program.exitOverride();
 
   program
-    .name("dsk")
+    .name("dskcode")
     .description("基于 DeepSeek 的 AI 编程助手终端工具")
     .version("0.0.0", "-V, --version", "输出版本号")
     .option("--verbose", "开启详细日志输出")
@@ -270,7 +270,7 @@ export function createCli(): Command {
     .command("chat")
     .description("启动交互式对话会话")
     .action(async () => {
-      console.log("dsk chat — 待实现（第07章）");
+      console.log("dskcode chat — 待实现（第07章）");
     });
 
   // 子命令: run
@@ -280,7 +280,7 @@ export function createCli(): Command {
     .argument("[prompt...]", "任务描述")
     .option("--model <name>", "指定使用的模型")
     .action(async (_prompt: string[]) => {
-      console.log("dsk run — 待实现（第07章）");
+      console.log("dskcode run — 待实现（第07章）");
     });
 
   // 子命令: setup
@@ -290,7 +290,7 @@ export function createCli(): Command {
     .option("--export", "以 JSON 格式导出配置")
     .option("--test", "测试 API Key 连通性")
     .action(async () => {
-      console.log("dsk setup — 待实现（第14章）");
+      console.log("dskcode setup — 待实现（第14章）");
     });
 
   return program;
@@ -322,7 +322,7 @@ try {
 }
 ```
 
-`#!` shebang 让操作系统知道这是 Node.js 脚本。打包后 `dist/index.js` 的第一行就是这个，所以 `npx dsk` 能直接执行。
+`#!` shebang 让操作系统知道这是 Node.js 脚本。打包后 `dist/index.js` 的第一行就是这个，所以 `npx dskcode` 能直接执行。
 
 ## 第六步：接口定义（给后面章节搭架子）
 
@@ -472,8 +472,8 @@ export async function loadConfig(configPath?: string): Promise<Config> {
     candidates.push(configPath);
   } else {
     candidates.push(
-      join(process.env.HOME ?? process.env.USERPROFILE ?? "~", ".config", "dsk.toml"),
-      join(process.cwd(), ".dsk.toml"),
+      join(process.env.HOME ?? process.env.USERPROFILE ?? "~", ".config", "dskcode.toml"),
+      join(process.cwd(), ".dskcode.toml"),
     );
   }
 
@@ -505,8 +505,8 @@ function mergeConfig(base: Config, overlay: Partial<Config>): Config {
 
 配置加载顺序（后加载的覆盖前面的）：
 1. 内置默认值
-2. 用户全局 `~/.config/dsk.toml`
-3. 项目本地 `.dsk.toml`
+2. 用户全局 `~/.config/dskcode.toml`
+3. 项目本地 `.dskcode.toml`
 
 `structuredClone` 做深拷贝，防止多个 `loadConfig` 调用共享同一个 `defaultConfig` 对象。
 
@@ -572,8 +572,8 @@ import { createCli } from "../src/cli/index.js";
 describe("createCli", () => {
   const cli = createCli();
 
-  it("should return a Command instance with name dsk", () => {
-    expect(cli.name()).toBe("dsk");
+  it("should return a Command instance with name dskcode", () => {
+    expect(cli.name()).toBe("dskcode");
   });
 
   it("should register the chat subcommand", () => {
@@ -585,13 +585,13 @@ describe("createCli", () => {
   it("should output help with --help", async () => {
     // exitOverride 让 Commander 抛 CommanderError，exitCode 为 0
     await expect(
-      cli.parseAsync(["node", "dsk", "--help"]),
+      cli.parseAsync(["node", "dskcode", "--help"]),
     ).rejects.toMatchObject({ exitCode: 0 });
   });
 });
 ```
 
-这里用到了 commander 的 `exitOverride` 特性。`parseAsync(["node", "dsk", "--help"])` 在正常模式下会调用 `process.exit(0)`，vitest 进程会被杀掉。加了 `exitOverride` 后，`parseAsync` 返回的 Promise 会 reject 一个 `CommanderError`，我们在测试中断言 `exitCode: 0` 即可。
+这里用到了 commander 的 `exitOverride` 特性。`parseAsync(["node", "dskcode", "--help"])` 在正常模式下会调用 `process.exit(0)`，vitest 进程会被杀掉。加了 `exitOverride` 后，`parseAsync` 返回的 Promise 会 reject 一个 `CommanderError`，我们在测试中断言 `exitCode: 0` 即可。
 
 ### 配置结构测试
 
@@ -676,7 +676,7 @@ DTS dist\index.d.ts   20.00 B
 最后，创建一个 `AGENTS.md` 文件，记录项目的关键约定。这个文件会被后续的 agent 自动读取，作为项目上下文：
 
 ```markdown
-# dsk — 项目记忆
+# dskcode — 项目记忆
 
 ## 关键约定
 
@@ -695,8 +695,8 @@ DTS dist\index.d.ts   20.00 B
 ## 配置层级
 
 1. 内置默认值
-2. 用户全局 ~/.config/dsk.toml
-3. 项目本地 .dsk.toml
+2. 用户全局 ~/.config/dskcode.toml
+3. 项目本地 .dskcode.toml
 ```
 
 ## 总结

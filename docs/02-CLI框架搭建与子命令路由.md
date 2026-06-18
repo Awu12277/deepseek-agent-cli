@@ -8,7 +8,7 @@
 
 我一直觉得，一个有仪式感的 CLI 工具，应该在敲下命令那瞬间就让你感觉到"靠谱"。这就需要一个规整的框架：退出码不能乱用、帮助信息不能太丑、命令结构要有层次。
 
-上一篇我们搭好了工程基建（tsup + Vitest + TypeScript ESM），这一篇来给 dsk 安上骨架。目标很简单：
+上一篇我们搭好了工程基建（tsup + Vitest + TypeScript ESM），这一篇来给 dskcode 安上骨架。目标很简单：
 
 - 注册 5 个子命令：`chat` `run` `setup` `init` `completion`
 - 所有命令走同一套配置加载逻辑
@@ -31,7 +31,7 @@
 ```typescript
 // src/cli/exit-codes.ts
 
-/** dsk 退出码规范 */
+/** dskcode 退出码规范 */
 export const ExitCode = {
   /** 正常执行完成 */
   SUCCESS: 0,
@@ -64,15 +64,15 @@ import type { Config } from "../config/index.js";
 import { loadConfig } from "../config/index.js";
 
 /**
- * dsk 运行时上下文。
+ * dskcode 运行时上下文。
  * 通过 commander 的 preAction hook 注入到每个命令中。
  */
-export interface DskContext {
+export interface DskcodeContext {
   config: Config;
   verbose: boolean;
 }
 
-export async function loadConfigMiddleware(this: Command): Promise<DskContext> {
+export async function loadConfigMiddleware(this: Command): Promise<DskcodeContext> {
   const opts = this.optsWithGlobals() as { verbose?: boolean; config?: string };
   const verbose = opts.verbose ?? false;
 
@@ -90,7 +90,7 @@ export async function loadConfigMiddleware(this: Command): Promise<DskContext> {
 
 设计思路：
 
-- `DskContext` 接口就是整个 CLI 的运行时上下文。后续章节每增加一个能力（比如 provider 管理器、tool 注册表），就往这里加字段。所有命令共享一个数据源。
+- `DskcodeContext` 接口就是整个 CLI 的运行时上下文。后续章节每增加一个能力（比如 provider 管理器、tool 注册表），就往这里加字段。所有命令共享一个数据源。
 - 配置加载失败不会让进程崩溃——回退到默认配置，用标准输出提示，而不是直接 `process.exit`。
 - `optsWithGlobals()` 能同时拿到全局选项和子命令选项，后续如果需要某个子命令覆盖全局配置，这个机制很好扩展。
 
@@ -99,16 +99,16 @@ export async function loadConfigMiddleware(this: Command): Promise<DskContext> {
 ```typescript
 program.hook("preAction", async (thisCommand) => {
   const ctx = await loadConfigMiddleware.call(thisCommand);
-  (thisCommand as unknown as Record<string, unknown>).dskCtx = ctx;
+  (thisCommand as unknown as Record<string, unknown>).dskcodeCtx = ctx;
 });
 ```
 
 注意这里用了 `Function.prototype.call` 保持 `this` 指向。commander 的 `hook` 回调中 `thisCommand` 就是被触发的那个命令实例，用 `call` 把上下文传进去，让中间件函数在正确的 `this` 下执行。
 
-命令的 action 中通过 `this.dskCtx` 就能拿到配置了：
+命令的 action 中通过 `this.dskcodeCtx` 就能拿到配置了：
 
 ```typescript
-const ctx = (this as unknown as Record<string, unknown>).dskCtx as DskContext;
+const ctx = (this as unknown as Record<string, unknown>).dskcodeCtx as DskcodeContext;
 ```
 
 类型转换有点丑，但胜在简单。后续如果需求复杂了，可以给 commander 的类型做 declaration merging，不过目前不值得折腾。
@@ -117,7 +117,7 @@ const ctx = (this as unknown as Record<string, unknown>).dskCtx as DskContext;
 
 ## 自定义帮助信息
 
-commander 默认的 `--help` 输出长得比较……标准。我想让它看起来更像是 dsk 的风格：带上颜色、分组清晰、有示例。
+commander 默认的 `--help` 输出长得比较……标准。我想让它看起来更像是 dskcode 的风格：带上颜色、分组清晰、有示例。
 
 ```typescript
 // src/cli/help.ts
@@ -130,7 +130,7 @@ export function customHelp(program: Command): string {
 
   lines.push("");
   lines.push(chalk.bold("用法:"));
-  lines.push(`  ${chalk.cyan("dsk")} ${chalk.dim("[global-options]")} ${chalk.green("<command>")} ${chalk.dim("[options]")}`);
+  lines.push(`  ${chalk.cyan("dskcode")} ${chalk.dim("[global-options]")} ${chalk.green("<command>")} ${chalk.dim("[options]")}`);
   lines.push("");
 
   const globalOpts = program.options.filter(
@@ -167,13 +167,13 @@ export function customHelp(program: Command): string {
 
   lines.push(chalk.bold("示例:"));
   lines.push(`  ${chalk.dim("# 启动交互式对话")}`);
-  lines.push("  dsk chat");
+  lines.push("  dskcode chat");
   lines.push(`  ${chalk.dim("# 让 AI 执行一个任务")}`);
-  lines.push("  dsk run 修改所有 TODO 注释");
+  lines.push("  dskcode run 修改所有 TODO 注释");
   lines.push(`  ${chalk.dim("# 运行配置向导")}`);
-  lines.push("  dsk setup");
+  lines.push("  dskcode setup");
   lines.push(`  ${chalk.dim("# 生成 shell 自动补全")}`);
-  lines.push("  dsk completion");
+  lines.push("  dskcode completion");
   lines.push("");
 
   return lines.join("\n");
@@ -192,7 +192,7 @@ program.helpInformation = () => customHelp(program);
 
 ```
 用法:
-  dsk [global-options] <command> [options]
+  dskcode [global-options] <command> [options]
 
 全局选项:
   --verbose                 开启详细日志输出
@@ -210,16 +210,16 @@ program.helpInformation = () => customHelp(program);
 
 示例:
   # 启动交互式对话
-  dsk chat
+  dskcode chat
   # 让 AI 执行一个任务
-  dsk run 修改所有 TODO 注释
+  dskcode run 修改所有 TODO 注释
   # 运行配置向导
-  dsk setup
+  dskcode setup
   # 生成 shell 自动补全
-  dsk completion
+  dskcode completion
 ```
 
-chalk 的颜色在终端里会很好看，可惜 Markdown 看不出来，你们自己跑 `npx dsk --help` 感受一下。
+chalk 的颜色在终端里会很好看，可惜 Markdown 看不出来，你们自己跑 `npx dskcode --help` 感受一下。
 
 ---
 
@@ -243,7 +243,7 @@ export function createCli(): Command {
   program.exitOverride();
 
   program
-    .name("dsk")
+    .name("dskcode")
     .description("基于 DeepSeek 的 AI 编程助手终端工具")
     .version("0.0.0", "-V, --version", "显示版本号")
     .option("--verbose", "开启详细日志输出")
@@ -253,7 +253,7 @@ export function createCli(): Command {
 
   program.hook("preAction", async (thisCommand) => {
     const ctx = await loadConfigMiddleware.call(thisCommand);
-    (thisCommand as unknown as Record<string, unknown>).dskCtx = ctx;
+    (thisCommand as unknown as Record<string, unknown>).dskcodeCtx = ctx;
   });
 
   // ── chat 子命令 ──────────────────────────────
@@ -262,10 +262,10 @@ export function createCli(): Command {
     .description("启动交互式对话会话")
     .action(async function () {
       if (!process.stdin.isTTY) {
-        console.error("dsk chat 需要交互式终端。如需执行一次性任务，请使用 dsk run。");
+        console.error("dskcode chat 需要交互式终端。如需执行一次性任务，请使用 dskcode run。");
         process.exit(1);
       }
-      console.log("dsk chat — 待实现（第07章）");
+      console.log("dskcode chat — 待实现（第07章）");
     });
 
   // ── run 子命令 ───────────────────────────────
@@ -275,7 +275,7 @@ export function createCli(): Command {
     .argument("[prompt...]", "任务描述")
     .option("--model <name>", "指定使用的模型")
     .action(async function (_prompt: string[]) {
-      console.log("dsk run — 待实现（第07章）");
+      console.log("dskcode run — 待实现（第07章）");
     });
 
   // ── setup 子命令 ─────────────────────────────
@@ -285,7 +285,7 @@ export function createCli(): Command {
     .option("--export", "以 JSON 格式导出配置")
     .option("--test", "测试 API Key 连通性")
     .action(async function () {
-      console.log("dsk setup — 待实现（第14章）");
+      console.log("dskcode setup — 待实现（第14章）");
     });
 
   // ── init 子命令 ──────────────────────────────
@@ -293,7 +293,7 @@ export function createCli(): Command {
     .command("init")
     .description("在当前项目下生成项目记忆文件（AGENTS.md）")
     .action(async function () {
-      console.log("dsk init — 待实现（第11章）");
+      console.log("dskcode init — 待实现（第11章）");
     });
 
   // ── completion 子命令 ────────────────────────
@@ -303,13 +303,13 @@ export function createCli(): Command {
     .argument("[shell]", "shell 类型", /^(bash|zsh)$/i)
     .action(async function (shell?: string) {
       if (!shell) {
-        console.log("请指定 shell 类型：dsk completion bash 或 dsk completion zsh");
+        console.log("请指定 shell 类型：dskcode completion bash 或 dskcode completion zsh");
         return;
       }
 
       if (shell === "bash") {
-        console.log(`# dsk bash 自动补全
-_dsk_completion() {
+        console.log(`# dskcode bash 自动补全
+_dskcode_completion() {
   local cur=\${COMP_WORDS[COMP_CWORD]}
   if [[ \${COMP_CWORD} -eq 1 ]]; then
     COMPREPLY=( $(compgen -W "${SUBCOMMANDS.join(" ")}" -- "\${cur}") )
@@ -317,10 +317,10 @@ _dsk_completion() {
   fi
   COMPREPLY=( $(compgen -W "--verbose --config --model" -- "\${cur}") )
 }
-complete -F _dsk_completion dsk`);
+complete -F _dskcode_completion dskcode`);
       } else {
-        console.log(`# dsk zsh 自动补全
-_dsk_completion() {
+        console.log(`# dskcode zsh 自动补全
+_dskcode_completion() {
   local -a commands
   commands=(
     "chat:启动交互式对话会话"
@@ -329,9 +329,9 @@ _dsk_completion() {
     "init:生成项目记忆文件"
     "completion:输出 shell 自动补全说明"
   )
-  _describe 'dsk commands' commands
+  _describe 'dskcode commands' commands
 }
-compdef _dsk_completion dsk`);
+compdef _dskcode_completion dskcode`);
       }
     });
 
@@ -353,12 +353,12 @@ program.exitOverride();
 
 ```typescript
 if (!process.stdin.isTTY) {
-  console.error("dsk chat 需要交互式终端。...");
+  console.error("dskcode chat 需要交互式终端。...");
   process.exit(1);
 }
 ```
 
-`dsk chat` 是一个交互式会话，在管道里跑没有意义（比如 `echo "hello" | dsk chat`）。检测 `process.stdin.isTTY` 提前提示用户，而不是进到会话里发现没输出再报错。
+`dskcode chat` 是一个交互式会话，在管道里跑没有意义（比如 `echo "hello" | dskcode chat`）。检测 `process.stdin.isTTY` 提前提示用户，而不是进到会话里发现没输出再报错。
 
 ### completion 子命令
 
@@ -452,8 +452,8 @@ import { ExitCode } from "../src/cli/exit-codes.js";
 describe("createCli", () => {
   const cli = createCli();
 
-  it("should return a Command instance with name dsk", () => {
-    expect(cli.name()).toBe("dsk");
+  it("should return a Command instance with name dskcode", () => {
+    expect(cli.name()).toBe("dskcode");
   });
 
   it("should register the chat subcommand", () => {
@@ -498,19 +498,19 @@ describe("createCli", () => {
 
   it("should output version with --version (exitCode=0)", async () => {
     await expect(
-      cli.parseAsync(["node", "dsk", "--version"]),
+      cli.parseAsync(["node", "dskcode", "--version"]),
     ).rejects.toMatchObject({ exitCode: ExitCode.SUCCESS });
   });
 
   it("should output help with --help (exitCode=0)", async () => {
     await expect(
-      cli.parseAsync(["node", "dsk", "--help"]),
+      cli.parseAsync(["node", "dskcode", "--help"]),
     ).rejects.toMatchObject({ exitCode: ExitCode.SUCCESS });
   });
 
   it("run subcommand should exit with SUCCESS", async () => {
     await expect(
-      cli.parseAsync(["node", "dsk", "run", "test"]),
+      cli.parseAsync(["node", "dskcode", "run", "test"]),
     ).resolves.toBeDefined();
   });
 });
@@ -527,7 +527,7 @@ describe("ExitCode constants", () => {
 
 测试覆盖了：所有子命令的注册和描述、全局选项、`--help`/`--version` 的退出码、子命令正常执行、ExitCode 常量值。一共 12 个用例。
 
-注意最后一个用例：`cli.parseAsync(["node", "dsk", "run", "test"])` 是**不会抛异常**的，因为 `dsk run` 的 action 只是 `console.log`，没有调用 `process.exit`。所以这里用 `resolves` 而非 `rejects`。
+注意最后一个用例：`cli.parseAsync(["node", "dskcode", "run", "test"])` 是**不会抛异常**的，因为 `dskcode run` 的 action 只是 `console.log`，没有调用 `process.exit`。所以这里用 `resolves` 而非 `rejects`。
 
 ---
 
@@ -536,16 +536,16 @@ describe("ExitCode constants", () => {
 现在项目根目录执行：
 
 ```bash
-$ npx dsk --help
+$ npx dskcode --help
 ```
 
 你应该能看到带颜色的自定义帮助信息。
 
 ```bash
-$ npx dsk --version
+$ npx dskcode --version
 0.0.0
 
-$ npx dsk unknown-command
+$ npx dskcode unknown-command
 # commander 会报错，退出码 1
 ```
 
@@ -589,7 +589,7 @@ tsconfig.json            # 修改 — include .tsx
 - 测试覆盖了退出码 + 子命令注册 + 帮助信息，重构时心里有底
 
 **有意没做的（或者说留到后面处理的）：**
-- `dsk chat` 和 `dsk run` 的业务逻辑还是占位符——等 agent 会话循环那章再填
+- `dskcode chat` 和 `dskcode run` 的业务逻辑还是占位符——等 agent 会话循环那章再填
 - middleware 的配置加载失败只回退到默认配置，没有给用户报错提示（下章加）
 - 自定义 help 还没有测试——手工看了没问题，但自动化测试确实少了（TODO +1）
 

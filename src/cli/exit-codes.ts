@@ -1,4 +1,4 @@
-/** dsk 退出码规范 */
+/** dskcode 退出码规范 */
 export const ExitCode = {
   /** 正常执行完成 */
   SUCCESS: 0,

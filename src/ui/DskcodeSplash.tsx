@@ -12,7 +12,7 @@ const LOGO_LINES = [
   "  ╚═════╝ ╚══════╝╚═╝  ╚═╝",
 ];
 
-export function DskSplash() {
+export function DskcodeSplash() {
   const [offset, setOffset] = useState(0);
 
   useEffect(() => {

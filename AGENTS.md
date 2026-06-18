@@ -1,13 +1,13 @@
-# dsk — 项目记忆
+# dskcode — 项目记忆
 
 ## 项目定位
 
-dsk 是一个基于 DeepSeek 的 AI 编程助手终端 CLI 工具，源自 Reasonix 的架构设计。用 TypeScript 从零实现，只面向国内用户。
+dskcode 是一个基于 DeepSeek 的 AI 编程助手终端 CLI 工具，源自 Reasonix 的架构设计。用 TypeScript 从零实现，只面向国内用户。
 
 ## 关键约定
 
 - **界面语言**：所有用户可见的描述性文字（命令帮助、提示信息、文档）使用**中文**。
-- **命令标识**：CLI 命令名（`dsk`、`chat`、`run`、`setup`）和选项名（`--verbose`、`--model`、`--version`）保持英文，这是 CLI 工具的通行做法。
+- **命令标识**：CLI 命令名（`dskcode`、`chat`、`run`、`setup`）和选项名（`--verbose`、`--model`、`--version`）保持英文，这是 CLI 工具的通行做法。
 - **代码注释**：注释使用中文，方便国内开发者阅读。
 - **代码标识符**：变量名、函数名、接口名等代码标识符保持英文（TypeScript 语言规范）。
 
@@ -37,13 +37,13 @@ src/
 ## 配置层级
 
 1. 内置默认值
-2. 用户全局 `~/.config/dsk.toml`
-3. 项目本地 `.dsk.toml`
+2. 用户全局 `~/.config/dskcode.toml`
+3. 项目本地 `.dskcode.toml`
 4. 环境变量
 5. CLI flag
 
 ## 发布信息
 
-- **npm 包名**：`dsk`
-- **bin 命令**：`dsk`
-- **使用方式**：`npx dsk --version` 或 `npm install -g dsk`
+- **npm 包名**：`dskcode`
+- **bin 命令**：`dskcode`
+- **使用方式**：`npx dskcode --version` 或 `npm install -g dskcode`
