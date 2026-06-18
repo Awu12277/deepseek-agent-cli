@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createCli } from "../src/cli/index.js";
+import { ExitCode } from "../src/cli/exit-codes.js";
 
 describe("createCli", () => {
   const cli = createCli();
@@ -13,21 +14,33 @@ describe("createCli", () => {
   });
 
   it("should register the chat subcommand", () => {
-    const chatCmd = cli.commands.find((c) => c.name() === "chat");
-    expect(chatCmd).toBeDefined();
-    expect(chatCmd!.description()).toBe("启动交互式对话会话");
+    const cmd = cli.commands.find((c) => c.name() === "chat");
+    expect(cmd).toBeDefined();
+    expect(cmd!.description()).toBe("启动交互式对话会话");
   });
 
   it("should register the run subcommand", () => {
-    const runCmd = cli.commands.find((c) => c.name() === "run");
-    expect(runCmd).toBeDefined();
-    expect(runCmd!.description()).toBe("执行一次性任务");
+    const cmd = cli.commands.find((c) => c.name() === "run");
+    expect(cmd).toBeDefined();
+    expect(cmd!.description()).toBe("执行一次性任务");
   });
 
   it("should register the setup subcommand", () => {
-    const setupCmd = cli.commands.find((c) => c.name() === "setup");
-    expect(setupCmd).toBeDefined();
-    expect(setupCmd!.description()).toBe("运行配置向导");
+    const cmd = cli.commands.find((c) => c.name() === "setup");
+    expect(cmd).toBeDefined();
+    expect(cmd!.description()).toBe("运行配置向导");
+  });
+
+  it("should register the init subcommand", () => {
+    const cmd = cli.commands.find((c) => c.name() === "init");
+    expect(cmd).toBeDefined();
+    expect(cmd!.description()).toBe("在当前项目下生成项目记忆文件（AGENTS.md）");
+  });
+
+  it("should register the completion subcommand", () => {
+    const cmd = cli.commands.find((c) => c.name() === "completion");
+    expect(cmd).toBeDefined();
+    expect(cmd!.description()).toContain("shell 自动补全");
   });
 
   it("should have the --verbose global option", () => {
@@ -35,16 +48,35 @@ describe("createCli", () => {
     expect(opts).toContain("--verbose");
   });
 
-  it("should output version with --version", async () => {
-    // exitOverride makes Commander throw a CommanderError with code 0
-    await expect(
-      cli.parseAsync(["node", "dsk", "--version"]),
-    ).rejects.toMatchObject({ exitCode: 0 });
+  it("should have the --config global option", () => {
+    const opts = cli.options.map((o) => o.long);
+    expect(opts).toContain("--config");
   });
 
-  it("should output help with --help", async () => {
+  it("should output version with --version (exitCode=0)", async () => {
+    await expect(
+      cli.parseAsync(["node", "dsk", "--version"]),
+    ).rejects.toMatchObject({ exitCode: ExitCode.SUCCESS });
+  });
+
+  it("should output help with --help (exitCode=0)", async () => {
     await expect(
       cli.parseAsync(["node", "dsk", "--help"]),
-    ).rejects.toMatchObject({ exitCode: 0 });
+    ).rejects.toMatchObject({ exitCode: ExitCode.SUCCESS });
+  });
+
+  it("run subcommand should exit with SUCCESS", async () => {
+    await expect(
+      cli.parseAsync(["node", "dsk", "run", "test"]),
+    ).resolves.toBeDefined();
+  });
+});
+
+describe("ExitCode constants", () => {
+  it("should have the correct values", () => {
+    expect(ExitCode.SUCCESS).toBe(0);
+    expect(ExitCode.GENERAL_ERROR).toBe(1);
+    expect(ExitCode.CONFIG_ERROR).toBe(2);
+    expect(ExitCode.SIGINT).toBe(130);
   });
 });
