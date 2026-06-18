@@ -1,5 +1,7 @@
 import { Command } from "commander";
 import { loadConfigMiddleware } from "./middleware.js";
+import { customHelp } from "./help.js";
+import { renderApp, ChatSession } from "../ui/index.js";
 
 const SUBCOMMANDS = ["chat", "run", "setup", "init", "completion"];
 
@@ -13,6 +15,8 @@ export function createCli(): Command {
     .version("0.0.0", "-V, --version", "显示版本号")
     .option("--verbose", "开启详细日志输出")
     .option("--config <path>", "指定配置文件路径");
+
+  program.helpInformation = () => customHelp(program);
 
   program.hook("preAction", async (thisCommand) => {
     const ctx = await loadConfigMiddleware.call(thisCommand);
@@ -28,7 +32,20 @@ export function createCli(): Command {
         console.error("dsk chat 需要交互式终端。如需执行一次性任务，请使用 dsk run。");
         process.exit(1);
       }
-      console.log("dsk chat — 待实现（第07章）");
+
+      const ctx = (this as unknown as Record<string, unknown>).dskCtx as
+        | { verbose: boolean; config: { providers: unknown[]; tools: unknown[] } }
+        | undefined;
+
+      const app = renderApp(
+        <ChatSession
+          providerCount={ctx?.config.providers.length ?? 1}
+          toolCount={ctx?.config.tools.length ?? 0}
+          verbose={ctx?.verbose ?? false}
+        />,
+      );
+
+      await app.waitUntilExit;
     });
 
   // run
@@ -72,12 +89,12 @@ export function createCli(): Command {
       if (shell === "bash") {
         console.log(`# dsk bash 自动补全
 _dsk_completion() {
-  local cur=${COMP_WORDS[COMP_CWORD]}
-  if [[ ${COMP_CWORD} -eq 1 ]]; then
-    COMPREPLY=( $(compgen -W "${SUBCOMMANDS.join(" ")}" -- "${cur}") )
+  local cur=\${COMP_WORDS[COMP_CWORD]}
+  if [[ \${COMP_CWORD} -eq 1 ]]; then
+    COMPREPLY=( $(compgen -W "${SUBCOMMANDS.join(" ")}" -- "\${cur}") )
     return 0
   fi
-  COMPREPLY=( $(compgen -W "--verbose --config --model" -- "${cur}") )
+  COMPREPLY=( $(compgen -W "--verbose --config --model" -- "\${cur}") )
 }
 complete -F _dsk_completion dsk`);
       } else {
