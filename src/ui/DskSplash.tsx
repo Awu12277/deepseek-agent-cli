@@ -24,11 +24,6 @@ export function DskSplash() {
 
   return (
     <Box flexDirection="column" paddingLeft={1}>
-      <Box>
-        <Text color="#00ffff" dimColor>
-          {"  ╔" + "═".repeat(32) + "╗"}
-        </Text>
-      </Box>
       {LOGO_LINES.map((line, i) => {
         const colorIndex = (i + offset) % CYBER_PALETTE.length;
         return (
@@ -39,11 +34,6 @@ export function DskSplash() {
           </Box>
         );
       })}
-      <Box>
-        <Text color="#00ffff" dimColor>
-          {"  ╚" + "═".repeat(32) + "╝"}
-        </Text>
-      </Box>
     </Box>
   );
 }

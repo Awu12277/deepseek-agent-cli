@@ -100,35 +100,28 @@ export function ChatSession({ providerCount, toolCount, verbose }: ChatSessionPr
 
   return (
     <Box flexDirection="column" paddingLeft={1} paddingRight={1}>
-      {/* Logo */}
-      <Box flexDirection="column">
-        <Box>
-          <Text color="#00ffff" dimColor>
-            {"  ╔" + "═".repeat(32) + "╗"}
-          </Text>
+      {/* Logo + 状态栏 — 左右布局 */}
+      <Box flexDirection="row" marginBottom={1}>
+        {/* Logo */}
+        <Box flexDirection="column" marginRight={4}>
+          {LOGO_LINES.map((line, i) => {
+            const colorIndex = (i + offset) % CYBER_PALETTE.length;
+            return (
+              <Box key={i}>
+                <Text bold color={CYBER_PALETTE[colorIndex]}>
+                  {line}
+                </Text>
+              </Box>
+            );
+          })}
         </Box>
-        {LOGO_LINES.map((line, i) => {
-          const colorIndex = (i + offset) % CYBER_PALETTE.length;
-          return (
-            <Box key={i}>
-              <Text bold color={CYBER_PALETTE[colorIndex]}>
-                {line}
-              </Text>
-            </Box>
-          );
-        })}
-        <Box>
-          <Text color="#00ffff" dimColor>
-            {"  ╚" + "═".repeat(32) + "╝"}
-          </Text>
-        </Box>
-      </Box>
 
-      {/* Status bar */}
-      <Box marginTop={1} flexDirection="column">
-        <Text color="#00ff41">{"  ✔ "}已加载 {providerCount} 个 Provider</Text>
-        <Text color="#00ffff">{"  ℹ "}已就绪 {toolCount} 个工具</Text>
-        {verbose ? <Text color="#ff1493">{"  ⚡ Verbose"}</Text> : null}
+        {/* 状态信息 */}
+        <Box flexDirection="column" justifyContent="center">
+          <Text color="#00ff41">{"  ✔ "}已加载 {providerCount} 个 Provider</Text>
+          <Text color="#00ffff">{"  ℹ "}已就绪 {toolCount} 个工具</Text>
+          {verbose ? <Text color="#ff1493">{"  ⚡ Verbose"}</Text> : null}
+        </Box>
       </Box>
 
       {/* Messages */}
