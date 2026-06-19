@@ -147,7 +147,7 @@ compdef _dskcode_completion dskcode`);
     .action(async function (codes: string[]) {
       const codeList = codes && codes.length > 0
         ? codes
-        : ["600519", "000858", "300750", "000333", "601318", "002415", "000001"];
+        : ["sh000001", "sz399006", "sh601688"];
 
       const app = renderApp(
         <StockList

@@ -19,9 +19,11 @@ interface MinuteResponse {
 
 /** 把股票代码转为接口需要的格式（如 513090 → sh513090） */
 function toApiCode(code: string): string {
+  // 已带市场前缀，直接返回
+  if (/^sh|^sz/.test(code)) return code;
   if (/^60/.test(code) || /^68/.test(code)) return "sh" + code;
-  if (/^00/.test(code) || /^30/.test(code)) return "sz" + code;
-  if (/^51/.test(code)) return "sh" + code; // ETF 默认上海
+  if (/^00/.test(code) || /^30/.test(code) || /^39/.test(code)) return "sz" + code;
+  if (/^51/.test(code)) return "sh" + code;
   return "sh" + code;
 }
 
@@ -103,9 +105,9 @@ function getCachedMinutes(code: string): number[] | undefined {
 // ---------------------------------------------------------------------------
 
 const FALLBACK_STOCKS: StockRow[] = [
-  { code: "600519", name: "贵州茅台", price: 1520.00, changePercent: 1.25, changeAmount: 18.75, high: 1532.00, low: 1508.00, volume: 28543 },
-  { code: "000858", name: "五粮液", price: 142.30, changePercent: -0.87, changeAmount: -1.25, high: 144.50, low: 141.80, volume: 125630 },
-  { code: "300750", name: "宁德时代", price: 218.50, changePercent: 2.18, changeAmount: 4.66, high: 220.00, low: 214.30, volume: 98650 },
+  { code: "000001", name: "上证指数", price: 3150.00, changePercent: 0.35, changeAmount: 11.02, high: 3160.00, low: 3140.00, volume: 285430000 },
+  { code: "399006", name: "创业板指", price: 1820.00, changePercent: -0.52, changeAmount: -9.50, high: 1835.00, low: 1815.00, volume: 98650000 },
+  { code: "601688", name: "华泰证券", price: 14.25, changePercent: 1.05, changeAmount: 0.15, high: 14.38, low: 14.10, volume: 452100 },
 ];
 
 // ---------------------------------------------------------------------------

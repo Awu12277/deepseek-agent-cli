@@ -20,7 +20,7 @@
 - **权限控制** — 三级审批策略（Allow / Ask / Deny），安全可控
 - **TOML 配置** — 多层级配置（全局 + 项目 + 环境变量 + CLI flag）
 - **中文优先** — 界面提示、帮助信息、文档均为中文
-- **股票行情** — `dskcode stock` 查看 A 股实时行情，支持自选股配置和自动刷新
+- **股票行情** — `dskcode stock` 交互式 A 股行情终端，键盘选择 + 详情折线图 + 每 10 秒自动刷新
 - **内置小游戏** — `dskcode game` 启动游戏列表，打砖块、Coder Check 极速打字等内置游戏供休闲娱乐
 
 ![Brick Breaker — 经典打砖块游戏，10 个关卡可选](https://raw.githubusercontent.com/Awu12277/deepseek-agent-cli/refs/heads/main/public/brickbreaker_preview.gif)
@@ -56,8 +56,8 @@ npx dskcode chat
 | `dskcode setup` | 运行配置向导，设置 API Key 等 |
 | `dskcode init` | 在当前项目生成 AGENTS.md 项目记忆文件 |
 | `dskcode game <name>` | 启动内置小游戏，不指定名称则显示交互式游戏列表 |
-| `dskcode stock` | 查看自选股实时行情 |
-| `dskcode stock --watch` | 每5秒自动刷新行情 |
+| `dskcode stock [codes...]` | 交互式股票行情，↑/↓ 选择，Enter 查看分时折线图，每 10 秒自动刷新 |
+| `dskcode stock sh000001 sz399006` | 查看指定股票行情 |
 | `dskcode completion` | 生成 shell 自动补全配置 |
 
 ### 全局选项
@@ -113,29 +113,62 @@ dskcode 使用 JSON 格式的配置文件，支持多层级合并：
 }
 ```
 
-### 自选股配置
+### 股票行情
 
-在 `~/.dskcode/settings.json` 或项目 `.dskcode/settings.json` 中配置自选股，`dskcode stock` 即可查看：
+`dskcode stock` 启动交互式股票行情终端，基于腾讯免费行情接口，支持实时查看 A 股/指数/ETF 行情。
 
-```json
-{
-  "stock": {
-    "symbols": [
-      { "code": "sh000001" },
-      { "code": "sz399300" },
-      { "code": "sh601899" }
-    ]
-  }
-}
-```
+#### 功能
 
-也可直接在命令行指定代码临时查询（最多显示10只）：
+- **实时行情列表** — 涨跌彩色标识（红涨绿跌），显示最新价、涨跌幅、最高/最低价、成交量
+- **键盘选择** — `↑/↓` 切换股票，`Enter` 查看详情
+- **分时折线图** — 详情页展示最近 60 笔分钟线的 ASCII 折线图（直角折线风格）
+- **自动刷新** — 列表每 5 秒刷新，详情页每 10 秒刷新，右上角显示倒计时
+- **手动刷新** — 按 `r` 键强制刷新
+
+#### 使用方式
 
 ```bash
-dskcode stock sh000001 sz399300 sh601899
+# 默认股票（上证指数 + 创业板指 + 华泰证券）
+dskcode stock
+
+# 指定股票代码
+ dskcode stock sh000001 sz399006 sh601688
+```
+
+#### 示例界面
+
+```
+  📈 自选股监控                      每 5s 自动刷新
+   代码     名称         最新价     涨跌幅     涨跌额    最高      最低     成交量
+   ────────────────────────────────────────────────────────────────────────────
+   ▸ sh000001 上证指数   3150.00   +0.35%   +11.02   3160.00  3140.00  28543.0万
+     sz399006 创业板指   1820.00   -0.52%    -9.50   1835.00  1815.00  9865.0万
+     sh601688 华泰证券     14.25   +1.05%    +0.15     14.38    14.10    45.2万
+
+  ↑/↓ 选择  Enter 详情  r 手动刷新  q 返回
+  最后更新: 14:30:00
+```
+
+按 `Enter` 进入详情页，查看 ASCII 分时折线图：
+
+```
+  📊 华泰证券 sh601688                       每 8s 刷新
+
+  当前价    ▲ 14.25
+  涨跌幅    +1.05%  +0.15
+
+  14.42 ┤    ┌─┐
+  14.34 ┤  ┌─┘ └─┐
+  14.26 ┤ ┌┘     └─┐
+  14.18 ┤─┘        └─┐
+  14.10 ┤            └──
+
+  Space/q 返回列表
 ```
 
 #### 股票代码格式
+
+代码需带市场前缀：
 
 | 市场 | 格式 | 示例 |
 |------|------|------|
@@ -146,6 +179,17 @@ dskcode stock sh000001 sz399300 sh601899
 | 指数 | `sh000xxx` / `sz399xxx` | `sz399300`（沪深300） |
 | ETF | `sh5xxxxx` / `sz15xxxx` | `sh513090`（香港证券ETF） |
 
+也可用纯数字代码，程序自动识别市场：
+```bash
+dskcode stock 000001 399006
+# 000001 → sh000001（上证指数）
+# 399006 → sz399006（创业板指）
+```
+
+#### 数据来源
+
+分时数据来自腾讯免费行情接口 `web.ifzq.gtimg.cn/appstock/app/minute/query`，全天 242 条分钟线（09:30~15:00）。
+
 ## 架构
 
 ```
@@ -153,11 +197,12 @@ src/
 ├── index.ts          # 入口，shebang + 异常处理
 ├── cli/              # commander 命令路由
 ├── config/           # JSON 配置加载与合并
-├── provider/         # LLM Provider 接口（DeepSeek / OpenAI 兼容）
+├── provider/         # LLM Provider 接口（DeepSeek）
 ├── tool/             # 内置工具接口（读文件、写文件、bash 等）
 ├── plugin/           # MCP 插件管理器
 ├── agent/            # Agent 会话循环
-├── stock/            # 股票行情模块（腾讯免费行情接口）
+├── stock/            # 股票行情（StockList 交互式行情终端 + asciichart 折线图）
+├── game/             # 内置小游戏
 └── ui/               # Ink 交互式终端 UI
 ```
 
