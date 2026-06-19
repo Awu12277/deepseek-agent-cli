@@ -21,9 +21,9 @@
 - **中文优先** — 界面提示、帮助信息、文档均为中文
 - **内置小游戏** — `dskcode game` 启动游戏列表，打砖块、Coder Check 极速打字等内置游戏供休闲娱乐
 
-![Brick Breaker — 经典打砖块游戏，10 个关卡可选](https://raw.githubusercontent.com/Awu12277/deepseek-agent-cli/main/ts-version/public/brickbreaker_preview.gif)
+![Brick Breaker — 经典打砖块游戏，10 个关卡可选](https://raw.githubusercontent.com/Awu12277/deepseek-agent-cli/refs/heads/main/public/brickbreaker_preview.gif)
 
-![Coder Check — 极速打字游戏，消除编程单词](https://raw.githubusercontent.com/Awu12277/deepseek-agent-cli/main/ts-version/public/codercheck_preview.gif)
+![Coder Check — 极速打字游戏，消除编程单词](https://raw.githubusercontent.com/Awu12277/deepseek-agent-cli/refs/heads/main/public/codercheck_preview.gif)
 
 ## 快速开始
 
