@@ -20,6 +20,7 @@
 - **权限控制** — 三级审批策略（Allow / Ask / Deny），安全可控
 - **TOML 配置** — 多层级配置（全局 + 项目 + 环境变量 + CLI flag）
 - **中文优先** — 界面提示、帮助信息、文档均为中文
+- **股票行情** — `dskcode stock` 查看 A 股实时行情，支持自选股配置和自动刷新
 - **内置小游戏** — `dskcode game` 启动游戏列表，打砖块、Coder Check 极速打字等内置游戏供休闲娱乐
 
 ![Brick Breaker — 经典打砖块游戏，10 个关卡可选](https://raw.githubusercontent.com/Awu12277/deepseek-agent-cli/refs/heads/main/public/brickbreaker_preview.gif)
@@ -55,6 +56,8 @@ npx dskcode chat
 | `dskcode setup` | 运行配置向导，设置 API Key 等 |
 | `dskcode init` | 在当前项目生成 AGENTS.md 项目记忆文件 |
 | `dskcode game <name>` | 启动内置小游戏，不指定名称则显示交互式游戏列表 |
+| `dskcode stock` | 查看自选股实时行情 |
+| `dskcode stock --watch` | 每5秒自动刷新行情 |
 | `dskcode completion` | 生成 shell 自动补全配置 |
 
 ### 全局选项
@@ -110,17 +113,51 @@ dskcode 使用 JSON 格式的配置文件，支持多层级合并：
 }
 ```
 
+### 自选股配置
+
+在 `~/.dskcode/settings.json` 或项目 `.dskcode/settings.json` 中配置自选股，`dskcode stock` 即可查看：
+
+```json
+{
+  "stock": {
+    "symbols": [
+      { "code": "sh000001" },
+      { "code": "sz399300" },
+      { "code": "sh601899" }
+    ]
+  }
+}
+```
+
+也可直接在命令行指定代码临时查询（最多显示10只）：
+
+```bash
+dskcode stock sh000001 sz399300 sh601899
+```
+
+#### 股票代码格式
+
+| 市场 | 格式 | 示例 |
+|------|------|------|
+| 上海主板 | `sh6xxxxx` | `sh601899`（紫金矿业） |
+| 深圳主板 | `sz000xxx` | `sz000001`（平安银行） |
+| 创业板 | `sz30xxxx` | `sz300750`（宁德时代） |
+| 科创板 | `sh688xxx` | `sh688981`（中芯国际） |
+| 指数 | `sh000xxx` / `sz399xxx` | `sz399300`（沪深300） |
+| ETF | `sh5xxxxx` / `sz15xxxx` | `sh513090`（香港证券ETF） |
+
 ## 架构
 
 ```
 src/
 ├── index.ts          # 入口，shebang + 异常处理
 ├── cli/              # commander 命令路由
-├── config/           # TOML 配置加载与合并
+├── config/           # JSON 配置加载与合并
 ├── provider/         # LLM Provider 接口（DeepSeek / OpenAI 兼容）
 ├── tool/             # 内置工具接口（读文件、写文件、bash 等）
 ├── plugin/           # MCP 插件管理器
 ├── agent/            # Agent 会话循环
+├── stock/            # 股票行情模块（腾讯免费行情接口）
 └── ui/               # Ink 交互式终端 UI
 ```
 

@@ -50,6 +50,10 @@ export function customHelp(program: Command): string {
   lines.push("  dskcode setup");
   lines.push(`  ${chalk.dim("# 生成 shell 自动补全")}`);
   lines.push("  dskcode completion");
+  lines.push(`  ${chalk.dim("# 查看自选股行情")}`);
+  lines.push("  dskcode stock");
+  lines.push(`  ${chalk.dim("# 查看指定股票行情")}`);
+  lines.push("  dskcode stock sh513090 sz000001");
   lines.push("");
 
   return lines.join("\n");

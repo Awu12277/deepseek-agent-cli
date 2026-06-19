@@ -10,8 +10,10 @@ import type { Game } from "../game/index.js";
 import { GamePicker } from "../ui/GamePicker.js";
 import { render } from "ink";
 import chalk from "chalk";
+import { fetchQuotes, printQuotes } from "../stock/index.js";
+import type { StockSymbol } from "../config/types.js";
 
-const SUBCOMMANDS = ["chat", "run", "setup", "init", "completion", "game"];
+const SUBCOMMANDS = ["chat", "run", "setup", "init", "completion", "game", "stock"];
 
 export function createCli(): Command {
   const program = new Command();
@@ -134,6 +136,59 @@ _dskcode_completion() {
   _describe 'dskcode commands' commands
 }
 compdef _dskcode_completion dskcode`);
+      }
+    });
+
+  // stock — 股票行情
+  program
+    .command("stock")
+    .description("查看自选股实时行情")
+    .argument("[codes...]", "股票代码（空格分隔），如 sh513090 sz000001。不指定则读取配置中的自选股")
+    .option("--watch", "每5秒自动刷新行情")
+    .action(async function (codes: string[]) {
+      const opts = this.opts() as { watch?: boolean };
+      const ctx = (this as unknown as Record<string, unknown>).dskcodeCtx as
+        | { config: { stock?: { symbols: StockSymbol[] } } }
+        | undefined;
+
+      const resolveSymbols = (): StockSymbol[] => {
+        if (codes && codes.length > 0) {
+          return codes.map((c) => ({ code: c }));
+        }
+        if (ctx?.config.stock?.symbols && ctx.config.stock.symbols.length > 0) {
+          return ctx.config.stock.symbols;
+        }
+        return [];
+      };
+
+      const allSymbols = resolveSymbols();
+      if (allSymbols.length > 10) {
+        console.log(chalk.yellow(`⚠ 自选股超过10只，仅显示前10只（共${allSymbols.length}只）`) + "\n");
+      }
+      const symbols = allSymbols.slice(0, 10);
+      if (symbols.length === 0) {
+        console.log(
+          chalk.yellow("未配置自选股。请通过以下方式使用：") +
+          "\n\n  " + chalk.cyan("dskcode stock sh513090 sz000001") +
+          "\n\n或在配置文件中添加 stock.symbols 字段" +
+          "\n  " + chalk.dim("~/.dskcode/settings.json"),
+        );
+        return;
+      }
+
+      if (opts.watch) {
+        console.clear();
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const quotes = await fetchQuotes(symbols);
+          printQuotes(quotes);
+          console.log(chalk.dim("  按 Ctrl+C 退出  |  每5秒自动刷新\n"));
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+          console.clear();
+        }
+      } else {
+        const quotes = await fetchQuotes(symbols);
+        printQuotes(quotes);
       }
     });
 

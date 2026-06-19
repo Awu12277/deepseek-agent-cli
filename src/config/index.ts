@@ -1,4 +1,4 @@
-export type { Config, ProviderConfig, ToolConfig, PluginConfig } from "./types.js";
+export type { Config, ProviderConfig, ToolConfig, PluginConfig, StockConfig, StockSymbol } from "./types.js";
 export {
   loadConfig,
   loadAndValidate,

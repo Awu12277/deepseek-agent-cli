@@ -30,6 +30,19 @@ export interface PluginConfig {
   env?: Record<string, string>;
 }
 
+/** 自选股配置 */
+export interface StockSymbol {
+  /** 股票代码，如 sh513090、sz000001 */
+  code: string;
+  /** 显示别名（可选），不设置则使用接口返回的名称 */
+  name?: string;
+}
+
+export interface StockConfig {
+  /** 自选股列表 */
+  symbols: StockSymbol[];
+}
+
 /** dskcode 的根配置 */
 export interface Config {
   /** 默认 Provider 名称（必须匹配 TOML 中某个 provider 的 name 字段） */
@@ -48,4 +61,6 @@ export interface Config {
   tools: ToolConfig[];
   /** 外部 MCP 插件定义列表 */
   plugins: PluginConfig[];
+  /** 自选股配置 */
+  stock?: StockConfig;
 }

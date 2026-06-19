@@ -1,7 +1,7 @@
 import { existsSync, watch } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { Config, ProviderConfig, ToolConfig, PluginConfig } from "./types.js";
+import type { Config, ProviderConfig, ToolConfig, PluginConfig, StockConfig } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // 出厂默认配置
@@ -30,6 +30,13 @@ export const defaultConfig: Config = {
     { name: "fetch", enabled: true },
   ],
   plugins: [],
+  stock: {
+    symbols: [
+      { code: "sh000001" },
+      { code: "sz399300" },
+      { code: "sh601899" },
+    ],
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -100,6 +107,9 @@ function mergeConfig(base: Config, overlay: Partial<Config>): Config {
   }
   if (overlay.plugins !== undefined) {
     result.plugins = overlay.plugins as PluginConfig[];
+  }
+  if (overlay.stock !== undefined) {
+    result.stock = overlay.stock as StockConfig;
   }
 
   return result;
