@@ -10,8 +10,7 @@ import type { Game } from "../game/index.js";
 import { GamePicker } from "../ui/GamePicker.js";
 import { render } from "ink";
 import chalk from "chalk";
-import { fetchQuotes, printQuotes } from "../stock/index.js";
-import type { StockSymbol } from "../config/types.js";
+import { StockList } from "../stock/index.js";
 
 const SUBCOMMANDS = ["chat", "run", "setup", "init", "completion", "game", "stock"];
 
@@ -132,6 +131,7 @@ _dskcode_completion() {
     "init:生成项目记忆文件"
     "completion:输出 shell 自动补全说明"
     "game:内置小游戏"
+    "stock:查看自选股实时行情"
   )
   _describe 'dskcode commands' commands
 }
@@ -143,53 +143,20 @@ compdef _dskcode_completion dskcode`);
   program
     .command("stock")
     .description("查看自选股实时行情")
-    .argument("[codes...]", "股票代码（空格分隔），如 sh513090 sz000001。不指定则读取配置中的自选股")
-    .option("--watch", "每5秒自动刷新行情")
+    .argument("[codes...]", "股票代码（空格分隔），如 513090 600519")
     .action(async function (codes: string[]) {
-      const opts = this.opts() as { watch?: boolean };
-      const ctx = (this as unknown as Record<string, unknown>).dskcodeCtx as
-        | { config: { stock?: { symbols: StockSymbol[] } } }
-        | undefined;
+      const codeList = codes && codes.length > 0
+        ? codes
+        : ["600519", "000858", "300750", "000333", "601318", "002415", "000001"];
 
-      const resolveSymbols = (): StockSymbol[] => {
-        if (codes && codes.length > 0) {
-          return codes.map((c) => ({ code: c }));
-        }
-        if (ctx?.config.stock?.symbols && ctx.config.stock.symbols.length > 0) {
-          return ctx.config.stock.symbols;
-        }
-        return [];
-      };
+      const app = renderApp(
+        <StockList
+          codes={codeList}
+          onExit={() => process.exit(0)}
+        />,
+      );
 
-      const allSymbols = resolveSymbols();
-      if (allSymbols.length > 10) {
-        console.log(chalk.yellow(`⚠ 自选股超过10只，仅显示前10只（共${allSymbols.length}只）`) + "\n");
-      }
-      const symbols = allSymbols.slice(0, 10);
-      if (symbols.length === 0) {
-        console.log(
-          chalk.yellow("未配置自选股。请通过以下方式使用：") +
-          "\n\n  " + chalk.cyan("dskcode stock sh513090 sz000001") +
-          "\n\n或在配置文件中添加 stock.symbols 字段" +
-          "\n  " + chalk.dim("~/.dskcode/settings.json"),
-        );
-        return;
-      }
-
-      if (opts.watch) {
-        console.clear();
-        // eslint-disable-next-line no-constant-condition
-        while (true) {
-          const quotes = await fetchQuotes(symbols);
-          printQuotes(quotes);
-          console.log(chalk.dim("  按 Ctrl+C 退出  |  每5秒自动刷新\n"));
-          await new Promise((resolve) => setTimeout(resolve, 5000));
-          console.clear();
-        }
-      } else {
-        const quotes = await fetchQuotes(symbols);
-        printQuotes(quotes);
-      }
+      await app.waitUntilExit;
     });
 
   // game — 游戏模式

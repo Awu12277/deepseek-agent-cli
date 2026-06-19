@@ -35,9 +35,9 @@
     "prepublishOnly": "npm run build && npm run test"
   },
   "dependencies": {
+    "asciichart": "^1.5.25",
     "chalk": "^5.6.2",
     "commander": "^13.1.0",
-    "iconv-lite": "^0.7.2",
     "ink": "^7.1.0",
     "ink-spinner": "^5.0.0",
     "ink-text-input": "^6.0.0",
