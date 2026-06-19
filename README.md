@@ -21,6 +21,11 @@
 - **TOML 配置** — 多层级配置（全局 + 项目 + 环境变量 + CLI flag）
 - **中文优先** — 界面提示、帮助信息、文档均为中文
 - **股票行情** — `dskcode stock` 交互式 A 股行情终端，键盘选择 + 详情折线图 + 每 10 秒自动刷新
+- 
+![股票列表](https://raw.githubusercontent.com/Awu12277/deepseek-agent-cli/refs/heads/main/public/stock_list.png)
+
+![股票详情](https://raw.githubusercontent.com/Awu12277/deepseek-agent-cli/refs/heads/main/public/stock_detail.png)
+
 - **内置小游戏** — `dskcode game` 启动游戏列表，打砖块、Coder Check 极速打字等内置游戏供休闲娱乐
 
 ![Brick Breaker — 经典打砖块游戏，10 个关卡可选](https://raw.githubusercontent.com/Awu12277/deepseek-agent-cli/refs/heads/main/public/brickbreaker_preview.gif)
