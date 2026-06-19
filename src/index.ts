@@ -14,17 +14,20 @@ import { ExitCode } from "./cli/exit-codes.js";
 let sigintCount = 0;
 let sigintTimer: ReturnType<typeof setTimeout> | null = null;
 
+/**
+ * 全局兜底 SIGINT 处理：双击退出。
+ * ink 交互模式下 Ctrl+C 由 useDoubleCtrlC hook 处理，
+ * 此处仅处理 ink 未运行时的场景（如启动阶段、异常退出后）。
+ */
 process.on("SIGINT", () => {
   sigintCount++;
   if (sigintCount >= 2) {
     process.exit(ExitCode.SIGINT);
   }
-  // 第一次：给出提示
   process.stdout.write("\n  ⚠ 再按一次 Ctrl+C 退出 dskcode\n");
   if (sigintTimer) clearTimeout(sigintTimer);
   sigintTimer = setTimeout(() => {
     sigintCount = 0;
-    sigintTimer = null;
   }, 1500);
 });
 

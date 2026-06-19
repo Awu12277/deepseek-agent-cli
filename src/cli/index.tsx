@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { loadConfigMiddleware } from "./middleware.js";
+import type { DskcodeContext } from "./middleware.js";
 import { customHelp } from "./help.js";
 import { hasApiKey, promptForApiKey } from "./api-key-setup.js";
 import { saveApiKey, loadAndValidate } from "../config/index.js";
@@ -42,9 +43,7 @@ export function createCli(): Command {
         process.exit(1);
       }
 
-      let ctx = (this as unknown as Record<string, unknown>).dskcodeCtx as
-        | { verbose: boolean; config: { providers: Array<{ apiKey?: string }>; tools: unknown[] } }
-        | undefined;
+      let ctx = (this as unknown as Record<string, unknown>).dskcodeCtx as DskcodeContext | undefined;
 
       // 检查 API Key，如果没有则交互式输入
       if (ctx && !hasApiKey(ctx.config.providers)) {
@@ -64,7 +63,7 @@ export function createCli(): Command {
     });
 
   function startChat(
-    ctx: { verbose: boolean; config: { providers: Array<{ apiKey?: string }>; tools: unknown[] } } | undefined,
+    ctx: DskcodeContext | undefined,
   ) {
     const chatApp = renderApp(
       <ChatSession
@@ -97,9 +96,12 @@ export function createCli(): Command {
         onLaunchStock={() => {
           chatApp.unmount();
           setImmediate(() => {
+            // 使用配置中的自选股列表或兜底默认值
+            const defaultStockCodes = ctx?.config.stock?.symbols?.map((s) => s.code)
+              ?? ["sh000001", "sz399006", "sh601688"];
             const stockApp = renderApp(
               <StockList
-                codes={["sh000001", "sz399006", "sh601688"]}
+                codes={defaultStockCodes}
                 onBackToChat={() => {
                   stockApp.unmount();
                   setImmediate(() => startChat(ctx));
@@ -187,9 +189,11 @@ compdef _dskcode_completion dskcode`);
     .description("查看自选股实时行情")
     .argument("[codes...]", "股票代码（空格分隔），如 513090 600519")
     .action(async function (codes: string[]) {
+      const ctx = (this as unknown as Record<string, unknown>).dskcodeCtx as DskcodeContext | undefined;
       const codeList = codes && codes.length > 0
         ? codes
-        : ["sh000001", "sz399006", "sh601688"];
+        : ctx?.config.stock?.symbols?.map((s) => s.code)
+          ?? ["sh000001", "sz399006", "sh601688"];
 
       const app = renderApp(
         <StockList

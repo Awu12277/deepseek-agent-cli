@@ -2,39 +2,51 @@ import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
 import { useEffect, useState, useCallback } from "react";
 import { useDoubleCtrlC } from "./useDoubleCtrlC.js";
+import { CYBER_PALETTE, LOGO_LINES } from "./DskcodeSplash.js";
 
-const CYBER_PALETTE = ["#00ffff", "#ff00ff", "#00ff41", "#ff1493", "#8b00ff"];
+/** 命令处理结果的类型，支持文本响应和动作跳转 */
+export type CommandAction =
+  | { kind: "text"; content: string }
+  | { kind: "exit" }
+  | { kind: "clear" }
+  | { kind: "navigate"; target: "game" | "stock" };
 
-const LOGO_LINES = [
-  "  ██████╗ ███████╗██╗  ██╗",
-  "  ██╔══██╗██╔════╝██║ ██╔╝",
-  "  ██║  ██║███████╗█████╔╝ ",
-  "  ██║  ██║╚════██║██╔═██╗ ",
-  "  ██████╔╝███████║██║  ██╗",
-  "  ╚═════╝ ╚══════╝╚═╝  ╚═╝",
-];
+export interface ChatCommand {
+  desc: string;
+  handler: () => CommandAction;
+}
 
-const COMMANDS: Record<string, { desc: string; handler: () => string | null }> = {
-  "/exit": { desc: "退出对话", handler: () => null },
-  "/quit": { desc: "退出对话", handler: () => null },
-  "/help": {
-    desc: "显示帮助信息",
-    handler: () =>
-      [
-        "可用命令：",
-        "  /exit, /quit  退出对话",
-        "  /help          显示此帮助",
-        "  /clear         清空对话历史",
-        "  /version       显示版本信息",
-        "  /game          启动内置小游戏",
-        "  /stock         查看股票行情",
-      ].join("\n"),
+/** 命令注册表，支持动态注册新命令 */
+const commandRegistry = new Map<string, ChatCommand>();
+
+/** 注册一个命令 */
+export function registerCommand(name: string, cmd: ChatCommand): void {
+  commandRegistry.set(name, cmd);
+}
+
+/** 获取所有已注册命令（用于 /help 生成帮助文本） */
+function getRegisteredCommands(): Map<string, ChatCommand> {
+  return commandRegistry;
+}
+
+// 注册内置命令
+registerCommand("/exit", { desc: "退出对话", handler: () => ({ kind: "exit" }) });
+registerCommand("/quit", { desc: "退出对话", handler: () => ({ kind: "exit" }) });
+registerCommand("/help", {
+  desc: "显示帮助信息",
+  handler: () => {
+    const commands = getRegisteredCommands();
+    const lines = ["可用命令："];
+    for (const [name, cmd] of commands) {
+      lines.push(`  ${name.padEnd(16)}${cmd.desc}`);
+    }
+    return { kind: "text", content: lines.join("\n") };
   },
-  "/clear": { desc: "清空对话历史", handler: () => "" },
-  "/version": { desc: "显示版本信息", handler: () => "dskcode v0.0.0" },
-  "/game": { desc: "启动游戏", handler: () => "__LAUNCH_GAME__" },
-  "/stock": { desc: "查看股票行情", handler: () => "__LAUNCH_STOCK__" },
-};
+});
+registerCommand("/clear", { desc: "清空对话历史", handler: () => ({ kind: "clear" }) });
+registerCommand("/version", { desc: "显示版本信息", handler: () => ({ kind: "text", content: "dskcode v0.0.0" }) });
+registerCommand("/game", { desc: "启动游戏", handler: () => ({ kind: "navigate", target: "game" }) });
+registerCommand("/stock", { desc: "查看股票行情", handler: () => ({ kind: "navigate", target: "stock" }) });
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -80,41 +92,35 @@ export function ChatSession({ providerCount, toolCount, verbose, onLaunchGame, o
     if (!trimmed) return;
 
     if (trimmed.startsWith("/")) {
-      const cmd = COMMANDS[trimmed.toLowerCase()];
+      const cmd = commandRegistry.get(trimmed.toLowerCase());
       if (cmd) {
-        if (trimmed.toLowerCase() === "/exit" || trimmed.toLowerCase() === "/quit") {
-          process.exit(0);
-          return;
-        }
-        if (trimmed.toLowerCase() === "/clear") {
-          setMessages([]);
-          setInput("");
-          return;
-        }
-
         const result = cmd.handler();
 
-        // 特殊命令：跳转到游戏/股票
-        if (result === "__LAUNCH_GAME__") {
-          setInput("");
-          onLaunchGame?.();
-          return;
+        switch (result.kind) {
+          case "exit":
+            process.exit(0);
+            return;
+          case "clear":
+            setMessages([]);
+            setInput("");
+            return;
+          case "navigate":
+            setInput("");
+            if (result.target === "game") {
+              onLaunchGame?.();
+            } else if (result.target === "stock") {
+              onLaunchStock?.();
+            }
+            return;
+          case "text":
+            setMessages((prev) => [
+              ...prev,
+              { role: "user", content: trimmed },
+              { role: "assistant", content: result.content },
+            ]);
+            setInput("");
+            return;
         }
-        if (result === "__LAUNCH_STOCK__") {
-          setInput("");
-          onLaunchStock?.();
-          return;
-        }
-
-        if (result) {
-          setMessages((prev) => [
-            ...prev,
-            { role: "user", content: trimmed },
-            { role: "assistant", content: result },
-          ]);
-        }
-        setInput("");
-        return;
       }
       setMessages((prev) => [
         ...prev,
@@ -131,7 +137,7 @@ export function ChatSession({ providerCount, toolCount, verbose, onLaunchGame, o
       { role: "assistant", content: "dskcode AI — 待实现（第07章）。当前为 CLI 框架演示模式。" },
     ]);
     setInput("");
-  }, []);
+  }, [onLaunchGame, onLaunchStock]);
 
   return (
     <Box flexDirection="column" paddingLeft={1} paddingRight={1}>

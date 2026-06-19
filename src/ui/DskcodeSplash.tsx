@@ -1,16 +1,18 @@
 import { Box, Text } from "ink";
 import { useEffect, useState } from "react";
 
-const CYBER_PALETTE = ["#00ffff", "#ff00ff", "#00ff41", "#ff1493", "#8b00ff"];
+/** 赛博朋克调色板 — 多处组件复用 */
+export const CYBER_PALETTE = ["#00ffff", "#ff00ff", "#00ff41", "#ff1493", "#8b00ff"] as const;
 
-const LOGO_LINES = [
+/** ASCII LOGO 行 — 多处组件复用 */
+export const LOGO_LINES = [
   "  ██████╗ ███████╗██╗  ██╗",
   "  ██╔══██╗██╔════╝██║ ██╔╝",
   "  ██║  ██║███████╗█████╔╝ ",
   "  ██║  ██║╚════██║██╔═██╗ ",
   "  ██████╔╝███████║██║  ██╗",
   "  ╚═════╝ ╚══════╝╚═╝  ╚═╝",
-];
+] as const;
 
 export function DskcodeSplash() {
   const [offset, setOffset] = useState(0);

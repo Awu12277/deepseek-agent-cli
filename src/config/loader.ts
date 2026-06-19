@@ -43,8 +43,10 @@ export const defaultConfig: Config = {
 // 配置文件路径解析
 // ---------------------------------------------------------------------------
 
-/** 判断一个字符串是否为合法的 URL（用于区分 local path 和 url） */
-function isUrl(s: string): boolean {
+/** 判断一个字符串是否为合法的 URL（用于区分 local path 和 url）。
+ * 目前暂未使用，保留以备 plugin 配置 URL 校验时使用。
+ */
+function _isUrl(s: string): boolean {
   try {
     new URL(s);
     return true;
@@ -134,32 +136,35 @@ const ENV_MAP: Record<string, keyof Config> = {
 /**
  * 将环境变量中读取的值覆盖到配置上。
  * 环境变量的优先级高于 TOML 文件，但低于 CLI flag。
+ * 返回一个新的配置对象，不修改原始配置。
  */
 function applyEnvVars(config: Config): Config {
+  // 浅拷贝以避免修改原始对象
+  const result: Config = { ...config, providers: [...config.providers] };
+
   // 1. DSKCODE_* 前缀的环境变量
   for (const [envKey, configKey] of Object.entries(ENV_MAP)) {
     const raw = process.env[envKey];
     if (raw === undefined) continue;
 
-    const cfg = config as unknown as Record<string, unknown>;
     switch (configKey) {
       case "verbose":
       case "defaultProvider": {
-        cfg[configKey] = raw;
+        (result as unknown as Record<string, unknown>)[configKey] = raw;
         break;
       }
       case "maxTokens":
       case "maxToolRounds": {
         const n = Number(raw);
         if (Number.isFinite(n) && n > 0) {
-          cfg[configKey] = n;
+          (result as unknown as Record<string, unknown>)[configKey] = n;
         }
         break;
       }
       case "temperature": {
         const n = Number(raw);
         if (Number.isFinite(n) && n >= 0 && n <= 2) {
-          cfg[configKey] = n;
+          (result as unknown as Record<string, unknown>)[configKey] = n;
         }
         break;
       }
@@ -169,13 +174,15 @@ function applyEnvVars(config: Config): Config {
   // 2. DEEPSEEK_API_KEY — 注入到名为 deepseek 的 provider
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (apiKey) {
-    const deepseek = config.providers.find((p) => p.name === "deepseek");
-    if (deepseek && !deepseek.apiKey) {
-      deepseek.apiKey = apiKey;
-    }
-    // 如果没有 deepseek provider，自动创建一个
-    if (!deepseek) {
-      config.providers.unshift({
+    const deepseekIdx = result.providers.findIndex((p) => p.name === "deepseek");
+    if (deepseekIdx !== -1) {
+      const existing = result.providers[deepseekIdx]!;
+      if (!existing.apiKey) {
+        result.providers[deepseekIdx] = { ...existing, apiKey };
+      }
+    } else {
+      // 如果没有 deepseek provider，自动创建一个
+      result.providers.unshift({
         name: "deepseek",
         baseUrl: "https://api.deepseek.com",
         model: "deepseek-v4-flash",
@@ -184,7 +191,7 @@ function applyEnvVars(config: Config): Config {
     }
   }
 
-  return config;
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -201,33 +208,38 @@ export interface CliFlags {
 /**
  * 将 CLI flag 中的值覆盖到配置上。
  * CLI flag 的优先级最高。
+ * 返回一个新的配置对象，不修改原始配置。
  */
 export function applyCliOverrides(config: Config, flags: CliFlags): Config {
+  const result: Config = { ...config, providers: [...config.providers] };
+
   if (flags.verbose !== undefined) {
-    config.verbose = flags.verbose;
+    result.verbose = flags.verbose;
   }
   if (flags.model !== undefined) {
     // 将 --model 的值映射为标准 model 名称
     // 如果用户指定了 --model，覆盖 defaultProvider 中配置的 model
-    // 但保留 provider 的选择，仅修改该 provider 的 model
-    const provider = config.providers.find(
-      (p) => p.name === config.defaultProvider,
+    const providerIdx = result.providers.findIndex(
+      (p) => p.name === result.defaultProvider,
     );
-    if (provider) {
-      provider.model = flags.model;
+    if (providerIdx !== -1) {
+      result.providers[providerIdx] = {
+        ...result.providers[providerIdx]!,
+        model: flags.model,
+      };
     }
   }
   if (flags.maxTokens !== undefined && flags.maxTokens > 0) {
-    config.maxTokens = flags.maxTokens;
+    result.maxTokens = flags.maxTokens;
   }
   if (
     flags.temperature !== undefined &&
     flags.temperature >= 0 &&
     flags.temperature <= 2
   ) {
-    config.temperature = flags.temperature;
+    result.temperature = flags.temperature;
   }
-  return config;
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -295,7 +307,15 @@ export function validateConfig(config: Config): ConfigError[] {
     });
   }
 
-  // 5. maxToolRounds 范围校验
+  // 5. maxTokens 范围校验
+  if (config.maxTokens !== undefined && config.maxTokens < 1) {
+    errors.push({
+      field: "maxTokens",
+      message: "maxTokens 必须大于等于 1。",
+    });
+  }
+
+  // 6. maxToolRounds 范围校验
   if (config.maxToolRounds !== undefined && config.maxToolRounds < 1) {
     errors.push({
       field: "maxToolRounds",
@@ -389,14 +409,15 @@ export function watchConfig(
 
         // 防抖：多次连续变更只触发一次
         if (debounceTimer) clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(async () => {
-          try {
-            const raw = readFile(filePath, "utf-8");
-            const config = await loadConfig(configPath);
-            callback(config);
-          } catch {
-            // 重载失败时不回调，等待下一次变更
-          }
+        debounceTimer = setTimeout(() => {
+          void (async () => {
+            try {
+              const config = await loadConfig(configPath);
+              callback(config);
+            } catch {
+              // 重载失败时不回调，等待下一次变更
+            }
+          })();
         }, 300);
       });
 
@@ -442,7 +463,7 @@ export async function saveApiKey(apiKey: string): Promise<string> {
   }
 
   // 更新或创建 deepseek provider
-  const providers = (configData.providers as Array<Record<string, unknown>>) ?? [];
+  const providers = (configData.providers as Record<string, unknown>[]) ?? [];
   const existing = providers.find((p) => p.name === "deepseek");
 
   if (existing) {

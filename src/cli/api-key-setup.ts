@@ -5,11 +5,17 @@ import chalk from "chalk";
  * 检测是否有可用的 API Key。
  * 遍历所有 provider 检查是否配置了 apiKey，同时检查 DEEPSEEK_API_KEY 环境变量。
  */
-export function hasApiKey(providers: Array<{ apiKey?: string }>): boolean {
+export function hasApiKey(providers: { apiKey?: string }[]): boolean {
   if (providers.some((p) => p.apiKey)) return true;
   if (process.env.DEEPSEEK_API_KEY) return true;
   return false;
 }
+
+/**
+ * API Key 最小长度校验值。
+ * DeepSeek 的 Key 通常以 sk- 开头，长度远超 10 位。
+ */
+const MIN_API_KEY_LENGTH = 10;
 
 /**
  * 交互式提示用户输入 DeepSeek API Key。
@@ -17,21 +23,11 @@ export function hasApiKey(providers: Array<{ apiKey?: string }>): boolean {
  * 返回用户输入的 Key，如果用户取消则返回 null。
  */
 export async function promptForApiKey(): Promise<string | null> {
-  console.log(
-    chalk.yellow("\n  ⚠ 未检测到 API Key 配置"),
-  );
-  console.log(
-    chalk.dim("  你可以通过以下任一方式配置："),
-  );
-  console.log(
-    chalk.dim("    · 环境变量: export DEEPSEEK_API_KEY=sk-xxx"),
-  );
-  console.log(
-    chalk.dim("    · 配置文件: ~/.dskcode/settings.json"),
-  );
-  console.log(
-    chalk.dim("    · 下面直接输入，自动保存到全局配置\n"),
-  );
+  console.log(chalk.yellow("\n  ⚠ 未检测到 API Key 配置"));
+  console.log(chalk.dim("  你可以通过以下任一方式配置："));
+  console.log(chalk.dim("    · 环境变量: export DEEPSEEK_API_KEY=sk-xxx"));
+  console.log(chalk.dim("    · 配置文件: ~/.dskcode/settings.json"));
+  console.log(chalk.dim("    · 下面直接输入，自动保存到全局配置\n"));
 
   const rl = createInterface({
     input: process.stdin,
@@ -39,16 +35,23 @@ export async function promptForApiKey(): Promise<string | null> {
   });
 
   return new Promise<string | null>((resolve) => {
+    let resolved = false;
+
     const cleanup = () => {
+      if (resolved) return;
+      resolved = true;
+      process.stdin.removeListener("keypress", onKeypress);
       rl.close();
     };
 
-    process.stdin.on("keypress", (_, key) => {
+    const onKeypress = (_: unknown, key: { ctrl?: boolean; name?: string }) => {
       if (key.ctrl && key.name === "c") {
         cleanup();
         resolve(null);
       }
-    });
+    };
+
+    process.stdin.on("keypress", onKeypress);
 
     rl.question(
       `  ${chalk.cyan("🔑")} ${chalk.bold("请输入你的 DeepSeek API Key:")} `,
@@ -60,7 +63,7 @@ export async function promptForApiKey(): Promise<string | null> {
           resolve(null);
           return;
         }
-        if (trimmed.length < 10) {
+        if (trimmed.length < MIN_API_KEY_LENGTH) {
           console.log(chalk.red("  ✖ API Key 格式不正确，长度至少 10 位"));
           resolve(null);
           return;

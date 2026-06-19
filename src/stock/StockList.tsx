@@ -8,6 +8,7 @@ import { useDoubleCtrlC } from "../ui/useDoubleCtrlC.js";
 // 分时数据接口
 // ---------------------------------------------------------------------------
 
+/** API 接口地址模板 */
 const MINUTE_API = "https://web.ifzq.gtimg.cn/appstock/app/minute/query?code={code}&r=0.1";
 
 interface MinuteResponse {
@@ -18,13 +19,11 @@ interface MinuteResponse {
   }>;
 }
 
-/** 把股票代码转为接口需要的格式（如 513090 → sh513090） */
-function toApiCode(code: string): string {
-  // 已带市场前缀，直接返回
-  if (/^sh|^sz/.test(code)) return code;
-  if (/^60/.test(code) || /^68/.test(code)) return "sh" + code;
-  if (/^00/.test(code) || /^30/.test(code) || /^39/.test(code)) return "sz" + code;
-  if (/^51/.test(code)) return "sh" + code;
+/** 确保股票代码带市场前缀（如 513090 → sh513090） */
+function normalizeApiCode(code: string): string {
+  if (code.startsWith("sh") || code.startsWith("sz")) return code;
+  if (/^60|^68|^51/.test(code)) return "sh" + code;
+  if (/^00|^30|^39/.test(code)) return "sz" + code;
   return "sh" + code;
 }
 
@@ -37,13 +36,13 @@ async function fetchStockMinute(code: string): Promise<{
   quote: StockRow | null;
   date: string;
 } | null> {
-  const url = MINUTE_API.replace("{code}", toApiCode(code));
+  const url = MINUTE_API.replace("{code}", normalizeApiCode(code));
   try {
     const resp = await fetch(url);
     const json = (await resp.json()) as MinuteResponse;
     if (json.code !== 0) return null;
 
-    const stockKey = toApiCode(code);
+    const stockKey = normalizeApiCode(code);
     const stockData = json.data?.[stockKey];
     if (!stockData) return null;
 
@@ -95,6 +94,11 @@ const minuteCache = new Map<string, number[]>();
 
 function cacheMinute(code: string, prices: number[]): void {
   minuteCache.set(code, prices);
+}
+
+/** 仅用于测试环境重置缓存 */
+export function _clearMinuteCache(): void {
+  minuteCache.clear();
 }
 
 function getCachedMinutes(code: string): number[] | undefined {
