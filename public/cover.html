@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>博客封面 - 从零开发 Agent CLI（四）</title>
+<style>
+  /* ============================================================
+     Cover: "终端极客" – Terminal Geek
+         16:9 (1920×1080)  |  TOML + CLI + CRT
+     ============================================================ */
+
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Noto+Sans+SC:wght@300;500;700;900&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0d1117;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    font-family: 'JetBrains Mono', 'Noto Sans SC', monospace;
+    overflow: hidden;
+    margin: 0;
+  }
+
+  /* ---------- 自适应居中容器 ---------- */
+  .cover-wrapper {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  .cover {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 1920px;
+    height: 1080px;
+    margin-left: -960px;
+    margin-top: -540px;
+    overflow: hidden;
+    background: #0d1117;
+  }
+
+  /* ---------- 背景网格 ---------- */
+  .grid {
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(0, 255, 65, 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0, 255, 65, 0.04) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(ellipse 70% 60% at 50% 50%, black 30%, transparent 70%);
+    -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 50%, black 30%, transparent 70%);
+  }
+
+  /* ---------- CRT 扫描线 ---------- */
+  .scanlines {
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0, 0, 0, 0.08) 2px,
+      rgba(0, 0, 0, 0.08) 4px
+    );
+    pointer-events: none;
+    z-index: 10;
+  }
+
+  .scanlines::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at 50% 50%, transparent 50%, rgba(0, 0, 0, 0.4) 100%);
+  }
+
+  /* ---------- 霓虹光晕 ---------- */
+  .glow {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(120px);
+    opacity: 0.15;
+    pointer-events: none;
+  }
+
+  .glow--green {
+    width: 600px; height: 600px;
+    background: #00ff41;
+    top: 15%; left: 10%;
+    animation: pulseGlow 5s ease-in-out infinite alternate;
+  }
+
+  .glow--cyan {
+    width: 500px; height: 500px;
+    background: #00b4d8;
+    bottom: 10%; right: 8%;
+    animation: pulseGlow 6s ease-in-out infinite alternate-reverse;
+  }
+
+  @keyframes pulseGlow {
+    0%   { opacity: 0.08; transform: scale(1); }
+    100% { opacity: 0.22; transform: scale(1.25); }
+  }
+
+  /* ---------- 终端窗口 ---------- */
+  .terminal {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 1300px;
+    background: rgba(13, 17, 23, 0.85);
+    border: 1px solid rgba(0, 255, 65, 0.25);
+    border-radius: 16px;
+    backdrop-filter: blur(8px);
+    box-shadow:
+      0 0 60px rgba(0, 255, 65, 0.06),
+      inset 0 0 60px rgba(0, 255, 65, 0.02);
+    overflow: hidden;
+    z-index: 5;
+  }
+
+  /* 窗口标题栏 */
+  .titlebar {
+    display: flex;
+    align-items: center;
+    padding: 18px 28px;
+    background: rgba(0, 255, 65, 0.04);
+    border-bottom: 1px solid rgba(0, 255, 65, 0.12);
+    gap: 14px;
+  }
+
+  .dots {
+    display: flex;
+    gap: 10px;
+  }
+
+  .dot {
+    width: 14px; height: 14px;
+    border-radius: 50%;
+  }
+
+  .dot--red    { background: #ff5f56; }
+  .dot--yellow { background: #ffbd2e; }
+  .dot--green  { background: #27c93f; }
+
+  .titlebar__path {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 16px;
+    color: rgba(0, 255, 65, 0.5);
+    letter-spacing: 0.3px;
+  }
+
+  .titlebar__path .highlight {
+    color: rgba(0, 255, 65, 0.8);
+  }
+
+  /* ---------- 终端内容 ---------- */
+  .terminal__body {
+    padding: 44px 52px 52px;
+  }
+
+  /* 提示行 */
+  .prompt {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 28px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .prompt__sigil {
+    color: #00ff41;
+    font-size: 20px;
+    font-weight: 600;
+  }
+
+  .prompt__cmd {
+    color: rgba(0, 255, 65, 0.55);
+    font-size: 18px;
+    font-weight: 400;
+  }
+
+  .prompt__cursor {
+    width: 10px; height: 22px;
+    background: #00ff41;
+    animation: blink 1s step-end infinite;
+  }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0; }
+  }
+
+  /* ---------- 主标题 ---------- */
+  .main-title {
+    font-family: 'Noto Sans SC', sans-serif;
+    font-weight: 900;
+    font-size: 72px;
+    line-height: 1.15;
+    color: #e6edf3;
+    margin-bottom: 8px;
+  }
+
+  .main-title .highlight {
+    background: linear-gradient(135deg, #00ff41, #00b4d8);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* 副标题 */
+  .sub-title {
+    font-family: 'Noto Sans SC', sans-serif;
+    font-weight: 500;
+    font-size: 28px;
+    color: rgba(0, 180, 216, 0.75);
+    margin-bottom: 32px;
+    letter-spacing: 1px;
+  }
+
+  /* ---------- 代码块（TOML） ---------- */
+  .code-block {
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(0, 255, 65, 0.1);
+    border-radius: 10px;
+    padding: 22px 26px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 15px;
+    line-height: 1.8;
+    margin-bottom: 26px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .code-block .file-badge {
+    position: absolute;
+    top: 0;
+    right: 0;
+    background: rgba(0, 255, 65, 0.08);
+    color: rgba(0, 255, 65, 0.35);
+    font-size: 11px;
+    padding: 4px 12px;
+    border-radius: 0 10px 0 10px;
+  }
+
+  .code-line {
+    white-space: pre;
+  }
+
+  .code-line .keyword { color: #ff7b72; }
+  .code-line .string  { color: #a5d6ff; }
+  .code-line .number  { color: #79c0ff; }
+  .code-line .comment { color: rgba(0, 255, 65, 0.3); font-style: italic; }
+  .code-line .bracket { color: #ffa657; }
+  .code-line .key     { color: #d2a8ff; }
+  .code-line .punct   { color: rgba(0, 255, 65, 0.6); }
+
+  /* ---------- 底部标签 ---------- */
+  .footer-tags {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    padding: 6px 14px;
+    border-radius: 6px;
+    background: rgba(0, 255, 65, 0.06);
+    border: 1px solid rgba(0, 255, 65, 0.12);
+    color: rgba(0, 255, 65, 0.6);
+  }
+
+  .tag--cyan {
+    border-color: rgba(0, 180, 216, 0.2);
+    background: rgba(0, 180, 216, 0.06);
+    color: rgba(0, 180, 216, 0.65);
+  }
+
+  /* ---------- 角落装饰 ---------- */
+  .corner-deco {
+    position: absolute;
+    z-index: 2;
+    pointer-events: none;
+  }
+
+  .corner-deco--tl {
+    top: 40px;
+    left: 40px;
+    width: 80px;
+    height: 80px;
+    border-top: 2px solid rgba(0, 255, 65, 0.15);
+    border-left: 2px solid rgba(0, 255, 65, 0.15);
+  }
+
+  .corner-deco--br {
+    bottom: 40px;
+    right: 40px;
+    width: 80px;
+    height: 80px;
+    border-bottom: 2px solid rgba(0, 255, 65, 0.15);
+    border-right: 2px solid rgba(0, 255, 65, 0.15);
+  }
+
+  /* ---------- 底部版本信息 ---------- */
+  .version-bar {
+    position: absolute;
+    bottom: 44px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: rgba(0, 255, 65, 0.2);
+    z-index: 5;
+  }
+
+  .version-bar .sep {
+    color: rgba(0, 255, 65, 0.1);
+  }
+
+  .version-bar .active {
+    color: rgba(0, 255, 65, 0.5);
+  }
+
+  /* ---------- 动画入场 ---------- */
+  .animate-in {
+    animation: fadeSlide 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    opacity: 0;
+  }
+
+  .animate-in--1 { animation-delay: 0.1s; }
+  .animate-in--2 { animation-delay: 0.25s; }
+  .animate-in--3 { animation-delay: 0.4s; }
+  .animate-in--4 { animation-delay: 0.55s; }
+  .animate-in--5 { animation-delay: 0.7s; }
+
+  @keyframes fadeSlide {
+    0%   { opacity: 0; transform: translateY(12px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+</style>
+</head>
+<body>
+<div class="cover-wrapper">
+<div class="cover" id="cover">
+  <!-- 背景元素 -->
+  <div class="grid"></div>
+  <div class="glow glow--green"></div>
+  <div class="glow glow--cyan"></div>
+  <div class="scanlines"></div>
+
+  <!-- 角落装饰 -->
+  <div class="corner-deco corner-deco--tl"></div>
+  <div class="corner-deco corner-deco--br"></div>
+
+  <!-- 终端窗口 -->
+  <div class="terminal animate-in animate-in--1">
+    <!-- 标题栏 -->
+    <div class="titlebar">
+      <div class="dots">
+        <div class="dot dot--red"></div>
+        <div class="dot dot--yellow"></div>
+        <div class="dot dot--green"></div>
+      </div>
+      <div class="titlebar__path">
+        ~/projects/agent-cli — <span class="highlight">zsh</span>
+      </div>
+    </div>
+
+    <!-- 内容区 -->
+    <div class="terminal__body">
+      <!-- 提示行 -->
+      <div class="prompt animate-in animate-in--2">
+        <span class="prompt__sigil">❯</span>
+        <span class="prompt__cmd">cat .dskcode.toml</span>
+        <span class="prompt__cursor"></span>
+      </div>
+
+      <!-- 主标题 -->
+      <div class="main-title animate-in animate-in--3">
+        从零开发<br>
+        <span class="highlight">Agent CLI</span>（四）
+      </div>
+
+      <!-- 副标题 -->
+      <div class="sub-title animate-in animate-in--4">
+        — 给 CLI 工具搭一个生产级配置体系
+      </div>
+
+      <!-- TOML 代码块 -->
+      <div class="code-block animate-in animate-in--5">
+        <span class="file-badge">config.toml</span>
+        <div class="code-line"><span class="comment"># 四层加载：default → user → project → flag</span></div>
+        <div class="code-line"><span class="keyword">default_model</span> = <span class="string">"deepseek-flash"</span></div>
+        <div class="code-line">&nbsp;</div>
+        <div class="code-line"><span class="bracket">[[providers]]</span></div>
+        <div class="code-line"><span class="key">name</span>        = <span class="string">"deepseek-flash"</span></div>
+        <div class="code-line"><span class="key">base_url</span>    = <span class="string">"https://api.deepseek.com"</span></div>
+        <div class="code-line"><span class="key">api_key_env</span> = <span class="string">"DEEPSEEK_API_KEY"</span></div>
+        <div class="code-line"><span class="key">models</span>      = [<span class="string">"deepseek-v4-flash"</span>, <span class="string">"deepseek-v4-pro"</span>]</div>
+        <div class="code-line"><span class="key">price</span>       = { <span class="key">input</span> = <span class="number">1</span>, <span class="key">output</span> = <span class="number">2</span>, <span class="key">currency</span> = <span class="string">"¥"</span> }</div>
+      </div>
+
+      <!-- 底部标签 -->
+      <div class="footer-tags animate-in animate-in--5">
+        <span class="tag">TypeScript</span>
+        <span class="tag tag--cyan">TOML</span>
+        <span class="tag tag--cyan">分层加载</span>
+        <span class="tag">DeepSeek · Reasonix</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 底部版本栏 -->
+  <div class="version-bar animate-in animate-in--5">
+    <span>dskcode v0.1.4</span>
+    <span class="sep">|</span>
+    <span class="active">~/projects/ts-version</span>
+    <span class="sep">|</span>
+    <span># 配置系统 · 第 03 章</span>
+  </div>
+</div>
+</div>
+
+<script>
+// 自适应缩放：保持 16:9 比例填满视口
+(function fitCover() {
+  const cover = document.getElementById('cover');
+  function resize() {
+    var w = window.innerWidth;
+    var h = window.innerHeight;
+    var scale = Math.min(w / 1920, h / 1080);
+    cover.style.transform = 'scale(' + scale + ')';
+    // 微调负边距补偿缩放偏移
+    var ox = (1920 * (1 - scale)) / 2;
+    var oy = (1080 * (1 - scale)) / 2;
+    cover.style.marginLeft = (-960 - ox) + 'px';
+    cover.style.marginTop = (-540 - oy) + 'px';
+  }
+  resize();
+  window.addEventListener('resize', resize);
+})();
+</script>
+</body>
+</html>
