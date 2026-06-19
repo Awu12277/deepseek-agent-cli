@@ -6,6 +6,7 @@ export {
   validateConfig,
   watchConfig,
   saveApiKey,
+  saveStockConfig,
   defaultConfig,
 } from "./loader.js";
 export type { CliFlags, ConfigError, ConfigChangeCallback } from "./loader.js";

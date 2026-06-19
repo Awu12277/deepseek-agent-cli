@@ -458,7 +458,7 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
       </Box>
       <Box>
         <Text dimColor>
-          {`  最后更新: ${lastUpdate}`}
+          {`  最后更新: ${lastUpdate}  编辑自选股: ~/.dskcode/settings.json`}
         </Text>
       </Box>
 

@@ -3,7 +3,9 @@ import { loadConfigMiddleware } from "./middleware.js";
 import type { DskcodeContext } from "./middleware.js";
 import { customHelp } from "./help.js";
 import { hasApiKey, promptForApiKey } from "./api-key-setup.js";
-import { saveApiKey, loadAndValidate } from "../config/index.js";
+import { saveApiKey, loadAndValidate, saveStockConfig } from "../config/index.js";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { renderApp, ChatSession } from "../ui/index.js";
 import { initGames } from "../game/registry.js";
 import { listGames, getGame } from "../game/index.js";
@@ -190,9 +192,36 @@ compdef _dskcode_completion dskcode`);
     .argument("[codes...]", "股票代码（空格分隔），如 513090 600519")
     .action(async function (codes: string[]) {
       const ctx = (this as unknown as Record<string, unknown>).dskcodeCtx as DskcodeContext | undefined;
+
+      // 检查用户全局配置文件是否已有自选股配置；没有则自动创建
+      const home = process.env.HOME ?? process.env.USERPROFILE ?? "~";
+      const globalConfigPath = join(home, ".dskcode", "settings.json");
+      let globalConfigHasStock = false;
+      try {
+        const raw = await readFile(globalConfigPath, "utf-8");
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        const stock = parsed.stock as Record<string, unknown> | undefined;
+        globalConfigHasStock = Array.isArray(stock?.symbols) && (stock!.symbols as unknown[]).length > 0;
+      } catch {
+        // 文件不存在 — 需要创建
+      }
+
+      if (!globalConfigHasStock) {
+        const defaultSymbols = [
+          { code: "sh000001" },
+          { code: "sz399300" },
+          { code: "sh601899" },
+        ];
+        const savedPath = await saveStockConfig(defaultSymbols);
+        console.log(`${chalk.green("✔")} 已生成自选股配置: ${chalk.dim(savedPath)}`);
+        console.log(`${chalk.dim("  提示: 可编辑上述文件自定义自选股列表")}\n`);
+      }
+
+      // 加载配置（包含可能刚写入的自选股）
+      const freshResult = await loadAndValidate();
       const codeList = codes && codes.length > 0
         ? codes
-        : ctx?.config.stock?.symbols?.map((s) => s.code)
+        : freshResult.config.stock?.symbols?.map((s) => s.code)
           ?? ["sh000001", "sz399006", "sh601688"];
 
       const app = renderApp(
