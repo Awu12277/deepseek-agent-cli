@@ -431,13 +431,14 @@ export async function saveApiKey(apiKey: string): Promise<string> {
   // 确保目录存在
   await mkdir(configDir, { recursive: true });
 
-  // 读取现有配置，或从空对象开始
-  let configData: Record<string, unknown> = {};
+  // 读取现有配置，或从默认配置开始
+  let configData: Record<string, unknown>;
   try {
     const raw = await readFile(configFile, "utf-8");
     configData = JSON.parse(raw);
   } catch {
-    // 文件不存在，从头构建
+    // 文件不存在，用内置默认值填充（tools、plugins 等都会写入）
+    configData = structuredClone(defaultConfig) as unknown as Record<string, unknown>;
   }
 
   // 更新或创建 deepseek provider
