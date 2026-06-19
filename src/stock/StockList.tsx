@@ -165,10 +165,13 @@ function latestPoints(data: number[], maxPoints = 60): number[] {
 interface StockListProps {
   /** 自选股代码列表 */
   codes?: string[];
+  /** 按 q 时退出 */
   onExit: () => void;
+  /** 按 q 时返回上级（从 chat 内跳转时使用） */
+  onBackToChat?: () => void;
 }
 
-export function StockList({ codes, onExit }: StockListProps) {
+export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
   const [stocks, setStocks] = useState<StockRow[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -272,13 +275,14 @@ export function StockList({ codes, onExit }: StockListProps) {
           const stock = stocks[selectedIndex];
           if (stock) setDetailView(stock);
         } else if (key.escape || input === "q") {
-          onExit();
+          if (onBackToChat) onBackToChat();
+          else onExit();
         } else if (input === "r") {
           setCountdown(5);
           loadData();
         }
       },
-      [stocks, selectedIndex, detailView, onExit, loadData],
+      [stocks, selectedIndex, detailView, onExit, onBackToChat, loadData],
     ),
   );
 

@@ -13,9 +13,9 @@ const LOGO_LINES = [
   "  ╚═════╝ ╚══════╝╚═╝  ╚═╝",
 ];
 
-const COMMANDS: Record<string, { desc: string; handler: () => string }> = {
-  "/exit": { desc: "退出对话", handler: () => "" },
-  "/quit": { desc: "退出对话", handler: () => "" },
+const COMMANDS: Record<string, { desc: string; handler: () => string | null }> = {
+  "/exit": { desc: "退出对话", handler: () => null },
+  "/quit": { desc: "退出对话", handler: () => null },
   "/help": {
     desc: "显示帮助信息",
     handler: () =>
@@ -25,10 +25,14 @@ const COMMANDS: Record<string, { desc: string; handler: () => string }> = {
         "  /help          显示此帮助",
         "  /clear         清空对话历史",
         "  /version       显示版本信息",
+        "  /game          启动内置小游戏",
+        "  /stock         查看股票行情",
       ].join("\n"),
   },
   "/clear": { desc: "清空对话历史", handler: () => "" },
   "/version": { desc: "显示版本信息", handler: () => "dskcode v0.0.0" },
+  "/game": { desc: "启动游戏", handler: () => "__LAUNCH_GAME__" },
+  "/stock": { desc: "查看股票行情", handler: () => "__LAUNCH_STOCK__" },
 };
 
 interface ChatMessage {
@@ -40,9 +44,11 @@ interface ChatSessionProps {
   providerCount: number;
   toolCount: number;
   verbose: boolean;
+  onLaunchGame?: () => void;
+  onLaunchStock?: () => void;
 }
 
-export function ChatSession({ providerCount, toolCount, verbose }: ChatSessionProps) {
+export function ChatSession({ providerCount, toolCount, verbose, onLaunchGame, onLaunchStock }: ChatSessionProps) {
   const [offset, setOffset] = useState(0);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -70,7 +76,21 @@ export function ChatSession({ providerCount, toolCount, verbose }: ChatSessionPr
           setInput("");
           return;
         }
+
         const result = cmd.handler();
+
+        // 特殊命令：跳转到游戏/股票
+        if (result === "__LAUNCH_GAME__") {
+          setInput("");
+          onLaunchGame?.();
+          return;
+        }
+        if (result === "__LAUNCH_STOCK__") {
+          setInput("");
+          onLaunchStock?.();
+          return;
+        }
+
         if (result) {
           setMessages((prev) => [
             ...prev,

@@ -60,16 +60,57 @@ export function createCli(): Command {
         ctx = { ...ctx, config: result.config };
       }
 
-      const app = renderApp(
-        <ChatSession
-          providerCount={ctx?.config.providers.length ?? 1}
-          toolCount={ctx?.config.tools.length ?? 0}
-          verbose={ctx?.verbose ?? false}
-        />,
-      );
-
-      await app.waitUntilExit;
+      startChat(ctx);
     });
+
+  function startChat(
+    ctx: { verbose: boolean; config: { providers: Array<{ apiKey?: string }>; tools: unknown[] } } | undefined,
+  ) {
+    const chatApp = renderApp(
+      <ChatSession
+        providerCount={ctx?.config.providers.length ?? 1}
+        toolCount={ctx?.config.tools.length ?? 0}
+        verbose={ctx?.verbose ?? false}
+        onLaunchGame={() => {
+          chatApp.unmount();
+          setImmediate(() => {
+            initGames();
+            const games = listGames();
+            const { unmount } = render(
+              <GamePicker
+                games={games}
+                onSelect={async (game: Game) => {
+                  unmount();
+                  await game.play();
+                  // 游戏结束后返回对话
+                  startChat(ctx);
+                }}
+                onBackToChat={() => {
+                  unmount();
+                  setImmediate(() => startChat(ctx));
+                }}
+              />,
+            );
+          });
+        }}
+        onLaunchStock={() => {
+          chatApp.unmount();
+          setImmediate(() => {
+            const stockApp = renderApp(
+              <StockList
+                codes={["sh000001", "sz399006", "sh601688"]}
+                onBackToChat={() => {
+                  stockApp.unmount();
+                  setImmediate(() => startChat(ctx));
+                }}
+                onExit={() => process.exit(0)}
+              />,
+            );
+          });
+        }}
+      />,
+    );
+  }
 
   // run
   program

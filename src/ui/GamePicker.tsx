@@ -5,10 +5,11 @@ import type { Game } from "../game/index.js";
 interface GamePickerProps {
   games: Game[];
   onSelect: (game: Game) => void;
-  onExit: () => void;
+  onExit?: () => void;
+  onBackToChat?: () => void;
 }
 
-export function GamePicker({ games, onSelect, onExit }: GamePickerProps) {
+export function GamePicker({ games, onSelect, onExit, onBackToChat }: GamePickerProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   useInput(
@@ -23,10 +24,11 @@ export function GamePicker({ games, onSelect, onExit }: GamePickerProps) {
           const game = games[selectedIndex];
           if (game) onSelect(game);
         } else if (key.escape || input === "q") {
-          onExit();
+          if (onBackToChat) onBackToChat();
+          else onExit?.();
         }
       },
-      [games, selectedIndex, onSelect, onExit],
+      [games, selectedIndex, onSelect, onExit, onBackToChat],
     ),
   );
 
