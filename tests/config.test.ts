@@ -10,7 +10,7 @@ describe("defaultConfig", () => {
     const ds = defaultConfig.providers.find((p) => p.name === "deepseek");
     expect(ds).toBeDefined();
     expect(ds!.baseUrl).toBe("https://api.deepseek.com");
-    expect(ds!.model).toBe("deepseek-chat");
+    expect(ds!.model).toBe("deepseek-v4-flash");
   });
 
   it("should list all 8 built-in tools", () => {

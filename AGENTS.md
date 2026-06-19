@@ -16,10 +16,14 @@ dskcode 是一个基于 DeepSeek 的 AI 编程助手终端 CLI 工具，源自 R
 - **运行时**：Node.js >= 18
 - **语言**：TypeScript (ES2022, ESM)
 - **CLI 框架**：commander
-- **配置解析**：smol-toml
 - **构建**：tsup (esbuild)
 - **测试**：Vitest
 - **包管理器**：npm
+
+## 模型支持
+
+- 仅支持 **DeepSeek-V4-Flash**（默认）和 **DeepSeek-V4-Pro** 两个模型
+- 配置中 `providers[].model` 字段填写 `deepseek-v4-flash` 或 `deepseek-v4-pro`
 
 ## 模块架构
 
@@ -37,8 +41,8 @@ src/
 ## 配置层级
 
 1. 内置默认值
-2. 用户全局 `~/.config/dskcode.toml`
-3. 项目本地 `.dskcode.toml`
+2. 用户全局 `~/.dskcode/settings.json`
+3. 项目本地 `.dskcode/settings.json`
 4. 环境变量
 5. CLI flag
 

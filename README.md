@@ -13,6 +13,7 @@
 - **终端原生交互** — `dskcode chat` 进入交互式对话，在终端中直接与 AI 协作编码
 - **一次性任务执行** — `dskcode run 重构所有 TODO 为 Jira 链接` 让 AI 自动完成
 - **DeepSeek 深度集成** — 原生 DeepSeek API 支持，Prefix Cache 感知，成本透明
+- **模型支持** — 仅支持 **DeepSeek-V4-Flash**（默认）和 **DeepSeek-V4-Pro** 两个模型
 - **工具系统** — AI 可以读文件、写代码、执行命令、搜索代码，像人类开发者一样工作
 - **MCP 插件** — 通过 Model Context Protocol 扩展任意外部工具
 - **项目记忆** — AGENTS.md 让你的项目上下文被 AI 理解
@@ -67,30 +68,46 @@ npx dskcode chat
 
 ## 配置
 
-dskcode 使用 TOML 格式的配置文件，支持多层级合并：
+dskcode 使用 JSON 格式的配置文件，支持多层级合并：
 
 1. **内置默认值** — 无需配置即可运行
-2. **用户全局** — `~/.config/dskcode.toml`
-3. **项目本地** — 当前目录下的 `.dskcode.toml`
+2. **用户全局** — `~/.dskcode/settings.json`
+3. **项目本地** — 当前目录下的 `.dskcode/settings.json`
 4. **环境变量** — 如 `DEEPSEEK_API_KEY`
 5. **CLI flag** — 命令行参数优先级最高
 
 ### 配置示例
 
-```toml
-defaultProvider = "deepseek"
+**全局配置（~/.dskcode/settings.json，存放个人密钥）：**
 
-[providers]
-  [providers.deepseek]
-  apiKey = "sk-xxx"
-  baseUrl = "https://api.deepseek.com"
-  model = "deepseek-chat"
+```json
+{
+  "defaultProvider": "deepseek",
+  "providers": [
+    {
+      "name": "deepseek",
+      "apiKey": "sk-xxx",
+      "baseUrl": "https://api.deepseek.com",
+      "model": "deepseek-v4-flash"
+    }
+  ]
+}
+```
 
-[tools]
-  read_file = true
-  write_file = true
-  bash = true
-  grep = true
+**项目配置（.dskcode/settings.json，存放团队约定的行为参数）：**
+
+```json
+{
+  "defaultProvider": "deepseek",
+  "temperature": 0.3,
+  "maxToolRounds": 30,
+  "tools": [
+    { "name": "read_file", "enabled": true },
+    { "name": "write_file", "enabled": true },
+    { "name": "bash", "enabled": true },
+    { "name": "grep", "enabled": true }
+  ]
+}
 ```
 
 ## 架构

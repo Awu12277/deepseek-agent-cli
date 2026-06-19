@@ -34,6 +34,14 @@ export interface PluginConfig {
 export interface Config {
   /** 默认 Provider 名称（必须匹配 TOML 中某个 provider 的 name 字段） */
   defaultProvider: string;
+  /** 是否开启详细日志输出 */
+  verbose?: boolean;
+  /** 每次 LLM 请求的最大 token 数 */
+  maxTokens?: number;
+  /** 生成温度（0.0 ~ 2.0） */
+  temperature?: number;
+  /** 单次会话最大工具调用轮次 */
+  maxToolRounds?: number;
   /** Provider 定义列表 */
   providers: ProviderConfig[];
   /** 工具设置 */

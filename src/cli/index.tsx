@@ -1,6 +1,8 @@
 import { Command } from "commander";
 import { loadConfigMiddleware } from "./middleware.js";
 import { customHelp } from "./help.js";
+import { hasApiKey, promptForApiKey } from "./api-key-setup.js";
+import { saveApiKey, loadAndValidate } from "../config/index.js";
 import { renderApp, ChatSession } from "../ui/index.js";
 import { initGames } from "../game/registry.js";
 import { listGames, getGame } from "../game/index.js";
@@ -24,9 +26,9 @@ export function createCli(): Command {
 
   program.helpInformation = () => customHelp(program);
 
-  program.hook("preAction", async (thisCommand) => {
+  program.hook("preAction", async (thisCommand, actionCommand) => {
     const ctx = await loadConfigMiddleware.call(thisCommand);
-    (thisCommand as unknown as Record<string, unknown>).dskcodeCtx = ctx;
+    (actionCommand as unknown as Record<string, unknown>).dskcodeCtx = ctx;
   });
 
   // chat — 交互式对话
@@ -39,9 +41,23 @@ export function createCli(): Command {
         process.exit(1);
       }
 
-      const ctx = (this as unknown as Record<string, unknown>).dskcodeCtx as
-        | { verbose: boolean; config: { providers: unknown[]; tools: unknown[] } }
+      let ctx = (this as unknown as Record<string, unknown>).dskcodeCtx as
+        | { verbose: boolean; config: { providers: Array<{ apiKey?: string }>; tools: unknown[] } }
         | undefined;
+
+      // 检查 API Key，如果没有则交互式输入
+      if (ctx && !hasApiKey(ctx.config.providers)) {
+        const key = await promptForApiKey();
+        if (!key) process.exit(1);
+
+        // 保存到全局配置
+        const savedPath = await saveApiKey(key);
+        console.log(`  ${chalk.green("✔")} API Key 已保存到 ${chalk.dim(savedPath)}\n`);
+
+        // 重新加载配置，使新 Key 生效
+        const result = await loadAndValidate();
+        ctx = { ...ctx, config: result.config };
+      }
 
       const app = renderApp(
         <ChatSession
