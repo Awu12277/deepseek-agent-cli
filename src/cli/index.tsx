@@ -90,6 +90,7 @@ export function createCli(): Command {
                   setImmediate(() => startChat(ctx));
                 }}
               />,
+              { exitOnCtrlC: false },
             );
           });
         }}
@@ -236,6 +237,7 @@ compdef _dskcode_completion dskcode`);
                 resolve(null);
               }}
             />,
+            { exitOnCtrlC: false },
           );
         });
 

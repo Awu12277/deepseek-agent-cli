@@ -1,6 +1,7 @@
 import { Box, Text, useInput } from "ink";
 import { useState, useCallback } from "react";
 import type { Game } from "../game/index.js";
+import { useDoubleCtrlC } from "../ui/useDoubleCtrlC.js";
 
 interface GamePickerProps {
   games: Game[];
@@ -12,9 +13,18 @@ interface GamePickerProps {
 export function GamePicker({ games, onSelect, onExit, onBackToChat }: GamePickerProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
 
+  const exitAction = onBackToChat ?? onExit ?? (() => process.exit(0));
+  const { doubleCtrlC, handleCtrlC } = useDoubleCtrlC(exitAction);
+
   useInput(
     useCallback(
       (input, key) => {
+        // Ctrl+C：双击退出
+        if (input === "c" && key.ctrl) {
+          handleCtrlC();
+          return;
+        }
+
         if (games.length === 0) return;
         if (key.upArrow || input === "k") {
           setSelectedIndex((prev) => (prev > 0 ? prev - 1 : games.length - 1));
@@ -28,7 +38,7 @@ export function GamePicker({ games, onSelect, onExit, onBackToChat }: GamePicker
           else onExit?.();
         }
       },
-      [games, selectedIndex, onSelect, onExit, onBackToChat],
+      [games, selectedIndex, onSelect, onExit, onBackToChat, handleCtrlC],
     ),
   );
 
@@ -72,6 +82,15 @@ export function GamePicker({ games, onSelect, onExit, onBackToChat }: GamePicker
           {"  ↑/↓ 选择  Enter 启动  q 返回"}
         </Text>
       </Box>
+
+      {/* 双击 Ctrl+C 退出提示 */}
+      {doubleCtrlC && (
+        <Box marginTop={1}>
+          <Text color="#ff1493" bold>
+            {"  ⚠ 再按一次 Ctrl+C 退出 dskcode"}
+          </Text>
+        </Box>
+      )}
     </Box>
   );
 }

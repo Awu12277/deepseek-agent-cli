@@ -1,6 +1,7 @@
-import { Box, Text } from "ink";
+import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
 import { useEffect, useState, useCallback } from "react";
+import { useDoubleCtrlC } from "./useDoubleCtrlC.js";
 
 const CYBER_PALETTE = ["#00ffff", "#ff00ff", "#00ff41", "#ff1493", "#8b00ff"];
 
@@ -52,6 +53,20 @@ export function ChatSession({ providerCount, toolCount, verbose, onLaunchGame, o
   const [offset, setOffset] = useState(0);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
+
+  const { doubleCtrlC, handleCtrlC } = useDoubleCtrlC(() => process.exit(0));
+
+  // 捕获 Ctrl+C，启用"双击退出"交互
+  useInput(
+    useCallback(
+      (input, key) => {
+        if (input === "c" && key.ctrl) {
+          handleCtrlC();
+        }
+      },
+      [handleCtrlC],
+    ),
+  );
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -182,6 +197,15 @@ export function ChatSession({ providerCount, toolCount, verbose, onLaunchGame, o
           {"  " + "─".repeat(36)}
         </Text>
       </Box>
+
+      {/* 双击 Ctrl+C 退出提示 */}
+      {doubleCtrlC && (
+        <Box marginTop={1}>
+          <Text color="#ff1493" bold>
+            {"  ⚠ 再按一次 Ctrl+C 退出 dskcode"}
+          </Text>
+        </Box>
+      )}
     </Box>
   );
 }

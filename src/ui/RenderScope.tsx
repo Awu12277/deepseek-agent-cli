@@ -8,7 +8,8 @@ export interface RenderScopeHandle {
 }
 
 export function renderApp(node: ReactNode): RenderScopeHandle {
-  const { waitUntilExit, clear, unmount } = render(node);
+  // exitOnCtrlC: false — 让组件自行处理 Ctrl+C（双击退出）
+  const { waitUntilExit, clear, unmount } = render(node, { exitOnCtrlC: false });
   return { waitUntilExit: waitUntilExit(), clear, unmount };
 }
 

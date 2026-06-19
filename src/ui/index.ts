@@ -5,3 +5,4 @@ export { StatusMessage } from "./StatusMessage.js";
 export { DskcodeSplash } from "./DskcodeSplash.js";
 export { ChatSession } from "./ChatSession.js";
 export { GamePicker } from "./GamePicker.js";
+export { useDoubleCtrlC } from "./useDoubleCtrlC.js";

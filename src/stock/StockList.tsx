@@ -2,6 +2,7 @@ import { Box, Text, useInput } from "ink";
 import { useState, useCallback, useEffect } from "react";
 import asciichart from "asciichart";
 import type { StockRow } from "./types.js";
+import { useDoubleCtrlC } from "../ui/useDoubleCtrlC.js";
 
 // ---------------------------------------------------------------------------
 // 分时数据接口
@@ -182,6 +183,8 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
   const [detailCountdown, setDetailCountdown] = useState(10);
   const [countdown, setCountdown] = useState(5);
 
+  const { doubleCtrlC, handleCtrlC } = useDoubleCtrlC(onExit);
+
   // ---------- 数据加载 ----------
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -257,6 +260,12 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
   useInput(
     useCallback(
       (input, key) => {
+        // Ctrl+C：双击退出
+        if (input === "c" && key.ctrl) {
+          handleCtrlC();
+          return;
+        }
+
         if (detailView) {
           // 详情模式下按 Esc/q 返回列表
           if (key.escape || input === "q" || input === " ") {
@@ -282,7 +291,7 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
           loadData();
         }
       },
-      [stocks, selectedIndex, detailView, onExit, onBackToChat, loadData],
+      [stocks, selectedIndex, detailView, onExit, onBackToChat, loadData, handleCtrlC],
     ),
   );
 
@@ -419,6 +428,15 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
           {`  最后更新: ${lastUpdate}`}
         </Text>
       </Box>
+
+      {/* 双击 Ctrl+C 退出提示 */}
+      {doubleCtrlC && (
+        <Box marginTop={1}>
+          <Text color="#ff1493" bold>
+            {"  ⚠ 再按一次 Ctrl+C 退出 dskcode"}
+          </Text>
+        </Box>
+      )}
     </Box>
   );
 }
