@@ -72,6 +72,8 @@ async function fetchStockMinute(code: string): Promise<{
         high: parseFloat(qt[33] ?? "0"),
         low: parseFloat(qt[34] ?? "0"),
         volume: parseInt(qt[6] ?? "0", 10),
+        // 成交额（单位：万元）→ 转为元
+        amount: parseFloat(qt[37] ?? "0") * 10_000,
       };
     }
 
@@ -110,9 +112,11 @@ function getCachedMinutes(code: string): number[] | undefined {
 // ---------------------------------------------------------------------------
 
 const FALLBACK_STOCKS: StockRow[] = [
-  { code: "000001", name: "上证指数", price: 3150.00, changePercent: 0.35, changeAmount: 11.02, high: 3160.00, low: 3140.00, volume: 285430000 },
-  { code: "399006", name: "创业板指", price: 1820.00, changePercent: -0.52, changeAmount: -9.50, high: 1835.00, low: 1815.00, volume: 98650000 },
-  { code: "601688", name: "华泰证券", price: 14.25, changePercent: 1.05, changeAmount: 0.15, high: 14.38, low: 14.10, volume: 452100 },
+  // 上证指数成交额约 1.56 万亿
+  { code: "000001", name: "上证指数", price: 3150.00, changePercent: 0.35, changeAmount: 11.02, high: 3160.00, low: 3140.00, volume: 285430000, amount: 1_560_000_000_000 },
+  // 紫金矿业成交额约 108.5 亿
+  { code: "601899", name: "紫金矿业", price: 18.20, changePercent: 1.85, changeAmount: 0.33, high: 18.45, low: 17.90, volume: 59615384, amount: 10_850_000_000 },
+  { code: "399006", name: "创业板指", price: 1820.00, changePercent: -0.52, changeAmount: -9.50, high: 1835.00, low: 1815.00, volume: 98650000, amount: 18_240_000_000 },
 ];
 
 // ---------------------------------------------------------------------------
@@ -154,6 +158,17 @@ function formatVolume(v: number): string {
 }
 
 /**
+ * 成交额格式化（元 → 万/亿/万亿）
+ * 1 万亿 = 1_0000_0000_0000，1 亿 = 1_0000_0000，1 万 = 1_0000
+ */
+function formatAmount(yuan: number): string {
+  if (yuan >= 1_000_000_000_000) return (yuan / 1_000_000_000_000).toFixed(2) + "万亿";
+  if (yuan >= 100_000_000) return (yuan / 100_000_000).toFixed(2) + "亿";
+  if (yuan >= 10_000) return (yuan / 10_000).toFixed(1) + "万";
+  return yuan.toLocaleString();
+}
+
+/**
  * 取最新 maxPoints 个点，用于绘制折线图。
  * 分时数据从 09:30 累积到当前时间，取尾部最新的 60 点
  * 能展示最近的行情走势，同时适配终端宽度。
@@ -186,8 +201,19 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailCountdown, setDetailCountdown] = useState(10);
   const [countdown, setCountdown] = useState(5);
+  const [currentTime, setCurrentTime] = useState<string>(() =>
+    new Date().toLocaleTimeString("zh-CN", { hour12: false }),
+  );
 
   const { doubleCtrlC, handleCtrlC } = useDoubleCtrlC(onExit);
+
+  // 实时时钟（每秒更新）
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date().toLocaleTimeString("zh-CN", { hour12: false }));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   // ---------- 数据加载 ----------
   const loadData = useCallback(async () => {
@@ -308,7 +334,7 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
         </Box>
       );
     }
-    return renderDetail(detailView, () => setDetailView(null), detailPrices ?? undefined, detailCountdown);
+    return renderDetail(detailView, () => setDetailView(null), detailPrices ?? undefined, detailCountdown, currentTime);
   }
 
   // ---------- 列表视图 ----------
@@ -318,6 +344,9 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
       <Box marginBottom={1} justifyContent="space-between">
         <Text bold color="#00ffff">
           {"  📈 自选股监控"}
+        </Text>
+        <Text dimColor>
+          {"  🕐 "}{currentTime}
         </Text>
         <Text dimColor>
           {loading ? "  ⟳ 刷新中..." : `  每 ${countdown}s 自动刷新`}
@@ -349,7 +378,7 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
           <Text dimColor>最低</Text>
         </Box>
         <Box>
-          <Text dimColor>成交量</Text>
+          <Text dimColor>成交额</Text>
         </Box>
       </Box>
 
@@ -407,13 +436,13 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
                 </Text>
               </Box>
               <Box width={12}>
-                <Text color="#cccccc">
+                <Text color="#888888">
                   {formatPrice(stock.low)}
                 </Text>
               </Box>
               <Box>
                 <Text color="#888888">
-                  {formatVolume(stock.volume)}
+                  {formatAmount(stock.amount)}
                 </Text>
               </Box>
             </Box>
@@ -449,7 +478,13 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
 // 详情视图（独立的渲染函数）
 // ---------------------------------------------------------------------------
 
-function renderDetail(stock: StockRow, _onBack: () => void, prices?: number[], countdown = 10) {
+function renderDetail(
+  stock: StockRow,
+  _onBack: () => void,
+  prices?: number[],
+  countdown = 10,
+  currentTime?: string,
+) {
   const isUp = stock.changePercent >= 0;
   const colorCode = isUp ? "#ff1493" : "#00ff41";
   const arrow = isUp ? "▲" : "▼";
@@ -475,7 +510,7 @@ function renderDetail(stock: StockRow, _onBack: () => void, prices?: number[], c
 
   return (
     <Box flexDirection="column" paddingLeft={1}>
-      {/* 标题行 — 左：名称代码，右：刷新倒计时 */}
+      {/* 标题行 — 左：名称代码 + 实时时间，右：刷新倒计时 */}
       <Box marginBottom={1} justifyContent="space-between">
         <Box>
           <Text bold color="#00ffff">
@@ -484,6 +519,11 @@ function renderDetail(stock: StockRow, _onBack: () => void, prices?: number[], c
           <Text dimColor>
             {stock.code}
           </Text>
+          {currentTime && (
+            <Text dimColor>
+              {"  🕐 "}{currentTime}
+            </Text>
+          )}
         </Box>
         <Text dimColor>
           {`每 ${countdown}s 刷新`}

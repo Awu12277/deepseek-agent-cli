@@ -59,5 +59,8 @@ export interface StockRow {
   changeAmount: number;
   high: number;
   low: number;
+  /** 成交量（手） */
   volume: number;
+  /** 成交额（元） */
+  amount: number;
 }
