@@ -349,7 +349,7 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
           {"  🕐 "}{currentTime}
         </Text>
         <Text dimColor>
-          {loading ? "  ⟳ 刷新中..." : `  每 ${countdown}s 自动刷新`}
+          {loading ? "  ⟳ 刷新中..." : `  ${countdown}s 后自动刷新`}
         </Text>
       </Box>
 
@@ -526,7 +526,7 @@ function renderDetail(
           )}
         </Box>
         <Text dimColor>
-          {`每 ${countdown}s 刷新`}
+          {`${countdown}s 后刷新`}
         </Text>
       </Box>
 
