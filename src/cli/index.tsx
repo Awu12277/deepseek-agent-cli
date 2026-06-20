@@ -63,8 +63,9 @@ export function createCli(): Command {
         ctx = { ...ctx, config: result.config };
       }
 
-      // API Key 检查之后：检测并询问是否导入 Claude Code 中安装的 skill
-      await promptImportClaudeSkills();
+      // API Key 检查之后：检测项目本地 skill 和 Claude Code skill
+      // 如果 .dskcode/skill 下有 skill，则跳过导入 Claude Code skill
+      await promptImportClaudeSkills(process.cwd());
 
     // 从配置创建 CostTracker
     const costTracker = new CostTracker({

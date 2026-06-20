@@ -145,10 +145,85 @@ export async function importClaudeSkills(
 }
 
 /**
- * 主流程：检测 Claude skills 并询问用户是否导入。
- * 通常在 chat 命令的 API Key 检查之后调用。
+ * 项目本地 skill 目录路径（{cwd}/.dskcode/skill）。
  */
-export async function promptImportClaudeSkills(): Promise<void> {
+export function getProjectSkillDir(cwd: string): string {
+  return join(cwd, ".dskcode", "skill");
+}
+
+/**
+ * 检测项目本地 .dskcode/skill 目录下是否存在有效 skill。
+ */
+export async function hasProjectLocalSkills(cwd: string): Promise<boolean> {
+  const skillDir = getProjectSkillDir(cwd);
+  if (!existsSync(skillDir)) return false;
+
+  let entries: string[];
+  try {
+    entries = await readdir(skillDir);
+  } catch {
+    return false;
+  }
+
+  for (const name of entries) {
+    const full = join(skillDir, name);
+    const stat = statSync(full);
+    if (stat.isDirectory() && (await isSkillDir(full))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * 检测全局 ~/.dskcode/skills 目录下是否存在有效 skill。
+ */
+export async function hasDskcodeSkills(): Promise<boolean> {
+  const dskcodeDir = getDskcodeSkillsDir();
+  if (!existsSync(dskcodeDir)) return false;
+
+  let entries: string[];
+  try {
+    entries = await readdir(dskcodeDir);
+  } catch {
+    return false;
+  }
+
+  for (const name of entries) {
+    const full = join(dskcodeDir, name);
+    const stat = statSync(full);
+    if (stat.isDirectory() && (await isSkillDir(full))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * 主流程：检测已有 skill 并决定是否提示导入 Claude Code skill。
+ * 通常在 chat 命令的 API Key 检查之后调用。
+ *
+ * 规则（按优先级）：
+ * 1. 如果项目本地 .dskcode/skill 下有 skill，跳过导入
+ * 2. 如果全局 ~/.dskcode/skills 下有 skill（已导入过），跳过导入
+ * 3. 否则检测 Claude Code 并询问是否导入
+ */
+export async function promptImportClaudeSkills(cwd?: string): Promise<void> {
+  // 检查项目本地 .dskcode/skill
+  if (cwd) {
+    const hasLocal = await hasProjectLocalSkills(cwd);
+    if (hasLocal) {
+      console.log(chalk.dim("  检测到项目本地 .dskcode/skill，跳过导入 Claude Code skill\n"));
+      return;
+    }
+  }
+
+  // 检查全局 ~/.dskcode/skills（已经导入过的无需再提示）
+  const hasGlobal = await hasDskcodeSkills();
+  if (hasGlobal) {
+    return;
+  }
+
   const skills = await listClaudeSkills();
   if (skills.length === 0) return;
 
