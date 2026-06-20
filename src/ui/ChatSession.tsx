@@ -139,6 +139,7 @@ export function ChatSession({
 
   const [offset, setOffset] = useState(0);
   const [displayMessages, setDisplayMessages] = useState<DisplayMessage[]>([]);
+  const [staticKey, setStaticKey] = useState(0);
   const [input, setInput] = useState("");
   const [balance, setBalance] = useState<number | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(false);
@@ -417,8 +418,13 @@ export function ChatSession({
             process.exit(0);
             return;
           case "clear":
+            // 清空所有会话状态，回到初始界面
             setDisplayMessages([]);
+            setStaticKey((prev) => prev + 1);
             setInput("");
+            setStreamError(undefined);
+            // 先清屏再清滚动区，确保终端完全重置
+            process.stdout.write("\x1b[2J\x1b[H\x1b[3J");
             // 重置 Session 历史
             sessionRef.current?.reset();
             return;
@@ -650,7 +656,7 @@ export function ChatSession({
 
       {/* 消息列表 - 已完成的消息用 Static 固定，避免重绘时丢失滚动位置 */}
       <Box flexDirection="column" marginTop={1}>
-        <Static items={displayMessages}>
+        <Static key={staticKey} items={displayMessages}>
           {(msg, i) => {
             if (msg.role === "user") {
               return (
