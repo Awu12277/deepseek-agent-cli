@@ -16,6 +16,7 @@ import { render } from "ink";
 import chalk from "chalk";
 import { StockList } from "../stock/index.js";
 import { CostTracker } from "../provider/cost-tracker.js";
+import { scanProjectFiles } from "../utils/scan-files.js";
 
 const SUBCOMMANDS = ["chat", "run", "setup", "init", "completion", "game", "stock"];
 
@@ -80,11 +81,12 @@ export function createCli(): Command {
     ctx: DskcodeContext | undefined,
     costTracker: CostTracker,
   ) {
-    // 统计 skill 数量并获取详情列表（全局 + 项目本地）
-    const [globalSkillCount, localSkillCount, skills] = await Promise.all([
+    // 统计 skill 数量并获取详情列表，以及扫描项目文件
+    const [globalSkillCount, localSkillCount, skills, files] = await Promise.all([
       countDskcodeSkills(),
       countProjectLocalSkills(process.cwd()),
       getAllSkills(process.cwd()),
+      scanProjectFiles(process.cwd()),
     ]);
     const skillCount = globalSkillCount + localSkillCount;
     // 从配置中提取默认 Provider 的 apiKey 和 baseUrl
@@ -96,6 +98,7 @@ export function createCli(): Command {
       <ChatSession
         skillCount={skillCount}
         skills={skills}
+        files={files}
         toolCount={ctx?.config.tools.length ?? 0}
         verbose={ctx?.verbose ?? false}
         apiKey={defaultProvider?.apiKey}

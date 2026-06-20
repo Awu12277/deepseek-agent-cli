@@ -9,4 +9,5 @@ export { AssistantMessage } from "./AssistantMessage.js";
 export { ToolCallBlock } from "./ToolCallBlock.js";
 export { GamePicker } from "./GamePicker.js";
 export { SkillSelector } from "./SkillSelector.js";
+export { FileSelector } from "./FileSelector.js";
 export { useDoubleCtrlC } from "./useDoubleCtrlC.js";

@@ -10,6 +10,7 @@ import { CYBER_PALETTE, LOGO_LINES } from "./DskcodeSplash.js";
 import { Spinner } from "./Spinner.js";
 import { AssistantMessage } from "./AssistantMessage.js";
 import { SkillSelector } from "./SkillSelector.js";
+import { FileSelector } from "./FileSelector.js";
 import type { SkillInfo } from "../cli/skill-import.js";
 import { CostTracker } from "../provider/cost-tracker.js";
 import type { ProviderToolCall, UsageInfo, ModelId } from "../provider/index.js";
@@ -117,6 +118,8 @@ interface ChatSessionProps {
   skillCount: number;
   /** 可用 skill 详情列表（用于 / 输入时展示） */
   skills?: SkillInfo[];
+  /** 项目源码文件路径列表（用于 @ 输入时展示） */
+  files?: string[];
   toolCount: number;
   verbose: boolean;
   apiKey?: string;
@@ -130,6 +133,7 @@ interface ChatSessionProps {
 export function ChatSession({
   skillCount,
   skills = [],
+  files = [],
   toolCount,
   verbose,
   apiKey,
@@ -177,6 +181,8 @@ export function ChatSession({
 
   // skill 选择索引（用于上下键导航）
   const [skillSelectIndex, setSkillSelectIndex] = useState(0);
+  // 文件选择索引
+  const [fileSelectIndex, setFileSelectIndex] = useState(0);
   // 输入框 key（补全时递增，强制 TextInput 重挂载以重置光标到末尾）
   const [inputKey, setInputKey] = useState(0);
 
@@ -198,26 +204,47 @@ export function ChatSession({
   const currentModelRef = useRef<string | undefined>(undefined);
   const streamErrorRef = useRef<string | undefined>(undefined);
 
-  // 输入变更时重置 skill 选择索引
+  // 输入变更时重置选择索引
   useEffect(() => {
     setSkillSelectIndex(0);
+    setFileSelectIndex(0);
   }, [input]);
 
-  // 获取当前输入匹配的 skill 列表（与 SkillSelector 逻辑一致）
-  // 匹配规则：/ 必须在输入开头，或者前面有空格
+  // 获取当前输入匹配的 skill 列表
   const getFilteredSkills = useCallback(
     (value: string) => {
       const match = value.match(/(?:^|\s)\/([^/]*)$/);
       if (!match) return [];
       const q = match[1]!.toLowerCase().trim();
-      // 斜杠在开头且无后续内容时，展示全部 skill 作为提示
       if (!q) {
         if (value.startsWith("/")) return skills.slice(0, 3);
         return [];
       }
-      return skills.filter((s) => s.name.toLowerCase().includes(q)).slice(0, 3);
+      const matched = skills.filter((s) => s.name.toLowerCase().includes(q)).slice(0, 3);
+      // 精确匹配时表示已补全完成，不显示列表
+      if (matched.some((s) => s.name.toLowerCase() === q)) return [];
+      return matched;
     },
     [skills],
+  );
+
+  // 获取当前输入匹配的文件列表
+  const getFilteredFiles = useCallback(
+    (value: string) => {
+      const match = value.match(/(?:^|\s)@([^@]*)$/);
+      if (!match) return [];
+      const q = match[1]!.toLowerCase().trim();
+      // @ 在开头且无后续内容时，展示前 5 个文件作为提示
+      if (!q) {
+        if (value.startsWith("@")) return files.slice(0, 5);
+        return [];
+      }
+      const matched = files.filter((f) => f.toLowerCase().includes(q)).slice(0, 5);
+      // 精确匹配时表示已补全完成，不显示列表
+      if (matched.some((f) => f.toLowerCase() === q)) return [];
+      return matched;
+    },
+    [files],
   );
 
   const { doubleCtrlC, handleCtrlC } = useDoubleCtrlC(() => {
@@ -261,8 +288,34 @@ export function ChatSession({
           return;
         }
 
-        // skill 选择模式（输入以 / 开头且列表非空）
-        const skillList = getFilteredSkills(input);
+        // 文件 @ 选择模式 / skill 选择模式
+        // 优先 @（文件匹配），没有文件匹配再走 skill 匹配
+        const fileList = getFilteredFiles(input);
+        const skillList = fileList.length === 0 ? getFilteredSkills(input) : [];
+
+        if (fileList.length > 0) {
+          if (key.upArrow) {
+            setFileSelectIndex((prev) => (prev - 1 + fileList.length) % fileList.length);
+            return;
+          }
+          if (key.downArrow) {
+            setFileSelectIndex((prev) => (prev + 1) % fileList.length);
+            return;
+          }
+          // Tab 补全选中的文件
+          if (key.tab) {
+            const selected = fileList[fileSelectIndex];
+            if (selected) {
+              const atIdx = input.lastIndexOf("@");
+              if (atIdx >= 0) {
+                setInput(input.slice(0, atIdx) + "@" + selected + " ");
+                setInputKey((k) => k + 1);
+              }
+            }
+            return;
+          }
+        }
+
         if (skillList.length > 0) {
           if (key.upArrow) {
             setSkillSelectIndex((prev) => (prev - 1 + skillList.length) % skillList.length);
@@ -304,7 +357,7 @@ export function ChatSession({
           setInput(_input);
         }
       },
-      [selectingModel, modelSelectIndex, modelOptions, activeModel, isStreaming, handleCtrlC, input, skills, skillSelectIndex, getFilteredSkills]
+      [selectingModel, modelSelectIndex, modelOptions, activeModel, isStreaming, handleCtrlC, input, skills, skillSelectIndex, fileSelectIndex, getFilteredSkills, getFilteredFiles]
     ),
   );
 
@@ -842,6 +895,8 @@ export function ChatSession({
 
           {/* 用户输入 / 时显示 skill 列表 */}
           <SkillSelector skills={skills} input={input} selectedIndex={skillSelectIndex} />
+          {/* 用户输入 @ 时显示文件列表 */}
+          <FileSelector files={files} input={input} selectedIndex={fileSelectIndex} />
         </>
       )}
 
