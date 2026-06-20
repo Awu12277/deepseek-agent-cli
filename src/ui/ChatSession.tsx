@@ -14,6 +14,12 @@ import type { ProviderToolCall, UsageInfo, ModelId } from "../provider/index.js"
 import { createProvider } from "../provider/index.js";
 import { Session } from "../agent/index.js";
 import type { AgentEvent } from "../agent/types.js";
+import {
+  IDLE_GRADIENT_STOPS,
+  STREAMING_GRADIENT_STOPS,
+  GRADIENT_ANIMATION,
+  getGradientColors,
+} from "../utils/gradient.js";
 
 /** 命令处理结果的类型，支持文本响应和动作跳转 */
 export type CommandAction =
@@ -124,6 +130,9 @@ export function ChatSession({
   onLaunchGame,
   onLaunchStock,
 }: ChatSessionProps) {
+  const termWidth = typeof process.stdout.columns === "number" ? process.stdout.columns : 80;
+  const dividerWidth = Math.max(termWidth - 2, 1);
+
   const [offset, setOffset] = useState(0);
   const [displayMessages, setDisplayMessages] = useState<DisplayMessage[]>([]);
   const [input, setInput] = useState("");
@@ -135,6 +144,10 @@ export function ChatSession({
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingPlaceholder, setStreamingPlaceholder] = useState("");
   const [idlePlaceholder, setIdlePlaceholder] = useState(() => pickRandom(IDLE_PLACEHOLDERS));
+  const [gradientColors, setGradientColors] = useState<string[]>([]);
+  const gradientPhaseRef = useRef(0);
+  const [streamingGradientColors, setStreamingGradientColors] = useState<string[]>([]);
+  const streamingPhaseRef = useRef(0);
   const [currentContent, setCurrentContent] = useState("");
   const [currentToolCalls, setCurrentToolCalls] = useState<ProviderToolCall[]>([]);
   const [currentUsage, setCurrentUsage] = useState<UsageInfo | undefined>(undefined);
@@ -161,7 +174,7 @@ export function ChatSession({
     process.exit(0);
   });
 
-  // 捕获 Ctrl+C
+  // 捕获 Ctrl+C 和渐变占位符状态下的字符输入
   useInput(
     useCallback(
       (_input, key) => {
@@ -172,9 +185,14 @@ export function ChatSession({
           } else {
             handleCtrlC();
           }
+          return;
+        }
+        // 渐变占位符显示时（TextInput 未渲染），将按键字符加入 input 触发切换
+        if (!input && !isStreaming && _input) {
+          setInput(_input);
         }
       },
-      [isStreaming, handleCtrlC],
+      [isStreaming, handleCtrlC, input],
     ),
   );
 
@@ -257,6 +275,42 @@ export function ChatSession({
       if (timer) clearInterval(timer);
     };
   }, [externalCostTracker]);
+
+  // 空闲占位符渐变动画
+  useEffect(() => {
+    if (isStreaming || !idlePlaceholder) {
+      setGradientColors([]);
+      return;
+    }
+
+    gradientPhaseRef.current = 0;
+    setGradientColors(getGradientColors(idlePlaceholder, 0, IDLE_GRADIENT_STOPS));
+
+    const interval = setInterval(() => {
+      gradientPhaseRef.current = (gradientPhaseRef.current + GRADIENT_ANIMATION.idlePhaseStep) % 1;
+      setGradientColors(getGradientColors(idlePlaceholder, gradientPhaseRef.current, IDLE_GRADIENT_STOPS));
+    }, GRADIENT_ANIMATION.idleInterval);
+
+    return () => clearInterval(interval);
+  }, [isStreaming, idlePlaceholder]);
+
+  // 流式占位符渐变动画
+  useEffect(() => {
+    if (!isStreaming || !streamingPlaceholder) {
+      setStreamingGradientColors([]);
+      return;
+    }
+
+    streamingPhaseRef.current = 0;
+    setStreamingGradientColors(getGradientColors(streamingPlaceholder, 0, STREAMING_GRADIENT_STOPS));
+
+    const interval = setInterval(() => {
+      streamingPhaseRef.current = (streamingPhaseRef.current + GRADIENT_ANIMATION.streamingPhaseStep) % 1;
+      setStreamingGradientColors(getGradientColors(streamingPlaceholder, streamingPhaseRef.current, STREAMING_GRADIENT_STOPS));
+    }, GRADIENT_ANIMATION.streamingInterval);
+
+    return () => clearInterval(interval);
+  }, [isStreaming, streamingPlaceholder]);
 
   /** 处理用户输入 */
   const handleSubmit = useCallback(async (value: string) => {
@@ -550,24 +604,46 @@ export function ChatSession({
 
       {/* 输入区 */}
       <Box marginTop={1}>
+        <Text color="#00ffff" dimColor>
+          {"─".repeat(dividerWidth)}
+        </Text>
+      </Box>
+      <Box>
         <Box width={4} flexShrink={0}>
           <Text bold color="#00ff41">
             {"⚡"}
           </Text>
         </Box>
         <Box flexGrow={1}>
-          <TextInput
-            value={input}
-            onChange={setInput}
-            onSubmit={handleSubmit}
-            placeholder={isStreaming ? streamingPlaceholder : idlePlaceholder}
-          />
+          {!input && !isStreaming && idlePlaceholder && gradientColors.length > 0 ? (
+            <Text>
+              {idlePlaceholder.split("").map((ch, i) => (
+                <Text key={i} color={gradientColors[i] ?? undefined}>
+                  {ch}
+                </Text>
+              ))}
+            </Text>
+          ) : !input && isStreaming && streamingPlaceholder && streamingGradientColors.length > 0 ? (
+            <Text>
+              {streamingPlaceholder.split("").map((ch, i) => (
+                <Text key={i} color={streamingGradientColors[i] ?? undefined}>
+                  {ch}
+                </Text>
+              ))}
+            </Text>
+          ) : (
+            <TextInput
+              value={input}
+              onChange={setInput}
+              onSubmit={handleSubmit}
+              placeholder=""
+            />
+          )}
         </Box>
       </Box>
-
-      <Box marginTop={1}>
+      <Box>
         <Text color="#00ffff" dimColor>
-          {"  " + "─".repeat(36)}
+          {"─".repeat(dividerWidth)}
         </Text>
       </Box>
 
