@@ -13,7 +13,7 @@
 | 03 | [配置系统：JSON 加载与分层合并](#03-配置系统json-加载与分层合并) | 多级配置文件、flag 覆盖、环境变量 | ✅ 已完成 |
 | 04 | [Provider 抽象层与多模型支持](#04-provider-抽象层与多模型支持) | Provider 接口、DeepSeek/OpenAI 适配器、工厂注册 | ✅ 已完成 |
 | 05 | [LLM API 客户端：流式补全与错误处理](#05-llm-api-客户端流式补全与错误处理) | fetch SSE、AbortController、超时重试 | ✅ 已完成 |
-| 06 | [Token 计价与成本追踪系统](#06-token-计价与成本追踪系统) | 消耗记录、Prefix Cache 优化、累计统计 | ❌ 未开始 |
+| 06 | [Token 计价与成本追踪系统](#06-token-计价与成本追踪系统) | 消耗记录、Prefix Cache 优化、累计统计 | ✅ 已完成 |
 | 07 | [Agent 主循环：消息编排与多轮对话](#07-agent-主循环消息编排与多轮对话) | System/User/Assistant/Tool 消息组装、轮次控制 | ⚡ 骨架就绪 |
 | 08 | [工具系统：内置工具的设计与注册](#08-工具系统内置工具的设计与注册) | Tool 接口、Registry 模式、文件操作 / Bash / Grep | ⚡ 接口就绪 |
 | 09 | [MCP 插件系统：stdio JSON-RPC 协议](#09-mcp-插件系统stdio-json-rpc-协议) | 子进程管理、JSON-RPC 编解码、生命周期 | ⚡ 骨架就绪 |
@@ -110,17 +110,23 @@
 - **DeepSeek 适配**：流式 chat + 余额查询 + 工具调用累积拼接
 - **工厂注册表**：ProviderRegistry 单例缓存、模型校验、`createProvider` 快捷方式
 
-## 06 Token 计价与成本追踪系统 ❌ 未开始
+## 06 Token 计价与成本追踪系统 ✅
 
 LLM 成本透明化，让用户清楚每次调用的开销。
 
-- **Token 统计**：`usage.prompt_tokens` + `usage.completion_tokens`
-- **计价模型**：不同 model 的不同单价表（输入/输出/缓存命中）
-- **Prefix Cache**：DeepSeek 专属优化，缓存命中的 token 半价
-- **会话累计成本**：单次会话的 token 和费用累加
-- **成本显示**：每次工具调用后显示 ≈$0.0032 格式
-- **预算限制**：配置最大成本/最大 token 数，自动中止
-- **持久化历史**：历史会话的成本查询
+- **CostTracker 模块**：会话级 / 日级 / 历史级三层成本统计类
+- **单次调用计费**：`calculateCost(usage, model)` 支持 Prefix Cache 半价计费
+- **会话级累计**：`sessionSummary` 追踪当前会话的总 token 数、总费用、缓存命中率
+- **今日消耗统计**：`todaySummary` 按日聚合，按模型分类，跨会话累加
+- **历史范围查询**：`queryRange(start, end)` 查询指定日期范围的成本汇总
+- **持久化存储**：`flush()` / `load()` 读写 `~/.dskcode/costs/history.json`，自动保留最近 90 天
+- **跨日自动切换**：长会话跨日时自动创建新日桶，无缝累加
+- **预算控制**：`budgetLimit`（金额上限）和 `tokenBudgetLimit`（Token 上限），超限回调 `onBudgetExceeded`
+- **成本实时展示**：`formatCallCostLine` 单次调用摘要、`formatSessionCostLine` 会话摘要、`formatTodayReport` 今日报告
+- **缓存命中率可视化**：`formatCacheHitRate` 显示 Prefix Cache 命中百分比
+- **智能金额格式化**：`formatMoney` 根据金额大小自动选择小数精度（<0.01: 6位, <1: 4位, ≥1: 2位）
+- **配置集成**：`budgetLimit` / `tokenBudgetLimit` 加入 Config 层级，支持 `DSKCODE_BUDGET_LIMIT` / `DSKCODE_TOKEN_BUDGET_LIMIT` 环境变量和 CLI flag 覆盖
+- **Session 集成**：`Session` 类从简单 `#accumulatedCost` 数字升级为注入 `CostTracker` 实例
 
 ## 07 Agent 主循环：消息编排与多轮对话 ⚡ 骨架就绪
 

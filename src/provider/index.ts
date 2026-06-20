@@ -74,3 +74,22 @@ export type { ProviderFactory } from "./registry.js";
 // DeepSeek Provider
 export { DeepSeekProvider } from "./deepseek.js";
 export type { DeepSeekProviderConfig } from "./deepseek.js";
+
+// 成本追踪器
+export {
+  CostTracker,
+  formatMoney,
+  formatTokens,
+  formatCacheHitRate,
+  formatTodayReport,
+  formatSessionCostLine,
+  formatCallCostLine,
+} from "./cost-tracker.js";
+export type {
+  CostRecord,
+  SessionCostSummary,
+  DailyCostSummary,
+  ModelCostSummary,
+  CostStore,
+  CostTrackerOptions,
+} from "./cost-tracker.js";

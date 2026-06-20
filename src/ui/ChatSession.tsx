@@ -3,6 +3,8 @@ import TextInput from "ink-text-input";
 import { useEffect, useState, useCallback } from "react";
 import { useDoubleCtrlC } from "./useDoubleCtrlC.js";
 import { CYBER_PALETTE, LOGO_LINES } from "./DskcodeSplash.js";
+import type { CostTracker } from "../provider/cost-tracker.js";
+import { formatMoney } from "../provider/cost-tracker.js";
 
 /** 命令处理结果的类型，支持文本响应和动作跳转 */
 export type CommandAction =
@@ -59,16 +61,18 @@ interface ChatSessionProps {
   verbose: boolean;
   apiKey?: string;
   baseUrl?: string;
+  costTracker?: CostTracker;
   onLaunchGame?: () => void;
   onLaunchStock?: () => void;
 }
 
-export function ChatSession({ providerCount, toolCount, verbose, apiKey, baseUrl, onLaunchGame, onLaunchStock }: ChatSessionProps) {
+export function ChatSession({ providerCount, toolCount, verbose, apiKey, baseUrl, costTracker, onLaunchGame, onLaunchStock }: ChatSessionProps) {
   const [offset, setOffset] = useState(0);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [balance, setBalance] = useState<number | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(false);
+  const [todayCost, setTodayCost] = useState<number | null>(null);
 
   const { doubleCtrlC, handleCtrlC } = useDoubleCtrlC(() => process.exit(0));
 
@@ -117,6 +121,31 @@ export function ChatSession({ providerCount, toolCount, verbose, apiKey, baseUrl
     });
     return () => { cancelled = true; };
   }, [apiKey, baseUrl]);
+
+  // 加载今日消耗历史数据，并定时刷新
+  useEffect(() => {
+    if (!costTracker) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | undefined;
+
+    const refresh = () => {
+      setTodayCost(costTracker.todayTotalCost);
+    };
+
+    costTracker.load().then(() => {
+      if (cancelled) return;
+      refresh();
+      // 每 5 秒刷新一次，确保跨会话数据更新
+      timer = setInterval(refresh, 5000);
+    }).catch(() => {
+      // 加载失败静默处理
+    });
+
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, [costTracker]);
 
   const handleSubmit = useCallback((value: string) => {
     const trimmed = value.trim();
@@ -195,12 +224,21 @@ export function ChatSession({ providerCount, toolCount, verbose, apiKey, baseUrl
           {verbose ? <Text color="#ff1493">{"  ⚡ Verbose"}</Text> : null}
         </Box>
 
-        {/* 右侧余额 — 弹性占位推右 */}
-        <Box flexGrow={1} flexDirection="column" alignItems="flex-end" justifyContent="center">
+        {/* 右侧余额 + 今日消耗 */}
+        <Box flexGrow={1} flexDirection="column" justifyContent="center" alignItems="flex-end">
           {balanceLoading && balance === null ? (
             <Text color="yellow">{"  ⏳ 查询余额..."}</Text>
           ) : balance !== null ? (
-            <Text color="yellow">{"💰 ¥"}{balance.toFixed(2)}</Text>
+            <Box flexDirection="row">
+              <Text color="yellow">{"💰 "}</Text>
+              <Text color="yellow">{"余额 ¥"}{balance.toFixed(2)}</Text>
+            </Box>
+          ) : null}
+          {todayCost !== null ? (
+            <Box flexDirection="row">
+              <Text color="cyan">{"📊 "}</Text>
+              <Text color="cyan">{"今日 ¥"}{formatMoney(todayCost).replace("¥", "")}</Text>
+            </Box>
           ) : null}
         </Box>
       </Box>

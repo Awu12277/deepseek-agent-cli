@@ -14,6 +14,7 @@ import { GamePicker } from "../ui/GamePicker.js";
 import { render } from "ink";
 import chalk from "chalk";
 import { StockList } from "../stock/index.js";
+import { CostTracker } from "../provider/cost-tracker.js";
 
 const SUBCOMMANDS = ["chat", "run", "setup", "init", "completion", "game", "stock"];
 
@@ -61,11 +62,18 @@ export function createCli(): Command {
         ctx = { ...ctx, config: result.config };
       }
 
-      startChat(ctx);
+    // 从配置创建 CostTracker
+    const costTracker = new CostTracker({
+      budgetLimit: ctx?.config.budgetLimit ?? 0,
+      tokenBudgetLimit: ctx?.config.tokenBudgetLimit ?? 0,
     });
+
+    startChat(ctx, costTracker);
+  });
 
   function startChat(
     ctx: DskcodeContext | undefined,
+    costTracker: CostTracker,
   ) {
     // 从配置中提取默认 Provider 的 apiKey 和 baseUrl
     const defaultProvider = ctx?.config.providers.find(
@@ -78,6 +86,7 @@ export function createCli(): Command {
         verbose={ctx?.verbose ?? false}
         apiKey={defaultProvider?.apiKey}
         baseUrl={defaultProvider?.baseUrl ?? "https://api.deepseek.com"}
+        costTracker={costTracker}
         onLaunchGame={() => {
           chatApp.unmount();
           setImmediate(() => {
@@ -90,11 +99,11 @@ export function createCli(): Command {
                   unmount();
                   await game.play();
                   // 游戏结束后返回对话
-                  startChat(ctx);
+                  startChat(ctx, costTracker);
                 }}
                 onBackToChat={() => {
                   unmount();
-                  setImmediate(() => startChat(ctx));
+                  setImmediate(() => startChat(ctx, costTracker));
                 }}
               />,
               { exitOnCtrlC: false },
@@ -112,7 +121,7 @@ export function createCli(): Command {
                 codes={defaultStockCodes}
                 onBackToChat={() => {
                   stockApp.unmount();
-                  setImmediate(() => startChat(ctx));
+                  setImmediate(() => startChat(ctx, costTracker));
                 }}
                 onExit={() => process.exit(0)}
               />,

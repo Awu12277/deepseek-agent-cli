@@ -55,6 +55,10 @@ export interface Config {
   temperature?: number;
   /** 单次会话最大工具调用轮次 */
   maxToolRounds?: number;
+  /** 每日预算上限（元），超过后自动中止请求，0 表示不限制 */
+  budgetLimit?: number;
+  /** 每日 Token 预算上限，超过后自动中止请求，0 表示不限制 */
+  tokenBudgetLimit?: number;
   /** Provider 定义列表 */
   providers: ProviderConfig[];
   /** 工具设置 */

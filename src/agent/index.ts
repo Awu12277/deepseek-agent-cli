@@ -1,11 +1,9 @@
 import type {
   Provider,
   ChatMessage,
-  ChatChunk,
-  ProviderToolCall,
-  UsageInfo,
 } from "../provider/index.js";
 import type { Tool } from "../tool/index.js";
+import { CostTracker } from "../provider/index.js";
 
 /**
  * Session 表示一个 Agent 会话 — 与 LLM 的一次完整对话，
@@ -13,19 +11,28 @@ import type { Tool } from "../tool/index.js";
  */
 export class Session {
   readonly #messages: ChatMessage[] = [];
-  #accumulatedCost = 0;
+  /** 成本追踪器，由外部注入或自动创建 */
+  readonly #costTracker: CostTracker;
 
   constructor(
     readonly provider: Provider,
     readonly tools: Tool[],
-  ) {}
+    costTracker?: CostTracker,
+  ) {
+    this.#costTracker = costTracker ?? new CostTracker();
+  }
 
   get messages(): readonly ChatMessage[] {
     return this.#messages;
   }
 
   get accumulatedCost(): number {
-    return this.#accumulatedCost;
+    return this.#costTracker.sessionTotalCost;
+  }
+
+  /** 获取成本追踪器实例 */
+  get costTracker(): CostTracker {
+    return this.#costTracker;
   }
 
   /** 执行一轮对话：发送消息 → 接收响应 → 返回内容 */
@@ -39,9 +46,9 @@ export class Session {
     return response;
   }
 
-  /** 重置会话历史（保留 provider/tools 配置） */
+  /** 重置会话历史（保留 provider/tools 配置，重置成本追踪） */
   reset(): void {
     this.#messages.length = 0;
-    this.#accumulatedCost = 0;
+    this.#costTracker.resetSession();
   }
 }

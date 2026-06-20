@@ -101,6 +101,12 @@ function mergeConfig(base: Config, overlay: Partial<Config>): Config {
   if (overlay.maxToolRounds !== undefined) {
     result.maxToolRounds = overlay.maxToolRounds;
   }
+  if (overlay.budgetLimit !== undefined) {
+    result.budgetLimit = overlay.budgetLimit;
+  }
+  if (overlay.tokenBudgetLimit !== undefined) {
+    result.tokenBudgetLimit = overlay.tokenBudgetLimit;
+  }
   if (overlay.providers !== undefined) {
     result.providers = overlay.providers as ProviderConfig[];
   }
@@ -131,6 +137,8 @@ const ENV_MAP: Record<string, keyof Config> = {
   [`${ENV_PREFIX}MAX_TOKENS`]: "maxTokens",
   [`${ENV_PREFIX}TEMPERATURE`]: "temperature",
   [`${ENV_PREFIX}MAX_TOOL_ROUNDS`]: "maxToolRounds",
+  [`${ENV_PREFIX}BUDGET_LIMIT`]: "budgetLimit",
+  [`${ENV_PREFIX}TOKEN_BUDGET_LIMIT`]: "tokenBudgetLimit",
 };
 
 /**
@@ -154,9 +162,11 @@ function applyEnvVars(config: Config): Config {
         break;
       }
       case "maxTokens":
-      case "maxToolRounds": {
+      case "maxToolRounds":
+      case "budgetLimit":
+      case "tokenBudgetLimit": {
         const n = Number(raw);
-        if (Number.isFinite(n) && n > 0) {
+        if (Number.isFinite(n) && n >= 0) {
           (result as unknown as Record<string, unknown>)[configKey] = n;
         }
         break;
@@ -203,6 +213,8 @@ export interface CliFlags {
   model?: string;
   maxTokens?: number;
   temperature?: number;
+  budgetLimit?: number;
+  tokenBudgetLimit?: number;
 }
 
 /**
@@ -238,6 +250,12 @@ export function applyCliOverrides(config: Config, flags: CliFlags): Config {
     flags.temperature <= 2
   ) {
     result.temperature = flags.temperature;
+  }
+  if (flags.budgetLimit !== undefined && flags.budgetLimit >= 0) {
+    result.budgetLimit = flags.budgetLimit;
+  }
+  if (flags.tokenBudgetLimit !== undefined && flags.tokenBudgetLimit >= 0) {
+    result.tokenBudgetLimit = flags.tokenBudgetLimit;
   }
   return result;
 }
@@ -326,6 +344,22 @@ export function validateConfig(config: Config): ConfigError[] {
     errors.push({
       field: "maxToolRounds",
       message: "maxToolRounds 必须大于等于 1。",
+    });
+  }
+
+  // 7. budgetLimit 范围校验
+  if (config.budgetLimit !== undefined && config.budgetLimit < 0) {
+    errors.push({
+      field: "budgetLimit",
+      message: "budgetLimit 必须大于等于 0（0 表示不限制）。",
+    });
+  }
+
+  // 8. tokenBudgetLimit 范围校验
+  if (config.tokenBudgetLimit !== undefined && config.tokenBudgetLimit < 0) {
+    errors.push({
+      field: "tokenBudgetLimit",
+      message: "tokenBudgetLimit 必须大于等于 0（0 表示不限制）。",
     });
   }
 
