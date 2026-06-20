@@ -272,8 +272,8 @@ export function ChatSession({
             setSkillSelectIndex((prev) => (prev + 1) % skillList.length);
             return;
           }
-          // Tab / Enter 补全选中的 skill（补全后光标自动移至末尾）
-          if (key.tab || key.return) {
+          // Tab 补全选中的 skill（补全后光标自动移至末尾）
+          if (key.tab) {
             const selected = skillList[skillSelectIndex];
             if (selected) {
               // 只替换最后一个 / 之后的部分，保留之前输入的内容
@@ -460,20 +460,6 @@ export function ChatSession({
 
     // 处理斜杠命令
     if (trimmed.startsWith("/") && trimmed.length > 1) {
-      // 尝试补全 skill 名称（仅当输入不完全时）
-      const skillList = getFilteredSkills(trimmed);
-      const skillMatch = skillList[skillSelectIndex] ?? skillList[0];
-      if (skillMatch && skillMatch.name.toLowerCase() !== trimmed.slice(1).toLowerCase()) {
-        // 只替换最后一个 / 之后的部分，保留之前输入的内容
-        const slashIdx = value.lastIndexOf("/");
-        if (slashIdx >= 0) {
-          // 补全后加空格分隔，方便继续输入下一个 skill 或问题
-          setInput(value.slice(0, slashIdx) + "/" + skillMatch.name + " ");
-          setInputKey((k) => k + 1);
-        }
-        return;
-      }
-
       // /model 命令：进入模型选择模式
       if (trimmed.toLowerCase() === "/model") {
         // 默认高亮当前模型
