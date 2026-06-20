@@ -8,4 +8,5 @@ export type { CommandAction, ChatCommand } from "./ChatSession.js";
 export { AssistantMessage } from "./AssistantMessage.js";
 export { ToolCallBlock } from "./ToolCallBlock.js";
 export { GamePicker } from "./GamePicker.js";
+export { SkillSelector } from "./SkillSelector.js";
 export { useDoubleCtrlC } from "./useDoubleCtrlC.js";

@@ -9,6 +9,8 @@ import { useDoubleCtrlC } from "./useDoubleCtrlC.js";
 import { CYBER_PALETTE, LOGO_LINES } from "./DskcodeSplash.js";
 import { Spinner } from "./Spinner.js";
 import { AssistantMessage } from "./AssistantMessage.js";
+import { SkillSelector } from "./SkillSelector.js";
+import type { SkillInfo } from "../cli/skill-import.js";
 import { CostTracker } from "../provider/cost-tracker.js";
 import type { ProviderToolCall, UsageInfo, ModelId } from "../provider/index.js";
 import { createProvider } from "../provider/index.js";
@@ -113,6 +115,8 @@ interface DisplayMessage {
 
 interface ChatSessionProps {
   skillCount: number;
+  /** 可用 skill 详情列表（用于 / 输入时展示） */
+  skills?: SkillInfo[];
   toolCount: number;
   verbose: boolean;
   apiKey?: string;
@@ -125,6 +129,7 @@ interface ChatSessionProps {
 
 export function ChatSession({
   skillCount,
+  skills = [],
   toolCount,
   verbose,
   apiKey,
@@ -170,6 +175,11 @@ export function ChatSession({
   const [cmdTipGradientColors, setCmdTipGradientColors] = useState<string[]>([]);
   const cmdTipPhaseRef = useRef(0);
 
+  // skill 选择索引（用于上下键导航）
+  const [skillSelectIndex, setSkillSelectIndex] = useState(0);
+  // 输入框 key（补全时递增，强制 TextInput 重挂载以重置光标到末尾）
+  const [inputKey, setInputKey] = useState(0);
+
   // 模型选择模式
   const [selectingModel, setSelectingModel] = useState(false);
   const [modelSelectIndex, setModelSelectIndex] = useState(0);
@@ -187,6 +197,28 @@ export function ChatSession({
   const currentCostRef = useRef<number | undefined>(undefined);
   const currentModelRef = useRef<string | undefined>(undefined);
   const streamErrorRef = useRef<string | undefined>(undefined);
+
+  // 输入变更时重置 skill 选择索引
+  useEffect(() => {
+    setSkillSelectIndex(0);
+  }, [input]);
+
+  // 获取当前输入匹配的 skill 列表（与 SkillSelector 逻辑一致）
+  // 匹配规则：/ 必须在输入开头，或者前面有空格
+  const getFilteredSkills = useCallback(
+    (value: string) => {
+      const match = value.match(/(?:^|\s)\/([^/]*)$/);
+      if (!match) return [];
+      const q = match[1]!.toLowerCase().trim();
+      // 斜杠在开头且无后续内容时，展示全部 skill 作为提示
+      if (!q) {
+        if (value.startsWith("/")) return skills.slice(0, 3);
+        return [];
+      }
+      return skills.filter((s) => s.name.toLowerCase().includes(q)).slice(0, 3);
+    },
+    [skills],
+  );
 
   const { doubleCtrlC, handleCtrlC } = useDoubleCtrlC(() => {
     // 双击 Ctrl+C 退出进程
@@ -229,6 +261,34 @@ export function ChatSession({
           return;
         }
 
+        // skill 选择模式（输入以 / 开头且列表非空）
+        const skillList = getFilteredSkills(input);
+        if (skillList.length > 0) {
+          if (key.upArrow) {
+            setSkillSelectIndex((prev) => (prev - 1 + skillList.length) % skillList.length);
+            return;
+          }
+          if (key.downArrow) {
+            setSkillSelectIndex((prev) => (prev + 1) % skillList.length);
+            return;
+          }
+          // Tab / Enter 补全选中的 skill（补全后光标自动移至末尾）
+          if (key.tab || key.return) {
+            const selected = skillList[skillSelectIndex];
+            if (selected) {
+              // 只替换最后一个 / 之后的部分，保留之前输入的内容
+              // 用 lastIndexOf 定位 / 的精确位置，确保前置空格不被吃掉
+              const slashIdx = input.lastIndexOf("/");
+              if (slashIdx >= 0) {
+                // 补全后加空格分隔，方便继续输入下一个 skill 或问题
+                setInput(input.slice(0, slashIdx) + "/" + selected.name + " ");
+                setInputKey((k) => k + 1);
+              }
+            }
+            return;
+          }
+        }
+
         if (key.ctrl && _input === "c") {
           if (isStreaming) {
             // 流式输出中，取消当前请求
@@ -238,12 +298,13 @@ export function ChatSession({
           }
           return;
         }
+
         // 渐变占位符显示时（TextInput 未渲染），将按键字符加入 input 触发切换
         if (!input && !isStreaming && _input) {
           setInput(_input);
         }
       },
-      [selectingModel, modelSelectIndex, modelOptions, activeModel, isStreaming, handleCtrlC, input]
+      [selectingModel, modelSelectIndex, modelOptions, activeModel, isStreaming, handleCtrlC, input, skills, skillSelectIndex, getFilteredSkills]
     ),
   );
 
@@ -398,7 +459,21 @@ export function ChatSession({
     if (!trimmed) return;
 
     // 处理斜杠命令
-    if (trimmed.startsWith("/")) {
+    if (trimmed.startsWith("/") && trimmed.length > 1) {
+      // 尝试补全 skill 名称（仅当输入不完全时）
+      const skillList = getFilteredSkills(trimmed);
+      const skillMatch = skillList[skillSelectIndex] ?? skillList[0];
+      if (skillMatch && skillMatch.name.toLowerCase() !== trimmed.slice(1).toLowerCase()) {
+        // 只替换最后一个 / 之后的部分，保留之前输入的内容
+        const slashIdx = value.lastIndexOf("/");
+        if (slashIdx >= 0) {
+          // 补全后加空格分隔，方便继续输入下一个 skill 或问题
+          setInput(value.slice(0, slashIdx) + "/" + skillMatch.name + " ");
+          setInputKey((k) => k + 1);
+        }
+        return;
+      }
+
       // /model 命令：进入模型选择模式
       if (trimmed.toLowerCase() === "/model") {
         // 默认高亮当前模型
@@ -573,7 +648,7 @@ export function ChatSession({
         ]);
       }
     }
-  }, [onLaunchGame, onLaunchStock, currentContent, currentToolCalls]);
+  }, [onLaunchGame, onLaunchStock, currentContent, currentToolCalls, skills, skillSelectIndex, getFilteredSkills]);
 
   // 从 costTracker 更新今日消耗（每次流式结束后刷新）
   useEffect(() => {
@@ -613,7 +688,7 @@ export function ChatSession({
 
         {/* 状态信息 */}
         <Box flexDirection="column" justifyContent="center">
-          <Text color="#00ff41">{"  ✔ "}已加载 {skillCount} 个 Skill</Text>
+          <Text color="#00ff41">{"  ✔ "}已就绪 {skillCount} 个 Skill</Text>
           <Text color="#00ffff">{"  ℹ "}已就绪 {toolCount} 个工具</Text>
           <Text color="#00ffff">{"  🔧 模型 "}{SUPPORTED_MODELS[activeModel]?.displayName ?? activeModel}</Text>
           {/* 命令提示轮播 — 每 5 秒切换下一条，渐变动画 */}
@@ -766,6 +841,7 @@ export function ChatSession({
                 </Text>
               ) : (
                 <TextInput
+                  key={inputKey}
                   value={input}
                   onChange={setInput}
                   onSubmit={handleSubmit}
@@ -777,6 +853,9 @@ export function ChatSession({
           <Box>
             <Text color="#00ffff" dimColor>{"─".repeat(dividerWidth)}</Text>
           </Box>
+
+          {/* 用户输入 / 时显示 skill 列表 */}
+          <SkillSelector skills={skills} input={input} selectedIndex={skillSelectIndex} />
         </>
       )}
 

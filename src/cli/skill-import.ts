@@ -1,6 +1,6 @@
 import { createInterface } from "node:readline";
 import { existsSync, statSync, lstatSync } from "node:fs";
-import { mkdir, readdir, cp, access, realpath } from "node:fs/promises";
+import { mkdir, readdir, cp, access, realpath, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import chalk from "chalk";
 
@@ -298,6 +298,126 @@ export async function promptImportClaudeSkills(cwd?: string): Promise<void> {
     );
     console.log(chalk.dim("  你可以稍后手动复制 ~/.claude/skills 到 ~/.dskcode/skills\n"));
   }
+}
+
+/** 单个 skill 的展示信息 */
+export interface SkillInfo {
+  name: string;
+  description: string;
+}
+
+/**
+ * 列出全局 ~/.dskcode/skills 下所有有效的 skill 名称。
+ */
+export async function listDskcodeSkills(): Promise<string[]> {
+  const dskcodeDir = getDskcodeSkillsDir();
+  if (!existsSync(dskcodeDir)) return [];
+
+  let entries: string[];
+  try {
+    entries = await readdir(dskcodeDir);
+  } catch {
+    return [];
+  }
+
+  const skills: string[] = [];
+  for (const name of entries) {
+    const full = join(dskcodeDir, name);
+    if (statSync(full).isDirectory() && (await isSkillDir(full))) {
+      skills.push(name);
+    }
+  }
+  return skills;
+}
+
+/**
+ * 列出项目本地 .dskcode/skill 下所有有效的 skill 名称。
+ */
+export async function listProjectSkills(cwd: string): Promise<string[]> {
+  const skillDir = getProjectSkillDir(cwd);
+  if (!existsSync(skillDir)) return [];
+
+  let entries: string[];
+  try {
+    entries = await readdir(skillDir);
+  } catch {
+    return [];
+  }
+
+  const skills: string[] = [];
+  for (const name of entries) {
+    const full = join(skillDir, name);
+    if (statSync(full).isDirectory() && (await isSkillDir(full))) {
+      skills.push(name);
+    }
+  }
+  return skills;
+}
+
+/**
+ * 解析 SKILL.md 的 YAML front matter，获取 skill 名称和描述。
+ * 解析失败时返回 null。
+ */
+async function readSkillInfo(skillDir: string): Promise<SkillInfo | null> {
+  try {
+    const content = await readFile(join(skillDir, "SKILL.md"), "utf-8");
+    const match = content.match(/^---\n([\s\S]*?)\n---/);
+    if (!match) return null;
+
+    const frontMatter = match[1]!;
+    const nameMatch = frontMatter.match(/^name:\s*(.+)$/m);
+    const descMatch = frontMatter.match(/^description:\s*(.+)$/m);
+
+    return {
+      name: nameMatch?.[1]?.trim() ?? "",
+      description: descMatch?.[1]?.trim() ?? "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 获取所有可用 skill 的详细信息（全局 + 项目本地）。
+ * 返回 SkillInfo 列表，解析失败时仍使用目录名作为 name。
+ */
+export async function getAllSkills(cwd: string): Promise<SkillInfo[]> {
+  const [globalNames, localNames] = await Promise.all([
+    listDskcodeSkills(),
+    listProjectSkills(cwd),
+  ]);
+
+  // 合并去重，项目本地优先
+  const seen = new Set<string>();
+  const allNames: string[] = [];
+  for (const name of [...localNames, ...globalNames]) {
+    if (!seen.has(name)) {
+      seen.add(name);
+      allNames.push(name);
+    }
+  }
+
+  const dskcodeDir = getDskcodeSkillsDir();
+  const projectDir = getProjectSkillDir(cwd);
+
+  const results: SkillInfo[] = [];
+  for (const name of allNames) {
+    // 优先读项目本地的 SKILL.md，再读全局
+    const localPath = join(projectDir, name);
+    let info: SkillInfo | null = null;
+    if (existsSync(localPath)) {
+      info = await readSkillInfo(localPath);
+    }
+    if (!info) {
+      const globalPath = join(dskcodeDir, name);
+      if (existsSync(globalPath)) {
+        info = await readSkillInfo(globalPath);
+      }
+    }
+    results.push(info ?? { name, description: "" });
+  }
+
+  return results;
 }
 
 // 暴露路径获取函数，便于测试

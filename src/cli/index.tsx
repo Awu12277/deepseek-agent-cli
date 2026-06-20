@@ -3,7 +3,7 @@ import { loadConfigMiddleware } from "./middleware.js";
 import type { DskcodeContext } from "./middleware.js";
 import { customHelp } from "./help.js";
 import { hasApiKey, promptForApiKey } from "./api-key-setup.js";
-import { promptImportClaudeSkills, countDskcodeSkills, countProjectLocalSkills } from "./skill-import.js";
+import { promptImportClaudeSkills, countDskcodeSkills, countProjectLocalSkills, getAllSkills } from "./skill-import.js";
 import { saveApiKey, loadAndValidate, saveStockConfig } from "../config/index.js";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -80,10 +80,11 @@ export function createCli(): Command {
     ctx: DskcodeContext | undefined,
     costTracker: CostTracker,
   ) {
-    // 统计 skill 数量（全局 + 项目本地）
-    const [globalSkillCount, localSkillCount] = await Promise.all([
+    // 统计 skill 数量并获取详情列表（全局 + 项目本地）
+    const [globalSkillCount, localSkillCount, skills] = await Promise.all([
       countDskcodeSkills(),
       countProjectLocalSkills(process.cwd()),
+      getAllSkills(process.cwd()),
     ]);
     const skillCount = globalSkillCount + localSkillCount;
     // 从配置中提取默认 Provider 的 apiKey 和 baseUrl
@@ -94,6 +95,7 @@ export function createCli(): Command {
     const chatApp = renderApp(
       <ChatSession
         skillCount={skillCount}
+        skills={skills}
         toolCount={ctx?.config.tools.length ?? 0}
         verbose={ctx?.verbose ?? false}
         apiKey={defaultProvider?.apiKey}
