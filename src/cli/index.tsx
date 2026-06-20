@@ -79,6 +79,7 @@ export function createCli(): Command {
     const defaultProvider = ctx?.config.providers.find(
       (p) => p.name === (ctx?.config.defaultProvider ?? "deepseek"),
     );
+    const model = defaultProvider?.model ?? "deepseek-v4-flash";
     const chatApp = renderApp(
       <ChatSession
         providerCount={ctx?.config.providers.length ?? 1}
@@ -87,6 +88,7 @@ export function createCli(): Command {
         apiKey={defaultProvider?.apiKey}
         baseUrl={defaultProvider?.baseUrl ?? "https://api.deepseek.com"}
         costTracker={costTracker}
+        model={model}
         onLaunchGame={() => {
           chatApp.unmount();
           setImmediate(() => {

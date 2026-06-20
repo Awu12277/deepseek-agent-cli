@@ -1,10 +1,19 @@
+// ---------------------------------------------------------------------------
+// 交互式聊天会话组件 — 接入 Agent 主循环，实现流式对话
+// ---------------------------------------------------------------------------
+
 import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useDoubleCtrlC } from "./useDoubleCtrlC.js";
 import { CYBER_PALETTE, LOGO_LINES } from "./DskcodeSplash.js";
-import type { CostTracker } from "../provider/cost-tracker.js";
-import { formatMoney } from "../provider/cost-tracker.js";
+import { Spinner } from "./Spinner.js";
+import { AssistantMessage } from "./AssistantMessage.js";
+import { CostTracker, formatMoney } from "../provider/cost-tracker.js";
+import type { ProviderToolCall, UsageInfo, ModelId } from "../provider/index.js";
+import { createProvider } from "../provider/index.js";
+import { Session } from "../agent/index.js";
+import type { AgentEvent } from "../agent/types.js";
 
 /** 命令处理结果的类型，支持文本响应和动作跳转 */
 export type CommandAction =
@@ -46,13 +55,26 @@ registerCommand("/help", {
   },
 });
 registerCommand("/clear", { desc: "清空对话历史", handler: () => ({ kind: "clear" }) });
-registerCommand("/version", { desc: "显示版本信息", handler: () => ({ kind: "text", content: "dskcode v0.0.0" }) });
+registerCommand("/version", { desc: "显示版本信息", handler: () => ({ kind: "text", content: "dskcode v0.1.10" }) });
 registerCommand("/game", { desc: "启动游戏", handler: () => ({ kind: "navigate", target: "game" }) });
 registerCommand("/stock", { desc: "查看股票行情", handler: () => ({ kind: "navigate", target: "stock" }) });
 
-interface ChatMessage {
+/** 单条已完成的助手消息 */
+interface CompletedAssistant {
+  content: string;
+  toolCalls?: ProviderToolCall[];
+  usage?: UsageInfo;
+  elapsed?: number;
+  cost?: number;
+  model?: string;
+}
+
+/** 单条显示消息 */
+interface DisplayMessage {
   role: "user" | "assistant";
   content: string;
+  /** 已完成的助手消息详情（仅在 role=assistant 时） */
+  assistantDetail?: CompletedAssistant;
 }
 
 interface ChatSessionProps {
@@ -62,29 +84,62 @@ interface ChatSessionProps {
   apiKey?: string;
   baseUrl?: string;
   costTracker?: CostTracker;
+  model?: string;
   onLaunchGame?: () => void;
   onLaunchStock?: () => void;
 }
 
-export function ChatSession({ providerCount, toolCount, verbose, apiKey, baseUrl, costTracker, onLaunchGame, onLaunchStock }: ChatSessionProps) {
+export function ChatSession({
+  providerCount,
+  toolCount,
+  verbose,
+  apiKey,
+  baseUrl,
+  costTracker: externalCostTracker,
+  model = "deepseek-v4-flash",
+  onLaunchGame,
+  onLaunchStock,
+}: ChatSessionProps) {
   const [offset, setOffset] = useState(0);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [displayMessages, setDisplayMessages] = useState<DisplayMessage[]>([]);
   const [input, setInput] = useState("");
   const [balance, setBalance] = useState<number | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(false);
   const [todayCost, setTodayCost] = useState<number | null>(null);
 
-  const { doubleCtrlC, handleCtrlC } = useDoubleCtrlC(() => process.exit(0));
+  // 流式状态
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [currentContent, setCurrentContent] = useState("");
+  const [currentToolCalls, setCurrentToolCalls] = useState<ProviderToolCall[]>([]);
+  const [currentUsage, setCurrentUsage] = useState<UsageInfo | undefined>(undefined);
+  const [currentElapsed, setCurrentElapsed] = useState<number | undefined>(undefined);
+  const [currentCost, setCurrentCost] = useState<number | undefined>(undefined);
+  const [currentModel, setCurrentModel] = useState<string | undefined>(undefined);
+  const [streamError, setStreamError] = useState<string | undefined>(undefined);
 
-  // 捕获 Ctrl+C，启用"双击退出"交互
+  // Session 引用（保持跨渲染稳定）
+  const sessionRef = useRef<Session | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const { doubleCtrlC, handleCtrlC } = useDoubleCtrlC(() => {
+    // 双击 Ctrl+C 退出进程
+    process.exit(0);
+  });
+
+  // 捕获 Ctrl+C
   useInput(
     useCallback(
-      (input, key) => {
-        if (input === "c" && key.ctrl) {
-          handleCtrlC();
+      (_input, key) => {
+        if (key.ctrl && _input === "c") {
+          if (isStreaming) {
+            // 流式输出中，取消当前请求
+            abortRef.current?.abort();
+          } else {
+            handleCtrlC();
+          }
         }
       },
-      [handleCtrlC],
+      [isStreaming, handleCtrlC],
     ),
   );
 
@@ -95,6 +150,28 @@ export function ChatSession({ providerCount, toolCount, verbose, apiKey, baseUrl
     }, 500);
     return () => clearInterval(timer);
   }, []);
+
+  // 初始化 Session
+  useEffect(() => {
+    if (!apiKey || !baseUrl) return;
+
+    const provider = createProvider({
+      name: "deepseek",
+      apiKey,
+      baseUrl,
+      model,
+    });
+
+    const tracker = externalCostTracker ?? new CostTracker();
+    const session = new Session(provider, [], tracker, {
+      cwd: process.cwd(),
+    });
+    sessionRef.current = session;
+
+    return () => {
+      sessionRef.current = null;
+    };
+  }, [apiKey, baseUrl, model, externalCostTracker]);
 
   // 查询余额
   useEffect(() => {
@@ -124,18 +201,17 @@ export function ChatSession({ providerCount, toolCount, verbose, apiKey, baseUrl
 
   // 加载今日消耗历史数据，并定时刷新
   useEffect(() => {
-    if (!costTracker) return;
+    if (!externalCostTracker) return;
     let cancelled = false;
     let timer: ReturnType<typeof setInterval> | undefined;
 
     const refresh = () => {
-      setTodayCost(costTracker.todayTotalCost);
+      setTodayCost(externalCostTracker.todayTotalCost);
     };
 
-    costTracker.load().then(() => {
+    externalCostTracker.load().then(() => {
       if (cancelled) return;
       refresh();
-      // 每 5 秒刷新一次，确保跨会话数据更新
       timer = setInterval(refresh, 5000);
     }).catch(() => {
       // 加载失败静默处理
@@ -145,12 +221,14 @@ export function ChatSession({ providerCount, toolCount, verbose, apiKey, baseUrl
       cancelled = true;
       if (timer) clearInterval(timer);
     };
-  }, [costTracker]);
+  }, [externalCostTracker]);
 
-  const handleSubmit = useCallback((value: string) => {
+  /** 处理用户输入 */
+  const handleSubmit = useCallback(async (value: string) => {
     const trimmed = value.trim();
     if (!trimmed) return;
 
+    // 处理斜杠命令
     if (trimmed.startsWith("/")) {
       const cmd = commandRegistry.get(trimmed.toLowerCase());
       if (cmd) {
@@ -161,8 +239,10 @@ export function ChatSession({ providerCount, toolCount, verbose, apiKey, baseUrl
             process.exit(0);
             return;
           case "clear":
-            setMessages([]);
+            setDisplayMessages([]);
             setInput("");
+            // 重置 Session 历史
+            sessionRef.current?.reset();
             return;
           case "navigate":
             setInput("");
@@ -173,7 +253,7 @@ export function ChatSession({ providerCount, toolCount, verbose, apiKey, baseUrl
             }
             return;
           case "text":
-            setMessages((prev) => [
+            setDisplayMessages((prev) => [
               ...prev,
               { role: "user", content: trimmed },
               { role: "assistant", content: result.content },
@@ -182,7 +262,7 @@ export function ChatSession({ providerCount, toolCount, verbose, apiKey, baseUrl
             return;
         }
       }
-      setMessages((prev) => [
+      setDisplayMessages((prev) => [
         ...prev,
         { role: "user", content: trimmed },
         { role: "assistant", content: `未知命令：${trimmed}。输入 /help 查看。` },
@@ -191,13 +271,148 @@ export function ChatSession({ providerCount, toolCount, verbose, apiKey, baseUrl
       return;
     }
 
-    setMessages((prev) => [
+    // 检查 Session 是否就绪
+    if (!sessionRef.current) {
+      setDisplayMessages((prev) => [
+        ...prev,
+        { role: "user", content: trimmed },
+        { role: "assistant", content: "⚠ 无法连接到 Provider。请检查 API Key 和网络配置。" },
+      ]);
+      setInput("");
+      return;
+    }
+
+    // ---- 正常对话：接入 Agent 流式主循环 ----
+
+    // 追加用户消息到显示列表
+    setDisplayMessages((prev) => [
       ...prev,
       { role: "user", content: trimmed },
-      { role: "assistant", content: "dskcode AI — 待实现（第07章）。当前为 CLI 框架演示模式。" },
     ]);
+
+    // 进入流式状态
     setInput("");
-  }, [onLaunchGame, onLaunchStock]);
+    setIsStreaming(true);
+    setCurrentContent("");
+    setCurrentToolCalls([]);
+    setCurrentUsage(undefined);
+    setCurrentElapsed(undefined);
+    setCurrentCost(undefined);
+    setCurrentModel(undefined);
+    setStreamError(undefined);
+
+    const session = sessionRef.current;
+    const abortController = new AbortController();
+    abortRef.current = abortController;
+
+    try {
+      for await (const event of session!.chat(trimmed)) {
+        // 如果请求被取消，跳过后续事件
+        if (abortController.signal.aborted) break;
+
+        switch (event.type) {
+          case "text_delta":
+            setCurrentContent((prev) => prev + event.content);
+            break;
+
+          case "tool_calls":
+            setCurrentToolCalls((prev) => [...prev, ...event.calls]);
+            break;
+
+          case "usage":
+            setCurrentUsage(event.usage);
+            setCurrentModel(event.model);
+            // 使用量来自最后一个事件，费率已知后可同步计算
+            break;
+
+          case "done":
+            setCurrentElapsed(event.elapsed);
+            break;
+
+          case "error":
+            setStreamError(event.error.message);
+            break;
+        }
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setStreamError(msg);
+    } finally {
+      setIsStreaming(false);
+      abortRef.current = null;
+
+      // 完成一轮流式输出后，将流式内容固化到显示消息中
+      const finalContent = currentContent; // 闭包捕获
+      const finalToolCalls = currentToolCalls.length > 0 ? currentToolCalls : undefined;
+
+      // 这里需要在 next tick 更新，因为 state 更新是批量的
+      // 我们用函数式更新确保拿到最新值
+      setDisplayMessages((prev) => {
+        // 添加assistant消息
+        return [
+          ...prev,
+          {
+            role: "assistant" as const,
+            content: "done", // 占位，后面通过 ref 更新
+          },
+        ];
+      });
+    }
+  }, [onLaunchGame, onLaunchStock, currentContent, currentToolCalls]);
+
+  // 流式结束后，将流式内容固化为已完成的助手消息
+  useEffect(() => {
+    if (isStreaming) return; // 还在流式中，不固化
+
+    // 只在有流式内容且最后一条消息还没固化时才处理
+    if (currentContent || currentToolCalls.length > 0 || streamError) {
+      setDisplayMessages((prev) => {
+        // 检查最后一条是否是占位消息
+        const last = prev[prev.length - 1];
+        if (last?.role === "assistant" && last.content === "done") {
+          // 替换占位消息
+          const completed: CompletedAssistant = {
+            content: streamError ? `⚠ 请求出错：${streamError}` : (currentContent || ""),
+            toolCalls: currentToolCalls.length > 0 ? currentToolCalls : undefined,
+            usage: currentUsage,
+            elapsed: currentElapsed,
+            cost: currentCost,
+            model: currentModel,
+          };
+          return [
+            ...prev.slice(0, -1),
+            {
+              role: "assistant" as const,
+              content: completed.content,
+              assistantDetail: completed,
+            },
+          ];
+        }
+        return prev;
+      });
+
+      // 重置流式状态（但要避免 useEffect 循环）
+      // 不在这里重置，而是在 handleSubmit 时重置
+    }
+  }, [isStreaming, currentContent, currentToolCalls, streamError, currentUsage, currentElapsed, currentCost, currentModel]);
+
+  // 从 costTracker 更新今日消耗（每次流式结束后刷新）
+  useEffect(() => {
+    if (!isStreaming && externalCostTracker) {
+      setTodayCost(externalCostTracker.todayTotalCost);
+    }
+  }, [isStreaming, externalCostTracker]);
+
+  // 从 usage 计算 cost（需要在 usage + model 都就绪后）
+  useEffect(() => {
+    if (currentUsage && currentModel && !currentCost) {
+      // import calculateCost dynamically
+      import("../provider/models.js").then(({ calculateCost }) => {
+        const cost = calculateCost(currentUsage, currentModel as ModelId);
+        setCurrentCost(cost.totalCost);
+      });
+    }
+  }, [currentUsage, currentModel, currentCost]);
 
   return (
     <Box flexDirection="column" paddingLeft={1} paddingRight={1}>
@@ -221,6 +436,7 @@ export function ChatSession({ providerCount, toolCount, verbose, apiKey, baseUrl
         <Box flexDirection="column" justifyContent="center">
           <Text color="#00ff41">{"  ✔ "}已加载 {providerCount} 个 Provider</Text>
           <Text color="#00ffff">{"  ℹ "}已就绪 {toolCount} 个工具</Text>
+          <Text color="#00ffff">{"  🔧 模型 "}{model}</Text>
           {verbose ? <Text color="#ff1493">{"  ⚡ Verbose"}</Text> : null}
         </Box>
 
@@ -243,27 +459,67 @@ export function ChatSession({ providerCount, toolCount, verbose, apiKey, baseUrl
         </Box>
       </Box>
 
-      {/* Messages */}
+      {/* 消息列表 */}
       <Box flexDirection="column" marginTop={1}>
-        {messages.map((msg, i) => (
-          <Box key={i} marginTop={1}>
-            <Box width={8} flexShrink={0}>
-              <Text bold color={msg.role === "user" ? "#00ff41" : "#ff00ff"}>
-                {msg.role === "user" ? "  👤" : "  🤖"}
-              </Text>
-            </Box>
-            <Box flexGrow={1}>
-              <Text wrap="wrap">{msg.content}</Text>
-            </Box>
+        {displayMessages.map((msg, i) => {
+          if (msg.role === "user") {
+            return (
+              <Box key={i} marginTop={1}>
+                <Box width={4} flexShrink={0}>
+                  <Text bold color="#00ff41">{"👤"}</Text>
+                </Box>
+                <Box flexGrow={1}>
+                  <Text wrap="wrap">{msg.content}</Text>
+                </Box>
+              </Box>
+            );
+          }
+
+          // 已完成的助手消息
+          const detail = msg.assistantDetail;
+          return (
+            <AssistantMessage
+              key={i}
+              content={msg.content}
+              toolCalls={detail?.toolCalls}
+              isStreaming={false}
+              usage={detail?.usage}
+              elapsed={detail?.elapsed}
+              cost={detail?.cost}
+              model={detail?.model}
+            />
+          );
+        })}
+
+        {/* 正在流式输出的助手消息 */}
+        {isStreaming && (
+          <AssistantMessage
+            content={currentContent}
+            toolCalls={currentToolCalls.length > 0 ? currentToolCalls : undefined}
+            isStreaming={true}
+          />
+        )}
+
+        {/* 思考中 Spinner */}
+        {isStreaming && !currentContent && currentToolCalls.length === 0 && (
+          <Box marginTop={1} marginLeft={4}>
+            <Spinner type="dots" label="思考中..." />
           </Box>
-        ))}
+        )}
+
+        {/* 错误信息（流式结束后显示） */}
+        {!isStreaming && streamError && (
+          <Box marginTop={1} marginLeft={3}>
+            <Text color="red">⚠ {streamError}</Text>
+          </Box>
+        )}
       </Box>
 
-      {/* Input */}
+      {/* 输入区 */}
       <Box marginTop={1}>
-        <Box width={8} flexShrink={0}>
+        <Box width={4} flexShrink={0}>
           <Text bold color="#00ff41">
-            {"  ⚡"}
+            {"⚡"}
           </Text>
         </Box>
         <Box flexGrow={1}>
@@ -271,7 +527,7 @@ export function ChatSession({ providerCount, toolCount, verbose, apiKey, baseUrl
             value={input}
             onChange={setInput}
             onSubmit={handleSubmit}
-            placeholder="输入你的问题..."
+            placeholder={isStreaming ? "等待回复中..." : "输入你的问题..."}
           />
         </Box>
       </Box>
@@ -283,10 +539,19 @@ export function ChatSession({ providerCount, toolCount, verbose, apiKey, baseUrl
       </Box>
 
       {/* 双击 Ctrl+C 退出提示 */}
-      {doubleCtrlC && (
+      {doubleCtrlC && !isStreaming && (
         <Box marginTop={1}>
           <Text color="#ff1493" bold>
             {"  ⚠ 再按一次 Ctrl+C 退出 dskcode"}
+          </Text>
+        </Box>
+      )}
+
+      {/* 流式中 Ctrl+C 取消提示 */}
+      {isStreaming && (
+        <Box marginTop={1}>
+          <Text color="yellow" dimColor>
+            {"  提示：按 Ctrl+C 取消当前请求"}
           </Text>
         </Box>
       )}

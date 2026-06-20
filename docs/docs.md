@@ -14,7 +14,7 @@
 | 04 | [Provider 抽象层与多模型支持](#04-provider-抽象层与多模型支持) | Provider 接口、DeepSeek/OpenAI 适配器、工厂注册 | ✅ 已完成 |
 | 05 | [LLM API 客户端：流式补全与错误处理](#05-llm-api-客户端流式补全与错误处理) | fetch SSE、AbortController、超时重试 | ✅ 已完成 |
 | 06 | [Token 计价与成本追踪系统](#06-token-计价与成本追踪系统) | 消耗记录、Prefix Cache 优化、累计统计 | ✅ 已完成 |
-| 07 | [Agent 主循环：消息编排与多轮对话](#07-agent-主循环消息编排与多轮对话) | System/User/Assistant/Tool 消息组装、轮次控制 | ⚡ 骨架就绪 |
+| 07 | [Agent 主循环：消息编排与多轮对话](#07-agent-主循环消息编排与多轮对话) | System/User/Assistant/Tool 消息组装、轮次控制 | ✅ 已完成 |
 | 08 | [工具系统：内置工具的设计与注册](#08-工具系统内置工具的设计与注册) | Tool 接口、Registry 模式、文件操作 / Bash / Grep | ⚡ 接口就绪 |
 | 09 | [MCP 插件系统：stdio JSON-RPC 协议](#09-mcp-插件系统stdio-json-rpc-协议) | 子进程管理、JSON-RPC 编解码、生命周期 | ⚡ 骨架就绪 |
 | 10 | [权限控制：逐调用审批策略](#10-权限控制逐调用审批策略) | Allow/Ask/Deny 三级策略、交互式审批 | ❌ 未开始 |

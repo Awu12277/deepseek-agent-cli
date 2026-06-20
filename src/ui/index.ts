@@ -5,5 +5,7 @@ export { StatusMessage } from "./StatusMessage.js";
 export { DskcodeSplash, CYBER_PALETTE, LOGO_LINES } from "./DskcodeSplash.js";
 export { ChatSession, registerCommand } from "./ChatSession.js";
 export type { CommandAction, ChatCommand } from "./ChatSession.js";
+export { AssistantMessage } from "./AssistantMessage.js";
+export { ToolCallBlock } from "./ToolCallBlock.js";
 export { GamePicker } from "./GamePicker.js";
 export { useDoubleCtrlC } from "./useDoubleCtrlC.js";
