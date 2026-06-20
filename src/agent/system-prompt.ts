@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import type { SystemPromptOptions } from "./types.js";
+import { EXTRA_PROMPT } from "./extra-prompt.js";
 
 /**
  * 构建 Agent 的系统提示词。
@@ -14,6 +15,7 @@ import type { SystemPromptOptions } from "./types.js";
  * 4. 工具描述 — 可用工具列表（如有）
  * 5. 项目上下文 — AGENTS.md 内容（如有）
  * 6. 行为约束 — 回答风格、安全边界
+ * 7. 终端输出约束 — 禁止 Markdown 符号（纯终端渲染）
  */
 export function buildSystemPrompt(opts: SystemPromptOptions): string {
   const sections: string[] = [];
@@ -81,6 +83,9 @@ ${opts.projectContext}`);
 - 涉及文件操作时，先确认文件路径
 - 不执行可能造成不可逆损害的操作（如 rm -rf）除非用户明确确认
 - 当工具调用返回错误时，分析原因并尝试修复`);
+
+  // 7. 终端输出约束（来自 extra-prompt.ts）
+  sections.push(EXTRA_PROMPT);
 
   return sections.join("\n\n");
 }

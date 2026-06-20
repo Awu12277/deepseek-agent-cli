@@ -98,6 +98,16 @@ describe("buildSystemPrompt", () => {
     });
     expect(prompt).toContain("行为约束");
   });
+
+  it("包含终端输出约束（extra-prompt）", () => {
+    const prompt = buildSystemPrompt({
+      model: "deepseek-v4-flash",
+      cwd: "/test",
+    });
+    expect(prompt).toContain("终端输出约束");
+    expect(prompt).toContain("禁止使用的符号");
+    expect(prompt).toContain("推荐的组织方式");
+  });
 });
 
 // ---------------------------------------------------------------------------
