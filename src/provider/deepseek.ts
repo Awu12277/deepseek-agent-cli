@@ -10,9 +10,12 @@ import type {
   ProviderToolCall,
   UsageInfo,
   ModelId,
+  ClientOptions,
 } from "./types.js";
 import { getModelMeta, estimateTokens } from "./models.js";
-import { ProviderError, NetworkError, mapHttpError } from "./errors.js";
+import { mapHttpError } from "./errors.js";
+import { HttpClient, type RequestOptions } from "./client.js";
+import { parseSSE } from "./sse.js";
 
 // ---------------------------------------------------------------------------
 // DeepSeek API 响应类型
@@ -62,10 +65,12 @@ interface AccumulatedToolCall {
 // ---------------------------------------------------------------------------
 
 /** DeepSeek Provider 创建配置 */
-export interface DeepSeekProviderConfig {
+export interface DeepSeekProviderConfig extends ClientOptions {
   apiKey: string;
   baseUrl: string;
   model: ModelId;
+  /** 流式空闲超时（毫秒），默认 60000 */
+  idleTimeoutMs?: number;
 }
 
 /**
@@ -75,11 +80,14 @@ export interface DeepSeekProviderConfig {
  * - 流式响应（SSE）
  * - Prefix Cache（DeepSeek 特色，缓存命中 token 半价）
  * - 仅 deepseek-v4-flash / deepseek-v4-pro 两个模型
+ * - 连接超时、流式空闲超时、指数退避重试（由 HttpClient 提供）
  */
 export class DeepSeekProvider implements Provider {
   readonly #apiKey: string;
   readonly #baseUrl: string;
   readonly #model: ModelId;
+  readonly #client: HttpClient;
+  readonly #idleTimeoutMs: number;
 
   readonly name = "deepseek";
 
@@ -87,6 +95,13 @@ export class DeepSeekProvider implements Provider {
     this.#apiKey = config.apiKey;
     this.#baseUrl = config.baseUrl.replace(/\/+$/, ""); // 去掉末尾斜杠
     this.#model = config.model;
+    this.#idleTimeoutMs = config.idleTimeoutMs ?? 60_000;
+    this.#client = new HttpClient({
+      connectTimeoutMs: config.connectTimeoutMs,
+      maxRetries: config.maxRetries,
+      retryBaseDelayMs: config.retryBaseDelayMs,
+      retryMaxDelayMs: config.retryMaxDelayMs,
+    });
   }
 
   model(): string {
@@ -106,25 +121,11 @@ export class DeepSeekProvider implements Provider {
   async getBalance(): Promise<import("./types.js").BalanceResult> {
     const url = `${this.#baseUrl}/user/balance`;
 
-    let response: Response;
-    try {
-      response = await fetch(url, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${this.#apiKey}`,
-        },
-      });
-    } catch (err: unknown) {
-      throw new NetworkError(
-        `网络错误：无法查询余额 (${this.#baseUrl})`,
-        err instanceof Error ? err : undefined,
-      );
-    }
-
-    if (!response.ok) {
-      const responseBody = await response.text().catch(() => "");
-      throw mapHttpError(response.status, responseBody);
-    }
+    // HttpClient 已封装超时与 4xx/5xx 映射，抛出的错误可直接上拋
+    const response = await this.#client.request(url, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${this.#apiKey}` },
+    });
 
     const data = await response.json() as {
       is_available: boolean;
@@ -150,8 +151,8 @@ export class DeepSeekProvider implements Provider {
   /**
    * 发起聊天补全请求（流式）。
    *
-   * 通过原生 fetch 调用 DeepSeek API，解析 SSE 事件流，
-   * 以 AsyncGenerator 的形式逐步 yield ChatChunk。
+   * 通过 HttpClient 发起请求（自动连接超时 + 429/5xx 指数退避重试），
+   * 用 parseSSE 解析事件流，逐块映射为 ChatChunk 并 yield。
    */
   async *chat(
     messages: ChatMessage[],
@@ -178,35 +179,21 @@ export class DeepSeekProvider implements Provider {
       }
     }
 
-    let response: Response;
-    try {
-      response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.#apiKey}`,
-        },
-        body: JSON.stringify(body),
-        signal: opts?.signal,
-      });
-    } catch (err: unknown) {
-      if (opts?.signal?.aborted) {
-        return; // 用户手动取消
-      }
-      throw new NetworkError(
-        `网络错误：无法连接到 DeepSeek API (${this.#baseUrl})`,
-        err instanceof Error ? err : undefined,
-      );
-    }
+    const requestOptions: RequestOptions = {};
+    if (opts?.signal) requestOptions.signal = opts.signal;
 
-    // 处理非成功状态码
-    if (!response.ok) {
-      const responseBody = await response.text().catch(() => "");
-      throw mapHttpError(response.status, responseBody);
-    }
+    const response = await this.#client.requestWithRetry(
+      url,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${this.#apiKey}` },
+        body: JSON.stringify(body),
+      },
+      requestOptions,
+    );
 
     // 解析 SSE 流（含工具调用累积）
-    yield* this.#parseStream(response);
+    yield* this.#parseStream(response, opts?.signal);
   }
 
   // -----------------------------------------------------------------------
@@ -247,7 +234,7 @@ export class DeepSeekProvider implements Provider {
   }
 
   /**
-   * 解析 SSE 事件流。
+   * 解析 SSE 事件流并映射为 ChatChunk。
    *
    * 策略：
    * - 文本内容增量立即 yield（支持实时流式渲染）
@@ -255,129 +242,101 @@ export class DeepSeekProvider implements Provider {
    * - 当 finishReason 为 "tool_calls" 时，yield 完整的工具调用列表
    * - 最后一个块通常包含 usage 统计信息
    */
-  async *#parseStream(response: Response): AsyncIterable<ChatChunk> {
-    const reader = response.body?.getReader();
-    if (!reader) {
-      throw new ProviderError("响应体为空", "EMPTY_RESPONSE");
-    }
-
-    const decoder = new TextDecoder();
-    let buffer = "";
-
+  async *#parseStream(
+    response: Response,
+    signal?: AbortSignal,
+  ): AsyncIterable<ChatChunk> {
     // 工具调用累积器：key = index（流中用 index 标识不同的 tool call）
     const toolCallAccumulator = new Map<number, AccumulatedToolCall>();
 
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+    for await (const evt of parseSSE(response, {
+      idleTimeoutMs: this.#idleTimeoutMs,
+      signal,
+    })) {
+      // [DONE] 标记流结束
+      if (evt.data === "[DONE]") return;
 
-        buffer += decoder.decode(value, { stream: true });
+      let chunk: StreamChunk;
+      try {
+        chunk = JSON.parse(evt.data) as StreamChunk;
+      } catch {
+        // 无法解析的 JSON 行，跳过
+        continue;
+      }
 
-        // 按行拆分处理 SSE 数据
-        const lines = buffer.split("\n");
-        // 保留最后一行（可能不完整）
-        buffer = lines.pop() ?? "";
+      const choice = chunk.choices?.[0];
+      if (!choice) continue;
 
-        for (const line of lines) {
-          const trimmed = line.trim();
+      const delta = choice.delta;
+      const content = delta?.content ?? "";
+      const finishReason = choice.finish_reason;
 
-          // 跳过空行和 SSE 注释行
-          if (!trimmed || trimmed.startsWith(":")) continue;
+      // 累积工具调用片段
+      if (delta?.tool_calls) {
+        for (const tc of delta.tool_calls) {
+          const idx = tc.index ?? 0;
+          const existing = toolCallAccumulator.get(idx);
 
-          // 处理 data: 开头的行
-          if (!trimmed.startsWith("data: ")) continue;
-
-          const data = trimmed.slice(6);
-
-          // [DONE] 标记流结束
-          if (data === "[DONE]") return;
-
-          let chunk: StreamChunk;
-          try {
-            chunk = JSON.parse(data) as StreamChunk;
-          } catch {
-            // 无法解析的 JSON 行，跳过
-            continue;
-          }
-
-          const choice = chunk.choices?.[0];
-          if (!choice) continue;
-
-          const delta = choice.delta;
-          const content = delta?.content ?? "";
-          const finishReason = choice.finish_reason;
-
-          // 累积工具调用片段
-          if (delta?.tool_calls) {
-            for (const tc of delta.tool_calls) {
-              const idx = tc.index ?? 0;
-              const existing = toolCallAccumulator.get(idx);
-
-              if (!existing) {
-                // 新的工具调用开始
-                toolCallAccumulator.set(idx, {
-                  id: tc.id ?? "",
-                  name: tc.function?.name ?? "",
-                  arguments: tc.function?.arguments ?? "",
-                });
-              } else {
-                // 追加参数片段
-                if (tc.id) existing.id = tc.id;
-                if (tc.function?.name) existing.name = tc.function.name;
-                if (tc.function?.arguments) {
-                  existing.arguments += tc.function.arguments;
-                }
-              }
+          if (!existing) {
+            // 新的工具调用开始
+            toolCallAccumulator.set(idx, {
+              id: tc.id ?? "",
+              name: tc.function?.name ?? "",
+              arguments: tc.function?.arguments ?? "",
+            });
+          } else {
+            // 追加参数片段
+            if (tc.id) existing.id = tc.id;
+            if (tc.function?.name) existing.name = tc.function.name;
+            if (tc.function?.arguments) {
+              existing.arguments += tc.function.arguments;
             }
-          }
-
-          // 构建 usage 信息
-          let usage: UsageInfo | undefined;
-          if (chunk.usage) {
-            usage = {
-              promptTokens: chunk.usage.prompt_tokens,
-              completionTokens: chunk.usage.completion_tokens,
-              cachedPromptTokens: chunk.usage.prompt_cache_hit_tokens,
-            };
-          }
-
-          // 确定完成原因
-          const mappedFinishReason = this.#mapFinishReason(finishReason);
-
-          // 当 finishReason 为 "tool_calls" 时，yield 完整的工具调用列表
-          const shouldYieldToolCalls =
-            mappedFinishReason === "tool_calls" && toolCallAccumulator.size > 0;
-
-          // 不包含有效数据的块，跳过
-          if (
-            !content &&
-            mappedFinishReason === null &&
-            !shouldYieldToolCalls &&
-            !usage
-          ) {
-            continue;
-          }
-
-          yield {
-            content,
-            finishReason: mappedFinishReason,
-            ...(shouldYieldToolCalls
-              ? {
-                  toolCalls: [...toolCallAccumulator.values()],
-                }
-              : {}),
-            ...(usage ? { usage } : {}),
-          };
-
-          // 清理已 yield 的工具调用累积器
-          if (shouldYieldToolCalls) {
-            toolCallAccumulator.clear();
           }
         }
       }
-    } finally {
-      reader.releaseLock();
+
+      // 构建 usage 信息
+      let usage: UsageInfo | undefined;
+      if (chunk.usage) {
+        usage = {
+          promptTokens: chunk.usage.prompt_tokens,
+          completionTokens: chunk.usage.completion_tokens,
+          cachedPromptTokens: chunk.usage.prompt_cache_hit_tokens,
+        };
+      }
+
+      // 确定完成原因
+      const mappedFinishReason = this.#mapFinishReason(finishReason);
+
+      // 当 finishReason 为 "tool_calls" 时，yield 完整的工具调用列表
+      const shouldYieldToolCalls =
+        mappedFinishReason === "tool_calls" && toolCallAccumulator.size > 0;
+
+      // 不包含有效数据的块，跳过
+      if (
+        !content &&
+        mappedFinishReason === null &&
+        !shouldYieldToolCalls &&
+        !usage
+      ) {
+        continue;
+      }
+
+      yield {
+        content,
+        finishReason: mappedFinishReason,
+        ...(shouldYieldToolCalls
+          ? {
+              toolCalls: [...toolCallAccumulator.values()],
+            }
+          : {}),
+        ...(usage ? { usage } : {}),
+      };
+
+      // 清理已 yield 的工具调用累积器
+      if (shouldYieldToolCalls) {
+        toolCallAccumulator.clear();
+      }
     }
   }
 

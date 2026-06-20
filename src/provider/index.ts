@@ -15,6 +15,10 @@ export type {
   Provider,
   ModelId,
   ModelMeta,
+  ToolDefinition,
+  ChatCompletionRequest,
+  ClientOptions,
+  SSEEvent,
 } from "./types.js";
 
 // 错误类型
@@ -25,8 +29,28 @@ export {
   ServerError,
   NetworkError,
   ModelNotSupportedError,
+  TimeoutError,
+  StreamIdleTimeoutError,
   mapHttpError,
+  isRetryableError,
 } from "./errors.js";
+
+// HTTP 客户端
+export { HttpClient } from "./client.js";
+export type { HttpClientConfig, RequestOptions } from "./client.js";
+
+// SSE 解析器
+export { parseSSE } from "./sse.js";
+export type { ParseSSEOptions } from "./sse.js";
+
+// 重试策略
+export {
+  withRetry,
+  computeBackoffDelay,
+  overrideSleep,
+  DEFAULT_RETRY_OPTIONS,
+} from "./retry.js";
+export type { RetryOptions } from "./retry.js";
 
 // 模型定义与校验
 export {

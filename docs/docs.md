@@ -11,8 +11,8 @@
 | 01 | [项目初始化与工程基建](#01-项目初始化与工程基建) | monorepo 结构、tsconfig、ESM/CJS、lint、test | ✅ 已完成 |
 | 02 | [CLI 框架搭建与子命令路由](#02-cli-框架搭建与子命令路由) | commander + inquirer、chat/run/setup 子命令 | ✅ 已完成 |
 | 03 | [配置系统：JSON 加载与分层合并](#03-配置系统json-加载与分层合并) | 多级配置文件、flag 覆盖、环境变量 | ✅ 已完成 |
-| 04 | [Provider 抽象层与多模型支持](#04-provider-抽象层与多模型支持) | Provider 接口、DeepSeek/OpenAI 适配器、工厂注册 | ⚡ 接口就绪 |
-| 05 | [LLM API 客户端：流式补全与错误处理](#05-llm-api-客户端流式补全与错误处理) | fetch SSE、AbortController、超时重试 | ❌ 未开始 |
+| 04 | [Provider 抽象层与多模型支持](#04-provider-抽象层与多模型支持) | Provider 接口、DeepSeek/OpenAI 适配器、工厂注册 | ✅ 已完成 |
+| 05 | [LLM API 客户端：流式补全与错误处理](#05-llm-api-客户端流式补全与错误处理) | fetch SSE、AbortController、超时重试 | ✅ 已完成 |
 | 06 | [Token 计价与成本追踪系统](#06-token-计价与成本追踪系统) | 消耗记录、Prefix Cache 优化、累计统计 | ❌ 未开始 |
 | 07 | [Agent 主循环：消息编排与多轮对话](#07-agent-主循环消息编排与多轮对话) | System/User/Assistant/Tool 消息组装、轮次控制 | ⚡ 骨架就绪 |
 | 08 | [工具系统：内置工具的设计与注册](#08-工具系统内置工具的设计与注册) | Tool 接口、Registry 模式、文件操作 / Bash / Grep | ⚡ 接口就绪 |
@@ -72,7 +72,7 @@
 - **配置校验**：必填字段检查，友好的错误提示
 - **配置热加载**：watch 模式检测文件变更
 
-## 04 Provider 抽象层与多模型支持 ⚡ 接口就绪
+## 04 Provider 抽象层与多模型支持 ✅
 
 设计 Provider 接口，支持 DeepSeek API。
 
@@ -88,22 +88,27 @@
   ```
 
 - **工厂注册模式**：`registry.register('deepseek', DeepSeekProvider)` + `registry.get('deepseek')`
-- **DeepSeek Provider**：DeepSeek API 适配，prefix cache 感知
+- **DeepSeek Provider**：DeepSeek API 适配，prefix cache 感知，余额查询
 - **模型限制**：仅支持 `deepseek-v4-flash`（默认）和 `deepseek-v4-pro`
-- **错误映射**：HTTP 状态码 → 结构化错误（auth / rate-limit / server-error）
+- **模型元数据**：上下文窗口、输入/输出/缓存命中单价、Token 估算
+- **费用计算**：`calculateCost(usage, model)` 支持 Prefix Cache 半价计费
+- **错误映射**：HTTP 状态码 → 结构化错误（AuthError / RateLimitError / ServerError / NetworkError / TimeoutError / ModelNotSupportedError）
+- **类型体系**：ChatMessage / ChatOptions / ChatChunk / UsageInfo / ProviderToolCall / ToolDefinition / ClientOptions 等完整类型定义
 
-## 05 LLM API 客户端：流式补全与错误处理 ❌ 未开始
+## 05 LLM API 客户端：流式补全与错误处理 ✅
 
 实现底层的 API 通信层，确保流式传输稳定可靠。
 
-- **Fetch 封装**：原生 `fetch` vs `undici`，Node 18+ 兼容策略
-- **SSE 流式解析**：手动解析 `data: ...` 事件流，处理 `[DONE]` 标记
-- **AsyncGenerator**：用 `async function*` 暴露流式块
-- **AbortController**：用户 Ctrl+C 中断请求
-- **超时控制**：连接超时 + 流式空闲超时
-- **指数退避重试**：429 / 5xx 自动重试
-- **请求合并**：同一轮对话的 token 统计汇总
-- **Types 定义**：ChatCompletionRequest / Chunk / Usage 等完整类型
+- **Fetch 封装**：原生 `fetch` — 基于 Node 18+ 原生 fetch，无需 undici
+- **SSE 流式解析**：手写 AsyncGenerator 解析器，处理 `data:` 事件流、跨块拆行、`[DONE]` 终止标记
+- **AsyncGenerator**：`parseSSE` 用 `async function*` 暴露流式块，支持 `stopOnDone` / `idleTimeoutMs` / `signal` 选项
+- **AbortController**：信号合并策略（外部 Ctrl+C + 连接超时合二为一），`cleanup()` 防止泄漏
+- **超时控制**：连接超时（默认 30s）+ 流式空闲超时（默认 60s）
+- **指数退避重试**：429 / 5xx 自动重试，429 优先 Retry-After，抖动防洪峰
+- **错误映射**：HTTP 状态码 → 结构化错误（AuthError / RateLimitError / ServerError / NetworkError / TimeoutError）
+- **Types 定义**：ChatMessage / ChatChunk / UsageInfo / ProviderToolCall / ToolDefinition 等完整类型
+- **DeepSeek 适配**：流式 chat + 余额查询 + 工具调用累积拼接
+- **工厂注册表**：ProviderRegistry 单例缓存、模型校验、`createProvider` 快捷方式
 
 ## 06 Token 计价与成本追踪系统 ❌ 未开始
 

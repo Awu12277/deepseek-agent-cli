@@ -88,6 +88,66 @@ export interface BalanceResult {
   balances: BalanceInfo[];
 }
 
+/** 工具函数定义（OpenAI 兼容格式，预留给后续工具调用章节） */
+export interface ToolDefinition {
+  /** 工具类型，固定为 "function" */
+  type: "function";
+  /** 函数描述 */
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+}
+
+/** LLM 聊天补全请求的完整配置（DeepSeek/OpenAI 兼容格式） */
+export interface ChatCompletionRequest {
+  model: string;
+  messages: ChatMessage[];
+  /** 是否启用流式响应，默认 true */
+  stream?: boolean;
+  /** 本次请求最大生成 token 数 */
+  max_tokens?: number;
+  /** 生成温度（0.0 ~ 2.0） */
+  temperature?: number;
+  /** 核采样概率（0.0 ~ 1.0，与 temperature 二选一） */
+  top_p?: number;
+  /** 频率惩罚（-2.0 ~ 2.0） */
+  frequency_penalty?: number;
+  /** 存在惩罚（-2.0 ~ 2.0） */
+  presence_penalty?: number;
+  /** 停止序列，命中任一即停止生成 */
+  stop?: string | string[];
+  /** 可用工具定义列表 */
+  tools?: ToolDefinition[];
+}
+
+/** HTTP 客户端传输层配置（超时 / 重试等） */
+export interface ClientOptions {
+  /** 连接超时（毫秒），默认 30000 */
+  connectTimeoutMs?: number;
+  /** 流式空闲超时（毫秒）——两个 SSE 数据块之间的最大间隔，默认 60000 */
+  idleTimeoutMs?: number;
+  /** 最大重试次数（针对 429 / 5xx），默认 3 */
+  maxRetries?: number;
+  /** 指数退避基准延迟（毫秒），默认 1000 */
+  retryBaseDelayMs?: number;
+  /** 指数退避最大延迟上限（毫秒），默认 30000 */
+  retryMaxDelayMs?: number;
+}
+
+/** SSE 事件流中的单个事件（解析后、应用层映射前） */
+export interface SSEEvent {
+  /** 事件类型（如 "message"、自定义类型），缺省视为默认事件 */
+  event?: string;
+  /** 事件数据（多个 data 块已用 \n 拼接） */
+  data: string;
+  /** SSE 事件 ID */
+  id?: string;
+  /** 建议重连等待（毫秒） */
+  retry?: number;
+}
+
 /** Provider 接口 — 每个模型后端都需要实现此接口 */
 export interface Provider {
   /** Provider 标识符（如 "deepseek"） */

@@ -54,6 +54,30 @@ export class NetworkError extends ProviderError {
   }
 }
 
+/** 连接超时错误 */
+export class TimeoutError extends ProviderError {
+  /** 触发超时的等待时间（毫秒） */
+  public readonly timeoutMs: number;
+
+  constructor(message: string, timeoutMs: number) {
+    super(message, "TIMEOUT");
+    this.name = "TimeoutError";
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+/** 流式空闲超时错误——两个 SSE 数据块之间间隔过长 */
+export class StreamIdleTimeoutError extends ProviderError {
+  /** 触发空闲超时的最大间隔（毫秒） */
+  public readonly idleMs: number;
+
+  constructor(message: string, idleMs: number) {
+    super(message, "STREAM_IDLE_TIMEOUT");
+    this.name = "StreamIdleTimeoutError";
+    this.idleMs = idleMs;
+  }
+}
+
 /** 不支持的模型 */
 export class ModelNotSupportedError extends ProviderError {
   constructor(model: string) {
@@ -126,4 +150,20 @@ export function mapHttpError(status: number, body: string): ProviderError {
       }
       return new ProviderError(`请求失败 (${status})`, "UNKNOWN_ERROR", status);
   }
+}
+
+/**
+ * 判断一个 ProviderError 是否可重试。
+ *
+ * 可重试的错误类型：
+ * - RateLimitError（429）——服从 Retry-After，但也可退避
+ * - ServerError（5xx）
+ * - NetworkError（连接失败、DNS 错误等）
+ */
+export function isRetryableError(err: ProviderError): boolean {
+  return (
+    err instanceof RateLimitError ||
+    err instanceof ServerError ||
+    err instanceof NetworkError
+  );
 }
