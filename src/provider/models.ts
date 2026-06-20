@@ -130,13 +130,8 @@ export function calculateCost(usage: UsageInfo, model: ModelId): CostInfo {
 }
 
 /**
- * 将费用格式化为易读的字符串，只展示合计费用。
- *
- * - 小于 0.01 元时显示到小数点后 6 位（如 ¥0.000032）
- * - 大于等于 0.01 元时显示到小数点后 4 位（如 ¥0.1234）
+ * 将费用格式化为易读的字符串，保留4位小数。
  */
 export function formatCost(cost: CostInfo): string {
-  const total = cost.totalCost;
-  const formatted = total < 0.01 ? total.toFixed(6) : total.toFixed(4);
-  return `≈¥${formatted}`;
+  return `≈¥${cost.totalCost.toFixed(4)}`;
 }

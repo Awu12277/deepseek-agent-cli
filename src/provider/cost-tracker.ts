@@ -480,12 +480,9 @@ function createEmptyDailySummary(date: string): DailyCostSummary {
 // 格式化工具
 // ---------------------------------------------------------------------------
 
-/** 格式化费用金额 */
+/** 格式化费用金额（保留4位小数） */
 export function formatMoney(yuan: number): string {
-  if (yuan === 0) return "¥0.00";
-  if (yuan < 0.01) return `¥${yuan.toFixed(6)}`;
-  if (yuan < 1) return `¥${yuan.toFixed(4)}`;
-  return `¥${yuan.toFixed(2)}`;
+  return `¥${yuan.toFixed(4)}`;
 }
 
 /** 格式化 token 数量（带千分位） */
@@ -555,7 +552,7 @@ export function formatCallCostLine(record: CostRecord): string {
     record.usage.promptTokens,
   );
   return (
-    `≈¥${record.cost.totalCost.toFixed(6)} ` +
+    `≈¥${record.cost.totalCost.toFixed(4)} ` +
     `(📥${String(record.usage.promptTokens)} 📤${String(record.usage.completionTokens)} 🗄️${cacheRate})`
   );
 }

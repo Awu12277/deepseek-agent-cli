@@ -9,7 +9,7 @@ import { useDoubleCtrlC } from "./useDoubleCtrlC.js";
 import { CYBER_PALETTE, LOGO_LINES } from "./DskcodeSplash.js";
 import { Spinner } from "./Spinner.js";
 import { AssistantMessage } from "./AssistantMessage.js";
-import { CostTracker, formatMoney } from "../provider/cost-tracker.js";
+import { CostTracker } from "../provider/cost-tracker.js";
 import type { ProviderToolCall, UsageInfo, ModelId } from "../provider/index.js";
 import { createProvider } from "../provider/index.js";
 import { Session } from "../agent/index.js";
@@ -648,7 +648,7 @@ export function ChatSession({
           {todayCost !== null ? (
             <Box flexDirection="row">
               <Text color="cyan">{"📊 "}</Text>
-              <Text color="cyan">{"今日 ¥"}{formatMoney(todayCost).replace("¥", "")}</Text>
+              <Text color="cyan">{"今日 ¥"}{todayCost.toFixed(2)}</Text>
             </Box>
           ) : null}
         </Box>
