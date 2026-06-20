@@ -2,7 +2,7 @@
 // 交互式聊天会话组件 — 接入 Agent 主循环，实现流式对话
 // ---------------------------------------------------------------------------
 
-import { Box, Text, useInput } from "ink";
+import { Box, Text, useInput, Static } from "ink";
 import TextInput from "ink-text-input";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useDoubleCtrlC } from "./useDoubleCtrlC.js";
@@ -120,6 +120,15 @@ export function ChatSession({
   // Session 引用（保持跨渲染稳定）
   const sessionRef = useRef<Session | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  // 用 ref 跟踪流式内容的最新值，以便 finally 块能获取非闭包过期的值
+  const currentContentRef = useRef("");
+  const currentToolCallsRef = useRef<ProviderToolCall[]>([]);
+  const currentUsageRef = useRef<UsageInfo | undefined>(undefined);
+  const currentElapsedRef = useRef<number | undefined>(undefined);
+  const currentCostRef = useRef<number | undefined>(undefined);
+  const currentModelRef = useRef<string | undefined>(undefined);
+  const streamErrorRef = useRef<string | undefined>(undefined);
 
   const { doubleCtrlC, handleCtrlC } = useDoubleCtrlC(() => {
     // 双击 Ctrl+C 退出进程
@@ -292,6 +301,7 @@ export function ChatSession({
 
     // 进入流式状态
     setInput("");
+    // 重置流式状态
     setIsStreaming(true);
     setCurrentContent("");
     setCurrentToolCalls([]);
@@ -300,6 +310,14 @@ export function ChatSession({
     setCurrentCost(undefined);
     setCurrentModel(undefined);
     setStreamError(undefined);
+    // 同步重置 ref
+    currentContentRef.current = "";
+    currentToolCallsRef.current = [];
+    currentUsageRef.current = undefined;
+    currentElapsedRef.current = undefined;
+    currentCostRef.current = undefined;
+    currentModelRef.current = undefined;
+    streamErrorRef.current = undefined;
 
     const session = sessionRef.current;
     const abortController = new AbortController();
@@ -312,89 +330,73 @@ export function ChatSession({
 
         switch (event.type) {
           case "text_delta":
-            setCurrentContent((prev) => prev + event.content);
+            setCurrentContent((prev) => {
+              const next = prev + event.content;
+              currentContentRef.current = next;
+              return next;
+            });
             break;
 
           case "tool_calls":
-            setCurrentToolCalls((prev) => [...prev, ...event.calls]);
+            setCurrentToolCalls((prev) => {
+              const next = [...prev, ...event.calls];
+              currentToolCallsRef.current = next;
+              return next;
+            });
             break;
 
           case "usage":
             setCurrentUsage(event.usage);
             setCurrentModel(event.model);
+            currentUsageRef.current = event.usage;
+            currentModelRef.current = event.model;
             // 使用量来自最后一个事件，费率已知后可同步计算
             break;
 
           case "done":
             setCurrentElapsed(event.elapsed);
+            currentElapsedRef.current = event.elapsed;
             break;
 
           case "error":
             setStreamError(event.error.message);
+            streamErrorRef.current = event.error.message;
             break;
         }
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setStreamError(msg);
+      streamErrorRef.current = msg;
     } finally {
       setIsStreaming(false);
       abortRef.current = null;
 
-      // 完成一轮流式输出后，将流式内容固化到显示消息中
-      const finalContent = currentContent; // 闭包捕获
-      const finalToolCalls = currentToolCalls.length > 0 ? currentToolCalls : undefined;
+      // 流式结束后，用 ref 拿到最新值，直接追加完成的助手消息
+      const finContent = currentContentRef.current;
+      const finToolCalls = currentToolCallsRef.current.length > 0 ? currentToolCallsRef.current : undefined;
+      const finStreamError = streamErrorRef.current;
 
-      // 这里需要在 next tick 更新，因为 state 更新是批量的
-      // 我们用函数式更新确保拿到最新值
-      setDisplayMessages((prev) => {
-        // 添加assistant消息
-        return [
+      if (finContent || finToolCalls || finStreamError) {
+        const completed: CompletedAssistant = {
+          content: finStreamError ? `⚠ 请求出错：${finStreamError}` : (finContent || ""),
+          toolCalls: finToolCalls,
+          usage: currentUsageRef.current,
+          elapsed: currentElapsedRef.current,
+          cost: currentCostRef.current,
+          model: currentModelRef.current,
+        };
+        setDisplayMessages((prev) => [
           ...prev,
           {
             role: "assistant" as const,
-            content: "done", // 占位，后面通过 ref 更新
+            content: completed.content,
+            assistantDetail: completed,
           },
-        ];
-      });
+        ]);
+      }
     }
   }, [onLaunchGame, onLaunchStock, currentContent, currentToolCalls]);
-
-  // 流式结束后，将流式内容固化为已完成的助手消息
-  useEffect(() => {
-    if (isStreaming) return; // 还在流式中，不固化
-
-    // 只在有流式内容且最后一条消息还没固化时才处理
-    if (currentContent || currentToolCalls.length > 0 || streamError) {
-      setDisplayMessages((prev) => {
-        // 检查最后一条是否是占位消息
-        const last = prev[prev.length - 1];
-        if (last?.role === "assistant" && last.content === "done") {
-          // 替换占位消息
-          const completed: CompletedAssistant = {
-            content: streamError ? `⚠ 请求出错：${streamError}` : (currentContent || ""),
-            toolCalls: currentToolCalls.length > 0 ? currentToolCalls : undefined,
-            usage: currentUsage,
-            elapsed: currentElapsed,
-            cost: currentCost,
-            model: currentModel,
-          };
-          return [
-            ...prev.slice(0, -1),
-            {
-              role: "assistant" as const,
-              content: completed.content,
-              assistantDetail: completed,
-            },
-          ];
-        }
-        return prev;
-      });
-
-      // 重置流式状态（但要避免 useEffect 循环）
-      // 不在这里重置，而是在 handleSubmit 时重置
-    }
-  }, [isStreaming, currentContent, currentToolCalls, streamError, currentUsage, currentElapsed, currentCost, currentModel]);
 
   // 从 costTracker 更新今日消耗（每次流式结束后刷新）
   useEffect(() => {
@@ -410,6 +412,7 @@ export function ChatSession({
       import("../provider/models.js").then(({ calculateCost }) => {
         const cost = calculateCost(currentUsage, currentModel as ModelId);
         setCurrentCost(cost.totalCost);
+        currentCostRef.current = cost.totalCost;
       });
     }
   }, [currentUsage, currentModel, currentCost]);
@@ -459,37 +462,39 @@ export function ChatSession({
         </Box>
       </Box>
 
-      {/* 消息列表 */}
+      {/* 消息列表 - 已完成的消息用 Static 固定，避免重绘时丢失滚动位置 */}
       <Box flexDirection="column" marginTop={1}>
-        {displayMessages.map((msg, i) => {
-          if (msg.role === "user") {
-            return (
-              <Box key={i} marginTop={1}>
-                <Box width={4} flexShrink={0}>
-                  <Text bold color="#00ff41">{"👤"}</Text>
+        <Static items={displayMessages}>
+          {(msg, i) => {
+            if (msg.role === "user") {
+              return (
+                <Box key={i} marginTop={1}>
+                  <Box width={4} flexShrink={0}>
+                    <Text bold color="#00ff41">{"👤"}</Text>
+                  </Box>
+                  <Box flexGrow={1}>
+                    <Text wrap="wrap">{msg.content}</Text>
+                  </Box>
                 </Box>
-                <Box flexGrow={1}>
-                  <Text wrap="wrap">{msg.content}</Text>
-                </Box>
-              </Box>
-            );
-          }
+              );
+            }
 
-          // 已完成的助手消息
-          const detail = msg.assistantDetail;
-          return (
-            <AssistantMessage
-              key={i}
-              content={msg.content}
-              toolCalls={detail?.toolCalls}
-              isStreaming={false}
-              usage={detail?.usage}
-              elapsed={detail?.elapsed}
-              cost={detail?.cost}
-              model={detail?.model}
-            />
-          );
-        })}
+            // 已完成的助手消息
+            const detail = msg.assistantDetail;
+            return (
+              <AssistantMessage
+                key={i}
+                content={msg.content}
+                toolCalls={detail?.toolCalls}
+                isStreaming={false}
+                usage={detail?.usage}
+                elapsed={detail?.elapsed}
+                cost={detail?.cost}
+                model={detail?.model}
+              />
+            );
+          }}
+        </Static>
 
         {/* 正在流式输出的助手消息 */}
         {isStreaming && (
