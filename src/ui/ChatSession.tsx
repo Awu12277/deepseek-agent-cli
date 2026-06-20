@@ -17,6 +17,7 @@ import type { AgentEvent } from "../agent/types.js";
 import {
   IDLE_GRADIENT_STOPS,
   STREAMING_GRADIENT_STOPS,
+  CMD_TIP_GRADIENT_STOPS,
   GRADIENT_ANIMATION,
   getGradientColors,
 } from "../utils/gradient.js";
@@ -160,6 +161,14 @@ export function ChatSession({
   const [streamingModel, setStreamingModel] = useState<string | undefined>(undefined);
   const [streamError, setStreamError] = useState<string | undefined>(undefined);
 
+  // 命令提示轮播索引
+  const cmdTips = Array.from(getRegisteredCommands())
+    .filter(([name]) => name !== "/exit" && name !== "/quit")
+    .map(([name, cmd]) => ({ name, desc: cmd.desc }));
+  const [cmdTipIndex, setCmdTipIndex] = useState(0);
+  const [cmdTipGradientColors, setCmdTipGradientColors] = useState<string[]>([]);
+  const cmdTipPhaseRef = useRef(0);
+
   // 模型选择模式
   const [selectingModel, setSelectingModel] = useState(false);
   const [modelSelectIndex, setModelSelectIndex] = useState(0);
@@ -236,6 +245,35 @@ export function ChatSession({
       [selectingModel, modelSelectIndex, modelOptions, activeModel, isStreaming, handleCtrlC, input]
     ),
   );
+
+  // 命令提示轮播 — 每 5 秒切换下一条
+  useEffect(() => {
+    if (cmdTips.length <= 1) return;
+    const timer = setInterval(() => {
+      setCmdTipIndex((prev) => (prev + 1) % cmdTips.length);
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [cmdTips.length]);
+
+  // 命令提示条渐变动画（反向流动：1 - phase）
+  useEffect(() => {
+    const tip = cmdTips[cmdTipIndex % cmdTips.length];
+    if (!tip) {
+      setCmdTipGradientColors([]);
+      return;
+    }
+    const text = `${tip.name} ${tip.desc}`;
+    cmdTipPhaseRef.current = 0;
+    setCmdTipGradientColors(getGradientColors(text, 1, CMD_TIP_GRADIENT_STOPS));
+
+    const interval = setInterval(() => {
+      cmdTipPhaseRef.current = (cmdTipPhaseRef.current + GRADIENT_ANIMATION.cmdTipPhaseStep) % 1;
+      // 反向 phase 使色彩从左到右流动
+      setCmdTipGradientColors(getGradientColors(text, 1 - cmdTipPhaseRef.current, CMD_TIP_GRADIENT_STOPS));
+    }, GRADIENT_ANIMATION.cmdTipInterval);
+
+    return () => clearInterval(interval);
+  }, [cmdTipIndex, cmdTips.length]);
 
   // Logo 色彩动画
   useEffect(() => {
@@ -325,11 +363,11 @@ export function ChatSession({
     }
 
     gradientPhaseRef.current = 0;
-    setGradientColors(getGradientColors(idlePlaceholder, 0, IDLE_GRADIENT_STOPS));
+    setGradientColors(getGradientColors(idlePlaceholder, 1, IDLE_GRADIENT_STOPS));
 
     const interval = setInterval(() => {
       gradientPhaseRef.current = (gradientPhaseRef.current + GRADIENT_ANIMATION.idlePhaseStep) % 1;
-      setGradientColors(getGradientColors(idlePlaceholder, gradientPhaseRef.current, IDLE_GRADIENT_STOPS));
+      setGradientColors(getGradientColors(idlePlaceholder, 1 - gradientPhaseRef.current, IDLE_GRADIENT_STOPS));
     }, GRADIENT_ANIMATION.idleInterval);
 
     return () => clearInterval(interval);
@@ -343,11 +381,11 @@ export function ChatSession({
     }
 
     streamingPhaseRef.current = 0;
-    setStreamingGradientColors(getGradientColors(streamingPlaceholder, 0, STREAMING_GRADIENT_STOPS));
+    setStreamingGradientColors(getGradientColors(streamingPlaceholder, 1, STREAMING_GRADIENT_STOPS));
 
     const interval = setInterval(() => {
       streamingPhaseRef.current = (streamingPhaseRef.current + GRADIENT_ANIMATION.streamingPhaseStep) % 1;
-      setStreamingGradientColors(getGradientColors(streamingPlaceholder, streamingPhaseRef.current, STREAMING_GRADIENT_STOPS));
+      setStreamingGradientColors(getGradientColors(streamingPlaceholder, 1 - streamingPhaseRef.current, STREAMING_GRADIENT_STOPS));
     }, GRADIENT_ANIMATION.streamingInterval);
 
     return () => clearInterval(interval);
@@ -572,6 +610,22 @@ export function ChatSession({
           <Text color="#00ff41">{"  ✔ "}已加载 {providerCount} 个 Provider</Text>
           <Text color="#00ffff">{"  ℹ "}已就绪 {toolCount} 个工具</Text>
           <Text color="#00ffff">{"  🔧 模型 "}{SUPPORTED_MODELS[activeModel]?.displayName ?? activeModel}</Text>
+          {/* 命令提示轮播 — 每 5 秒切换下一条，渐变动画 */}
+          {cmdTips.length > 0 && (() => {
+            const tip = cmdTips[cmdTipIndex % cmdTips.length];
+            if (!tip) return null;
+            const text = `${tip.name} ${tip.desc}`;
+            return (
+              <Text>
+                <Text color="#808080">{"  💡 "}</Text>
+                {cmdTipGradientColors.length > 0
+                  ? text.split("").map((ch, i) => (
+                      <Text key={i} color={cmdTipGradientColors[i] || undefined}>{ch}</Text>
+                    ))
+                  : <Text color="#808080">{text}</Text>}
+              </Text>
+            );
+          })()}
           {verbose ? <Text color="#ff1493">{"  ⚡ Verbose"}</Text> : null}
         </Box>
 

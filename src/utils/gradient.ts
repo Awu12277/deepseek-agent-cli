@@ -14,6 +14,13 @@ export const IDLE_GRADIENT_STOPS: ColorStop[] = [
   [189, 147, 249], // #bd93f9
 ];
 
+/** 命令提示条渐变：浅柠黄 → 暖黄 → 橙色（从左到右流动） */
+export const CMD_TIP_GRADIENT_STOPS: ColorStop[] = [
+  [255, 245, 180], // #fff5b4 浅柠黄
+  [255, 210, 80],  // #ffd250 暖黄
+  [255, 150, 50],  // #ff9632 橙色
+];
+
 /** 流式占位符渐变：琥珀 → 焦糖 → 棕红 */
 export const STREAMING_GRADIENT_STOPS: ColorStop[] = [
   [255, 191, 0],   // #ffbf00 琥珀金
@@ -33,6 +40,10 @@ export const GRADIENT_ANIMATION = {
   streamingPhaseStep: 0.05,
   /** 流式占位符动画：帧间隔（ms） */
   streamingInterval: 40,
+  /** 命令提示条动画：每帧相位步进 */
+  cmdTipPhaseStep: 0.05,
+  /** 命令提示条动画：帧间隔（ms） */
+  cmdTipInterval: 40,
 } as const;
 
 // ---- 渲染时跳过着色的字符 ----
