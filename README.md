@@ -6,6 +6,7 @@
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
+![dskcode](https://raw.githubusercontent.com/Awu12277/deepseek-agent-cli/refs/heads/main/public/dscoderun.gif)
 ---
 
 ## 特性
