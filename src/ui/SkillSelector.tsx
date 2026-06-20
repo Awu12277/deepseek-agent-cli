@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // SkillSelector — 用户输入 / 时渲染的 skill 列表组件
-// 通过 selectedIndex 高亮当前选中项，按 Tab/Enter 可补全 skill 名称
+// 通过 selectedIndex 高亮当前选中项，按 Tab 可补全 skill 名称
 // ---------------------------------------------------------------------------
 
 import { Box, Text } from "ink";
@@ -51,7 +51,7 @@ export function SkillSelector({ skills, input, selectedIndex }: SkillSelectorPro
       ))}
       <Box marginTop={1}>
         <Text color="#808080" dimColor>
-          ↑↓ 选择 · Tab/Enter 补全
+          ↑↓ 选择 · Tab 补全
         </Text>
       </Box>
     </Box>
