@@ -112,7 +112,7 @@ interface DisplayMessage {
 }
 
 interface ChatSessionProps {
-  providerCount: number;
+  skillCount: number;
   toolCount: number;
   verbose: boolean;
   apiKey?: string;
@@ -124,7 +124,7 @@ interface ChatSessionProps {
 }
 
 export function ChatSession({
-  providerCount,
+  skillCount,
   toolCount,
   verbose,
   apiKey,
@@ -613,7 +613,7 @@ export function ChatSession({
 
         {/* 状态信息 */}
         <Box flexDirection="column" justifyContent="center">
-          <Text color="#00ff41">{"  ✔ "}已加载 {providerCount} 个 Provider</Text>
+          <Text color="#00ff41">{"  ✔ "}已加载 {skillCount} 个 Skill</Text>
           <Text color="#00ffff">{"  ℹ "}已就绪 {toolCount} 个工具</Text>
           <Text color="#00ffff">{"  🔧 模型 "}{SUPPORTED_MODELS[activeModel]?.displayName ?? activeModel}</Text>
           {/* 命令提示轮播 — 每 5 秒切换下一条，渐变动画 */}

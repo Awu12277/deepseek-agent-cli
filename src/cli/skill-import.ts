@@ -145,6 +145,30 @@ export async function importClaudeSkills(
 }
 
 /**
+ * 统计全局 ~/.dskcode/skills 下的有效 skill 数量。
+ */
+export async function countDskcodeSkills(): Promise<number> {
+  const dskcodeDir = getDskcodeSkillsDir();
+  if (!existsSync(dskcodeDir)) return 0;
+
+  let entries: string[];
+  try {
+    entries = await readdir(dskcodeDir);
+  } catch {
+    return 0;
+  }
+
+  let count = 0;
+  for (const name of entries) {
+    const full = join(dskcodeDir, name);
+    if (statSync(full).isDirectory() && (await isSkillDir(full))) {
+      count++;
+    }
+  }
+  return count;
+}
+
+/**
  * 项目本地 skill 目录路径（{cwd}/.dskcode/skill）。
  */
 export function getProjectSkillDir(cwd: string): string {
@@ -155,24 +179,33 @@ export function getProjectSkillDir(cwd: string): string {
  * 检测项目本地 .dskcode/skill 目录下是否存在有效 skill。
  */
 export async function hasProjectLocalSkills(cwd: string): Promise<boolean> {
+  const count = await countProjectLocalSkills(cwd);
+  return count > 0;
+}
+
+/**
+ * 统计项目本地 .dskcode/skill 下的有效 skill 数量。
+ */
+export async function countProjectLocalSkills(cwd: string): Promise<number> {
   const skillDir = getProjectSkillDir(cwd);
-  if (!existsSync(skillDir)) return false;
+  if (!existsSync(skillDir)) return 0;
 
   let entries: string[];
   try {
     entries = await readdir(skillDir);
   } catch {
-    return false;
+    return 0;
   }
 
+  let count = 0;
   for (const name of entries) {
     const full = join(skillDir, name);
     const stat = statSync(full);
     if (stat.isDirectory() && (await isSkillDir(full))) {
-      return true;
+      count++;
     }
   }
-  return false;
+  return count;
 }
 
 /**
