@@ -59,6 +59,30 @@ registerCommand("/version", { desc: "显示版本信息", handler: () => ({ kind
 registerCommand("/game", { desc: "启动游戏", handler: () => ({ kind: "navigate", target: "game" }) });
 registerCommand("/stock", { desc: "查看股票行情", handler: () => ({ kind: "navigate", target: "stock" }) });
 
+/** 流式输出时，输入框随机展示的占位符列表 */
+const STREAMING_PLACEHOLDERS = [
+  "让子弹飞一会儿...",
+  "马上就好...",
+  "正在憋大招...",
+  "稍等一下下~",
+  "码字中...",
+  "脑子转得飞快...",
+];
+
+/** 空闲时输入框随机展示的占位符列表 */
+const IDLE_PLACEHOLDERS = [
+  "想干啥？直接说~",
+  "来吧，吩咐点啥",
+  "随时待命...",
+  "戳这里开聊 👇",
+  "等你开口...",
+  "尽管使唤~",
+];
+
+function pickRandom<T>(arr: readonly T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)]!;
+}
+
 /** 单条已完成的助手消息 */
 interface CompletedAssistant {
   content: string;
@@ -109,6 +133,8 @@ export function ChatSession({
 
   // 流式状态
   const [isStreaming, setIsStreaming] = useState(false);
+  const [streamingPlaceholder, setStreamingPlaceholder] = useState("");
+  const [idlePlaceholder, setIdlePlaceholder] = useState(() => pickRandom(IDLE_PLACEHOLDERS));
   const [currentContent, setCurrentContent] = useState("");
   const [currentToolCalls, setCurrentToolCalls] = useState<ProviderToolCall[]>([]);
   const [currentUsage, setCurrentUsage] = useState<UsageInfo | undefined>(undefined);
@@ -303,6 +329,7 @@ export function ChatSession({
     setInput("");
     // 重置流式状态
     setIsStreaming(true);
+    setStreamingPlaceholder(pickRandom(STREAMING_PLACEHOLDERS));
     setCurrentContent("");
     setCurrentToolCalls([]);
     setCurrentUsage(undefined);
@@ -370,6 +397,7 @@ export function ChatSession({
       streamErrorRef.current = msg;
     } finally {
       setIsStreaming(false);
+      setIdlePlaceholder(pickRandom(IDLE_PLACEHOLDERS));
       abortRef.current = null;
 
       // 流式结束后，用 ref 拿到最新值，直接追加完成的助手消息
@@ -532,7 +560,7 @@ export function ChatSession({
             value={input}
             onChange={setInput}
             onSubmit={handleSubmit}
-            placeholder={isStreaming ? "等待回复中..." : "输入你的问题..."}
+            placeholder={isStreaming ? streamingPlaceholder : idlePlaceholder}
           />
         </Box>
       </Box>
