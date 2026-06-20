@@ -3,6 +3,7 @@ import { loadConfigMiddleware } from "./middleware.js";
 import type { DskcodeContext } from "./middleware.js";
 import { customHelp } from "./help.js";
 import { hasApiKey, promptForApiKey } from "./api-key-setup.js";
+import { promptImportClaudeSkills } from "./skill-import.js";
 import { saveApiKey, loadAndValidate, saveStockConfig } from "../config/index.js";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -61,6 +62,9 @@ export function createCli(): Command {
         const result = await loadAndValidate();
         ctx = { ...ctx, config: result.config };
       }
+
+      // API Key 检查之后：检测并询问是否导入 Claude Code 中安装的 skill
+      await promptImportClaudeSkills();
 
     // 从配置创建 CostTracker
     const costTracker = new CostTracker({
