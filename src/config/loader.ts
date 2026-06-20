@@ -526,6 +526,52 @@ export async function saveApiKey(apiKey: string): Promise<string> {
 }
 
 /**
+ * 将模型偏好保存到用户全局配置 ~/.dskcode/settings.json。
+ * 只更新 defaultProvider 的 model 字段，不覆盖其他配置。
+ * 返回保存的文件路径。
+ */
+export async function saveModelConfig(model: string): Promise<string> {
+  const home = process.env.HOME ?? process.env.USERPROFILE ?? "~";
+  const configDir = join(home, ".dskcode");
+  const configFile = join(configDir, "settings.json");
+
+  // 确保目录存在
+  await mkdir(configDir, { recursive: true });
+
+  // 读取现有配置
+  let configData: Record<string, unknown>;
+  try {
+    const raw = await readFile(configFile, "utf-8");
+    configData = JSON.parse(raw);
+  } catch {
+    configData = structuredClone(defaultConfig) as unknown as Record<string, unknown>;
+  }
+
+  // 更新 defaultProvider 的 model
+  const providers = (configData.providers as Record<string, unknown>[]) ?? [];
+  const defaultProviderName = (configData.defaultProvider as string) ?? "deepseek";
+  const existing = providers.find((p) => p.name === defaultProviderName);
+
+  if (existing) {
+    existing.model = model;
+  } else {
+    // 没有 default provider，创建一个
+    providers.push({
+      name: defaultProviderName,
+      baseUrl: "https://api.deepseek.com",
+      model,
+    });
+  }
+
+  configData.providers = providers;
+
+  // 写回文件
+  await writeFile(configFile, JSON.stringify(configData, null, 2), "utf-8");
+
+  return configFile;
+}
+
+/**
  * 将自选股配置保存到用户全局配置 ~/.dskcode/settings.json。
  * 如果文件已存在，合并写入；不存在则新建。
  * 返回保存的文件路径。

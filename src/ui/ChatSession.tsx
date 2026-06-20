@@ -20,6 +20,8 @@ import {
   GRADIENT_ANIMATION,
   getGradientColors,
 } from "../utils/gradient.js";
+import { SUPPORTED_MODELS } from "../provider/models.js";
+import { saveModelConfig } from "../config/loader.js";
 
 /** 命令处理结果的类型，支持文本响应和动作跳转 */
 export type CommandAction =
@@ -62,6 +64,7 @@ registerCommand("/help", {
 });
 registerCommand("/clear", { desc: "清空对话历史", handler: () => ({ kind: "clear" }) });
 registerCommand("/version", { desc: "显示版本信息", handler: () => ({ kind: "text", content: "dskcode v0.1.10" }) });
+registerCommand("/model", { desc: "切换模型", handler: () => ({ kind: "text", content: "请直接输入 /model 进入选择界面" }) });
 registerCommand("/game", { desc: "启动游戏", handler: () => ({ kind: "navigate", target: "game" }) });
 registerCommand("/stock", { desc: "查看股票行情", handler: () => ({ kind: "navigate", target: "stock" }) });
 
@@ -80,7 +83,7 @@ const IDLE_PLACEHOLDERS = [
   "想干啥？直接说~",
   "来吧，吩咐点啥",
   "随时待命...",
-  "戳这里开聊 👇",
+  "戳这里开聊...",
   "等你开口...",
   "尽管使唤~",
 ];
@@ -153,8 +156,14 @@ export function ChatSession({
   const [currentUsage, setCurrentUsage] = useState<UsageInfo | undefined>(undefined);
   const [currentElapsed, setCurrentElapsed] = useState<number | undefined>(undefined);
   const [currentCost, setCurrentCost] = useState<number | undefined>(undefined);
-  const [currentModel, setCurrentModel] = useState<string | undefined>(undefined);
+  const [activeModel, setActiveModel] = useState<ModelId>(model as ModelId);
+  const [streamingModel, setStreamingModel] = useState<string | undefined>(undefined);
   const [streamError, setStreamError] = useState<string | undefined>(undefined);
+
+  // 模型选择模式
+  const [selectingModel, setSelectingModel] = useState(false);
+  const [modelSelectIndex, setModelSelectIndex] = useState(0);
+  const modelOptions: ModelId[] = ["deepseek-v4-flash", "deepseek-v4-pro"];
 
   // Session 引用（保持跨渲染稳定）
   const sessionRef = useRef<Session | null>(null);
@@ -178,6 +187,38 @@ export function ChatSession({
   useInput(
     useCallback(
       (_input, key) => {
+        // 模型选择模式
+        if (selectingModel) {
+          if (key.upArrow) {
+            setModelSelectIndex((prev) => (prev - 1 + modelOptions.length) % modelOptions.length);
+          } else if (key.downArrow) {
+            setModelSelectIndex((prev) => (prev + 1) % modelOptions.length);
+          } else if (key.return) {
+            const selected = modelOptions[modelSelectIndex]!;
+            if (selected === activeModel) {
+              setDisplayMessages((prev) => [
+                ...prev,
+                { role: "assistant", content: `已经在使用 ${SUPPORTED_MODELS[selected].displayName}` },
+              ]);
+            } else {
+              // 切换模型：持久化到配置 + 重置 Session
+              setActiveModel(selected);
+              sessionRef.current?.reset();
+              saveModelConfig(selected).catch(() => {
+                // 持久化失败静默处理，不影响当前会话
+              });
+              setDisplayMessages((prev) => [
+                ...prev,
+                { role: "assistant", content: `模型已切换为 ${SUPPORTED_MODELS[selected].displayName}（${selected}）` },
+              ]);
+            }
+            setSelectingModel(false);
+          } else if (key.escape) {
+            setSelectingModel(false);
+          }
+          return;
+        }
+
         if (key.ctrl && _input === "c") {
           if (isStreaming) {
             // 流式输出中，取消当前请求
@@ -192,7 +233,7 @@ export function ChatSession({
           setInput(_input);
         }
       },
-      [isStreaming, handleCtrlC, input],
+      [selectingModel, modelSelectIndex, modelOptions, activeModel, isStreaming, handleCtrlC, input]
     ),
   );
 
@@ -204,7 +245,7 @@ export function ChatSession({
     return () => clearInterval(timer);
   }, []);
 
-  // 初始化 Session
+  // 初始化 Session（当模型切换时重建）
   useEffect(() => {
     if (!apiKey || !baseUrl) return;
 
@@ -212,7 +253,7 @@ export function ChatSession({
       name: "deepseek",
       apiKey,
       baseUrl,
-      model,
+      model: activeModel,
     });
 
     const tracker = externalCostTracker ?? new CostTracker();
@@ -224,7 +265,7 @@ export function ChatSession({
     return () => {
       sessionRef.current = null;
     };
-  }, [apiKey, baseUrl, model, externalCostTracker]);
+  }, [apiKey, baseUrl, activeModel, externalCostTracker]);
 
   // 查询余额
   useEffect(() => {
@@ -319,6 +360,16 @@ export function ChatSession({
 
     // 处理斜杠命令
     if (trimmed.startsWith("/")) {
+      // /model 命令：进入模型选择模式
+      if (trimmed.toLowerCase() === "/model") {
+        // 默认高亮当前模型
+        const curIdx = modelOptions.indexOf(activeModel);
+        setModelSelectIndex(curIdx >= 0 ? curIdx : 0);
+        setSelectingModel(true);
+        setInput("");
+        return;
+      }
+
       const cmd = commandRegistry.get(trimmed.toLowerCase());
       if (cmd) {
         const result = cmd.handler();
@@ -389,7 +440,7 @@ export function ChatSession({
     setCurrentUsage(undefined);
     setCurrentElapsed(undefined);
     setCurrentCost(undefined);
-    setCurrentModel(undefined);
+    setStreamingModel(undefined);
     setStreamError(undefined);
     // 同步重置 ref
     currentContentRef.current = "";
@@ -428,7 +479,7 @@ export function ChatSession({
 
           case "usage":
             setCurrentUsage(event.usage);
-            setCurrentModel(event.model);
+            setStreamingModel(event.model);
             currentUsageRef.current = event.usage;
             currentModelRef.current = event.model;
             // 使用量来自最后一个事件，费率已知后可同步计算
@@ -489,15 +540,14 @@ export function ChatSession({
 
   // 从 usage 计算 cost（需要在 usage + model 都就绪后）
   useEffect(() => {
-    if (currentUsage && currentModel && !currentCost) {
-      // import calculateCost dynamically
+    if (currentUsage && streamingModel && !currentCost) {
       import("../provider/models.js").then(({ calculateCost }) => {
-        const cost = calculateCost(currentUsage, currentModel as ModelId);
+        const cost = calculateCost(currentUsage, streamingModel as ModelId);
         setCurrentCost(cost.totalCost);
         currentCostRef.current = cost.totalCost;
       });
     }
-  }, [currentUsage, currentModel, currentCost]);
+  }, [currentUsage, streamingModel, currentCost]);
 
   return (
     <Box flexDirection="column" paddingLeft={1} paddingRight={1}>
@@ -521,7 +571,7 @@ export function ChatSession({
         <Box flexDirection="column" justifyContent="center">
           <Text color="#00ff41">{"  ✔ "}已加载 {providerCount} 个 Provider</Text>
           <Text color="#00ffff">{"  ℹ "}已就绪 {toolCount} 个工具</Text>
-          <Text color="#00ffff">{"  🔧 模型 "}{model}</Text>
+          <Text color="#00ffff">{"  🔧 模型 "}{SUPPORTED_MODELS[activeModel]?.displayName ?? activeModel}</Text>
           {verbose ? <Text color="#ff1493">{"  ⚡ Verbose"}</Text> : null}
         </Box>
 
@@ -603,49 +653,72 @@ export function ChatSession({
       </Box>
 
       {/* 输入区 */}
-      <Box marginTop={1}>
-        <Text color="#00ffff" dimColor>
-          {"─".repeat(dividerWidth)}
-        </Text>
-      </Box>
-      <Box>
-        <Box width={4} flexShrink={0}>
-          <Text bold color="#00ff41">
-            {"⚡"}
-          </Text>
+      {selectingModel ? (
+        <Box marginTop={1} flexDirection="column">
+          <Text color="#00ffff" dimColor>{"─".repeat(dividerWidth)}</Text>
+          <Box flexDirection="column" marginTop={1}>
+            <Text bold color="#00ffff">选择模型：</Text>
+            {modelOptions.map((id, i) => {
+              const meta = SUPPORTED_MODELS[id];
+              const isCurrent = id === activeModel;
+              const isSelected = i === modelSelectIndex;
+              const marker = isSelected ? " > " : "   ";
+              const suffix = isCurrent ? " (当前)" : "";
+              return (
+                <Box key={id}>
+                  <Text
+                    color={isSelected ? "#00ff41" : undefined}
+                    bold={isSelected}
+                  >
+                    {marker}{meta.displayName}{suffix}
+                  </Text>
+                  {isSelected && <Text color="#808080"> — {id}</Text>}
+                </Box>
+              );
+            })}
+            <Box marginTop={1}>
+              <Text color="#808080" dimColor>↑↓ 选择 · Enter 确认 · Esc 取消</Text>
+            </Box>
+          </Box>
+          <Text color="#00ffff" dimColor>{"─".repeat(dividerWidth)}</Text>
         </Box>
-        <Box flexGrow={1}>
-          {!input && !isStreaming && idlePlaceholder && gradientColors.length > 0 ? (
-            <Text>
-              {idlePlaceholder.split("").map((ch, i) => (
-                <Text key={i} color={gradientColors[i] ?? undefined}>
-                  {ch}
+      ) : (
+        <>
+          <Box marginTop={1}>
+            <Text color="#00ffff" dimColor>{"─".repeat(dividerWidth)}</Text>
+          </Box>
+          <Box>
+            <Box width={4} flexShrink={0}>
+              <Text bold color="#00ff41">{"⚡"}</Text>
+            </Box>
+            <Box flexGrow={1}>
+              {!input && !isStreaming && idlePlaceholder && gradientColors.length > 0 ? (
+                <Text>
+                  {idlePlaceholder.split("").map((ch, i) => (
+                    <Text key={i} color={gradientColors[i] ?? undefined}>{ch}</Text>
+                  ))}
                 </Text>
-              ))}
-            </Text>
-          ) : !input && isStreaming && streamingPlaceholder && streamingGradientColors.length > 0 ? (
-            <Text>
-              {streamingPlaceholder.split("").map((ch, i) => (
-                <Text key={i} color={streamingGradientColors[i] ?? undefined}>
-                  {ch}
+              ) : !input && isStreaming && streamingPlaceholder && streamingGradientColors.length > 0 ? (
+                <Text>
+                  {streamingPlaceholder.split("").map((ch, i) => (
+                    <Text key={i} color={streamingGradientColors[i] ?? undefined}>{ch}</Text>
+                  ))}
                 </Text>
-              ))}
-            </Text>
-          ) : (
-            <TextInput
-              value={input}
-              onChange={setInput}
-              onSubmit={handleSubmit}
-              placeholder=""
-            />
-          )}
-        </Box>
-      </Box>
-      <Box>
-        <Text color="#00ffff" dimColor>
-          {"─".repeat(dividerWidth)}
-        </Text>
-      </Box>
+              ) : (
+                <TextInput
+                  value={input}
+                  onChange={setInput}
+                  onSubmit={handleSubmit}
+                  placeholder=""
+                />
+              )}
+            </Box>
+          </Box>
+          <Box>
+            <Text color="#00ffff" dimColor>{"─".repeat(dividerWidth)}</Text>
+          </Box>
+        </>
+      )}
 
       {/* 双击 Ctrl+C 退出提示 */}
       {doubleCtrlC && !isStreaming && (
