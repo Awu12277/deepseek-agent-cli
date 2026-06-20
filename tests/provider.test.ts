@@ -177,14 +177,14 @@ describe("calculateCost", () => {
 });
 
 describe("formatCost", () => {
-  it("应格式化小于 0.01 元的费用（6 位小数）", () => {
+  it("应格式化小于 0.01 元的费用（4 位小数）", () => {
     const result = formatCost({
       inputCost: 0.000032,
       cacheHitCost: 0,
       outputCost: 0.0001,
       totalCost: 0.000132,
     });
-    expect(result).toBe("≈¥0.000132");
+    expect(result).toBe("≈¥0.0001");
   });
 
   it("应格式化大于等于 0.01 元的费用（4 位小数）", () => {

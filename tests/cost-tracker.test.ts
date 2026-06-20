@@ -245,19 +245,19 @@ describe("CostTracker", () => {
 
 describe("formatMoney", () => {
   it("应格式化 0 元", () => {
-    expect(formatMoney(0)).toBe("¥0.00");
+    expect(formatMoney(0)).toBe("¥0.0000");
   });
 
-  it("应格式化极小金额（6 位小数）", () => {
-    expect(formatMoney(0.000032)).toBe("¥0.000032");
+  it("应格式化极小金额（4 位小数）", () => {
+    expect(formatMoney(0.000032)).toBe("¥0.0000");
   });
 
   it("应格式化小于 1 元的金额（4 位小数）", () => {
     expect(formatMoney(0.1234)).toBe("¥0.1234");
   });
 
-  it("应格式化大于等于 1 元的金额（2 位小数）", () => {
-    expect(formatMoney(12.3)).toBe("¥12.30");
+  it("应格式化大于等于 1 元的金额（4 位小数）", () => {
+    expect(formatMoney(12.3)).toBe("¥12.3000");
   });
 });
 
@@ -345,7 +345,7 @@ describe("formatCallCostLine", () => {
     };
 
     const line = formatCallCostLine(record);
-    expect(line).toContain("0.001608");
+    expect(line).toContain("0.0016");
     expect(line).toContain("1000");
     expect(line).toContain("500");
     expect(line).toContain("40.0%");
