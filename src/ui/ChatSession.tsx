@@ -57,14 +57,18 @@ interface ChatSessionProps {
   providerCount: number;
   toolCount: number;
   verbose: boolean;
+  apiKey?: string;
+  baseUrl?: string;
   onLaunchGame?: () => void;
   onLaunchStock?: () => void;
 }
 
-export function ChatSession({ providerCount, toolCount, verbose, onLaunchGame, onLaunchStock }: ChatSessionProps) {
+export function ChatSession({ providerCount, toolCount, verbose, apiKey, baseUrl, onLaunchGame, onLaunchStock }: ChatSessionProps) {
   const [offset, setOffset] = useState(0);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
+  const [balance, setBalance] = useState<number | null>(null);
+  const [balanceLoading, setBalanceLoading] = useState(false);
 
   const { doubleCtrlC, handleCtrlC } = useDoubleCtrlC(() => process.exit(0));
 
@@ -80,12 +84,39 @@ export function ChatSession({ providerCount, toolCount, verbose, onLaunchGame, o
     ),
   );
 
+  // Logo 色彩动画
   useEffect(() => {
     const timer = setInterval(() => {
       setOffset((prev) => (prev + 1) % CYBER_PALETTE.length);
     }, 500);
     return () => clearInterval(timer);
   }, []);
+
+  // 查询余额
+  useEffect(() => {
+    if (!apiKey || !baseUrl) return;
+    let cancelled = false;
+    setBalanceLoading(true);
+    import("../provider/deepseek.js").then(({ DeepSeekProvider }) => {
+      const provider = new DeepSeekProvider({
+        apiKey,
+        baseUrl,
+        model: "deepseek-v4-flash",
+      });
+      return provider.getBalance();
+    }).then((result) => {
+      if (cancelled) return;
+      const cny = result.balances.find((b) => b.currency === "CNY");
+      if (cny) {
+        setBalance(cny.totalBalance);
+      }
+    }).catch(() => {
+      // 查询失败静默处理，不影响主流程
+    }).finally(() => {
+      if (!cancelled) setBalanceLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [apiKey, baseUrl]);
 
   const handleSubmit = useCallback((value: string) => {
     const trimmed = value.trim();
@@ -141,7 +172,7 @@ export function ChatSession({ providerCount, toolCount, verbose, onLaunchGame, o
 
   return (
     <Box flexDirection="column" paddingLeft={1} paddingRight={1}>
-      {/* Logo + 状态栏 — 左右布局 */}
+      {/* Logo + 状态栏 + 余额 — 三栏布局 */}
       <Box flexDirection="row" marginBottom={1}>
         {/* Logo */}
         <Box flexDirection="column" marginRight={4}>
@@ -162,6 +193,15 @@ export function ChatSession({ providerCount, toolCount, verbose, onLaunchGame, o
           <Text color="#00ff41">{"  ✔ "}已加载 {providerCount} 个 Provider</Text>
           <Text color="#00ffff">{"  ℹ "}已就绪 {toolCount} 个工具</Text>
           {verbose ? <Text color="#ff1493">{"  ⚡ Verbose"}</Text> : null}
+        </Box>
+
+        {/* 右侧余额 — 弹性占位推右 */}
+        <Box flexGrow={1} flexDirection="column" alignItems="flex-end" justifyContent="center">
+          {balanceLoading && balance === null ? (
+            <Text color="yellow">{"  ⏳ 查询余额..."}</Text>
+          ) : balance !== null ? (
+            <Text color="yellow">{"💰 ¥"}{balance.toFixed(2)}</Text>
+          ) : null}
         </Box>
       </Box>
 

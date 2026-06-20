@@ -67,11 +67,17 @@ export function createCli(): Command {
   function startChat(
     ctx: DskcodeContext | undefined,
   ) {
+    // 从配置中提取默认 Provider 的 apiKey 和 baseUrl
+    const defaultProvider = ctx?.config.providers.find(
+      (p) => p.name === (ctx?.config.defaultProvider ?? "deepseek"),
+    );
     const chatApp = renderApp(
       <ChatSession
         providerCount={ctx?.config.providers.length ?? 1}
         toolCount={ctx?.config.tools.length ?? 0}
         verbose={ctx?.verbose ?? false}
+        apiKey={defaultProvider?.apiKey}
+        baseUrl={defaultProvider?.baseUrl ?? "https://api.deepseek.com"}
         onLaunchGame={() => {
           chatApp.unmount();
           setImmediate(() => {

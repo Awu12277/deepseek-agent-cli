@@ -1,4 +1,10 @@
-import type { Provider, ChatMessage } from "../provider/index.js";
+import type {
+  Provider,
+  ChatMessage,
+  ChatChunk,
+  ProviderToolCall,
+  UsageInfo,
+} from "../provider/index.js";
 import type { Tool } from "../tool/index.js";
 
 /**

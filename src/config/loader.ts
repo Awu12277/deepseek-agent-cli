@@ -266,7 +266,8 @@ export function validateConfig(config: Config): ConfigError[] {
     });
   }
 
-  // 2. 每个 Provider 必须有 name 和 model
+  // 2. 每个 Provider 必须有 name 和 model，且 model 必须受支持
+  const SUPPORTED_MODELS = ["deepseek-v4-flash", "deepseek-v4-pro"];
   for (let i = 0; i < config.providers.length; i++) {
     const p = config.providers[i]!;
     if (!p.name) {
@@ -279,6 +280,11 @@ export function validateConfig(config: Config): ConfigError[] {
       errors.push({
         field: `providers[${i}].model`,
         message: `Provider "${p.name || i}" 缺少 model 字段。`,
+      });
+    } else if (!SUPPORTED_MODELS.includes(p.model)) {
+      errors.push({
+        field: `providers[${i}].model`,
+        message: `Provider "${p.name || i}" 的 model "${p.model}" 不受支持。dskcode 仅支持: ${SUPPORTED_MODELS.join(", ")}`,
       });
     }
   }

@@ -1,32 +1,52 @@
-export interface ChatMessage {
-  role: "system" | "user" | "assistant" | "tool";
-  content: string;
-  toolCallId?: string;
-  name?: string;
-}
+// ---------------------------------------------------------------------------
+// Provider 模块公共 API
+// ---------------------------------------------------------------------------
 
-export interface ChatOptions {
-  signal?: AbortSignal;
-  maxTokens?: number;
-  temperature?: number;
-}
+// 核心类型
+export type {
+  ChatMessage,
+  ChatOptions,
+  ChatChunk,
+  ProviderToolCall,
+  UsageInfo,
+  CostInfo,
+  BalanceInfo,
+  BalanceResult,
+  Provider,
+  ModelId,
+  ModelMeta,
+} from "./types.js";
 
-export interface ChatChunk {
-  content: string;
-  finishReason: "stop" | "tool_calls" | "length" | null;
-  usage?: {
-    promptTokens: number;
-    completionTokens: number;
-    cachedPromptTokens?: number;
-  };
-}
+// 错误类型
+export {
+  ProviderError,
+  AuthError,
+  RateLimitError,
+  ServerError,
+  NetworkError,
+  ModelNotSupportedError,
+  mapHttpError,
+} from "./errors.js";
 
-/** Provider 接口 — 每个模型后端都需要实现此接口。 */
-export interface Provider {
-  readonly name: string;
-  chat(
-    messages: ChatMessage[],
-    opts?: ChatOptions,
-  ): AsyncIterable<ChatChunk>;
-  model(): string;
-}
+// 模型定义与校验
+export {
+  SUPPORTED_MODELS,
+  SUPPORTED_MODEL_IDS,
+  isSupportedModel,
+  getModelMeta,
+  estimateTokens,
+  calculateCost,
+  formatCost,
+} from "./models.js";
+
+// 工厂注册表
+export {
+  ProviderRegistry,
+  defaultRegistry,
+  createProvider,
+} from "./registry.js";
+export type { ProviderFactory } from "./registry.js";
+
+// DeepSeek Provider
+export { DeepSeekProvider } from "./deepseek.js";
+export type { DeepSeekProviderConfig } from "./deepseek.js";
