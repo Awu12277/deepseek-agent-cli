@@ -101,18 +101,33 @@ export async function execCommand(
   cwd: string,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   signal?: AbortSignal,
+  /** 如果为 true，表示 command 已经是 shell 程序（如 cmd/sh），不需要再包装 */
+  isShellCommand?: boolean,
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
   return new Promise((resolve) => {
-    // Windows 使用 cmd.exe，其他平台使用 /bin/sh
-    const shell = isWindows;
-    const spawnCmd = isWindows ? "cmd" : command;
-    const spawnArgs = isWindows
-      ? ["/c", command, ...args]
-      : args;
+    // isShellCommand=true 时，调用方已指定 shell 程序，直接 spawn
+    // isShellCommand=false/undefined 时，Windows 用 cmd.exe 包装，Unix 用 shell 执行
+    let spawnCmd: string;
+    let spawnArgs: string[];
+    let useShell: boolean;
+
+    if (isShellCommand) {
+      // 调用方已指定 shell（如 cmd /c 或 sh -c），直接 spawn
+      spawnCmd = command;
+      spawnArgs = args;
+      useShell = false;
+    } else {
+      // Windows 使用 cmd.exe 包装，Unix 用 shell 执行
+      useShell = !isWindows;
+      spawnCmd = isWindows ? "cmd" : command;
+      spawnArgs = isWindows
+        ? ["/c", command, ...args]
+        : args;
+    }
 
     const child = spawn(spawnCmd, spawnArgs, {
       cwd,
-      shell: !isWindows, // Windows 已经通过 cmd.exe 执行，无需再次 shell
+      shell: useShell,
       env: { ...process.env },
       stdio: ["pipe", "pipe", "pipe"],
     });

@@ -2,8 +2,12 @@
 // bash 工具 — 执行 shell 命令
 // ---------------------------------------------------------------------------
 
+import process from "node:process";
 import type { Tool, ToolContext, ToolResult, JSONSchema } from "../types.js";
 import { execCommand, truncateOutput, getDefaultTimeout } from "../sandbox.js";
+
+/** 是否为 Windows 平台 */
+const isWindows = process.platform === "win32";
 
 /** bash 工具的参数格式 */
 interface BashArgs {
@@ -55,12 +59,18 @@ export const bashTool: Tool = {
     const timeout = params.timeout ?? ctx.timeout ?? getDefaultTimeout();
 
     try {
+      // Windows 使用 cmd /c 执行，Unix 使用 sh -c 执行
+      // isShellCommand=true 告知 execCommand 不需要再包装 shell
+      const shellCommand = isWindows ? "cmd" : "sh";
+      const shellArgs = isWindows ? ["/c", params.command] : ["-c", params.command];
+
       const result = await execCommand(
-        "sh",
-        ["-c", params.command],
+        shellCommand,
+        shellArgs,
         ctx.cwd,
         timeout,
         ctx.signal,
+        true, // isShellCommand — 已指定 shell 程序，不需要二次包装
       );
 
       // 组装输出

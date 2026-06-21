@@ -390,9 +390,13 @@ describe("bash 工具", () => {
   });
 
   it("执行失败命令", async () => {
-    // 在 Windows 上 exit 命令行为不同，使用 node 来保证跨平台
+    // 跨平台触发非零退出码的方法：
+    // Windows (cmd): exit /b 1
+    // Unix (sh): exit 1
+    const isWin = process.platform === "win32";
+    const cmd = isWin ? "exit /b 1" : "exit 1";
     const result = await bashTool.execute(
-      { command: "node -e \"process.exit(1)\"" },
+      { command: cmd },
       createTestContext(),
     );
     // 退出码为 1 或 null（进程被 kill 时）
