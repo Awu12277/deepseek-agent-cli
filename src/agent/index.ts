@@ -224,10 +224,16 @@ export class Session {
             // 发出工具结果事件
             yield { type: "tool_result", name: tc.name, result };
 
+            // 构建 tool 消息内容：基本信息 + diff patch（如果有）
+            let toolContent = result.data;
+            if (result.diff && result.diff.patch) {
+              toolContent += `\n\n${result.diff.patch}`;
+            }
+
             // 追加工具结果消息
             this.#messages.push({
               role: "tool",
-              content: result.data,
+              content: toolContent,
               toolCallId: tc.id,
               name: tc.name,
             });

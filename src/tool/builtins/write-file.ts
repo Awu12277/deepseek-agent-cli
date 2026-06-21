@@ -2,10 +2,11 @@
 // write_file 工具 — 创建或覆盖文件
 // ---------------------------------------------------------------------------
 
-import { writeFile, mkdir } from "node:fs/promises";
+import { writeFile, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { Tool, ToolContext, ToolResult, JSONSchema } from "../types.js";
 import { resolvePath } from "../sandbox.js";
+import { computeFileDiff } from "../diff.js";
 
 /** write_file 工具的参数格式 */
 interface WriteFileArgs {
@@ -57,18 +58,39 @@ export const writeFileTool: Tool = {
     const filePath = resolvePath(params.path, ctx.cwd);
 
     try {
+      // 写入前快照旧内容（文件可能不存在）
+      let oldContent = "";
+      let existedBefore = false;
+      try {
+        oldContent = await readFile(filePath, "utf-8");
+        existedBefore = true;
+      } catch {
+        // 文件不存在，这是新建文件
+      }
+
       // 确保父目录存在
       await mkdir(dirname(filePath), { recursive: true });
 
       const content = String(params.content);
       await writeFile(filePath, content, "utf-8");
 
+      // 计算文件变更 diff
+      const diff = computeFileDiff(oldContent, content, filePath);
+      diff.existedBefore = existedBefore;
+
       const lineCount = content.split("\n").length;
       const byteSize = Buffer.byteLength(content, "utf-8");
 
+      // 构建包含 diff 摘要的返回信息
+      const action = existedBefore ? "已修改" : "已创建";
+      const diffSummary = existedBefore
+        ? `，+${diff.additions} -${diff.deletions}`
+        : `，+${diff.additions} 行（新建）`;
+
       return {
         success: true,
-        data: `文件已写入：${filePath}（${lineCount} 行，${byteSize} 字节）`,
+        data: `文件${action}：${filePath}（${lineCount} 行，${byteSize} 字节${diffSummary}）`,
+        diff,
       };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);

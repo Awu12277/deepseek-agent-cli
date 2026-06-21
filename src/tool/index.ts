@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 // 核心类型
-export type { JSONSchema, ToolContext, ToolResult, Tool } from "./types.js";
+export type { JSONSchema, ToolContext, ToolResult, FileDiff, Tool } from "./types.js";
 
 // 注册表
 export { ToolRegistry } from "./registry.js";
@@ -18,6 +18,9 @@ export {
   createTimeoutSignal,
   execCommand,
 } from "./sandbox.js";
+
+// Diff 计算
+export { computeFileDiff } from "./diff.js";
 
 // 内置工具
 export { builtinTools, getBuiltinToolMap } from "./builtins/index.js";

@@ -20,6 +20,20 @@ export interface ToolContext {
   timeout?: number;
 }
 
+/** 文件变更的 diff 信息 */
+export interface FileDiff {
+  /** 文件路径（绝对路径） */
+  filePath: string;
+  /** unified diff 文本 */
+  patch: string;
+  /** 变更前是否存在（新建文件时为 false） */
+  existedBefore: boolean;
+  /** 变更统计：新增行数 */
+  additions: number;
+  /** 变更统计：删除行数 */
+  deletions: number;
+}
+
 /** 工具执行返回的结果 */
 export interface ToolResult {
   /** 是否执行成功 */
@@ -28,6 +42,8 @@ export interface ToolResult {
   data: string;
   /** 错误详情（仅在 success=false 时有意义） */
   error?: string;
+  /** 文件变更 diff（仅文件修改工具携带） */
+  diff?: FileDiff;
 }
 
 /**

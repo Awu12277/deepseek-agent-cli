@@ -5,6 +5,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import type { Tool, ToolContext, ToolResult, JSONSchema } from "../types.js";
 import { resolvePath } from "../sandbox.js";
+import { computeFileDiff } from "../diff.js";
 
 /** edit_file 工具的参数格式 */
 interface EditFileArgs {
@@ -93,15 +94,23 @@ export const editFileTool: Tool = {
       const newContent = content.replace(params.old_text, params.new_text);
       await writeFile(filePath, newContent, "utf-8");
 
+      // 计算文件变更 diff
+      const diff = computeFileDiff(content, newContent, filePath);
+      diff.existedBefore = true;
+
       // 计算替换位置的行号
       const beforeText = content.slice(0, firstIndex);
       const startLine = beforeText.split("\n").length;
       const oldLines = params.old_text.split("\n").length;
       const newLines = params.new_text.split("\n").length;
 
+      // 构建包含 diff 摘要的返回信息
+      const diffSummary = `+${diff.additions} -${diff.deletions}`;
+
       return {
         success: true,
-        data: `文件已编辑：${filePath}\n替换位置：第 ${startLine} 行\n${oldLines} 行 → ${newLines} 行`,
+        data: `文件已编辑：${filePath}\n替换位置：第 ${startLine} 行\n${oldLines} 行 → ${newLines} 行\n变更：${diffSummary}`,
+        diff,
       };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
