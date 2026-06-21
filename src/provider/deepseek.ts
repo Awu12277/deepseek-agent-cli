@@ -172,6 +172,11 @@ export class DeepSeekProvider implements Provider {
       temperature: opts?.temperature,
     };
 
+    // 如果传入了工具定义，加入请求体
+    if (opts?.tools && opts.tools.length > 0) {
+      body.tools = opts.tools;
+    }
+
     // 移除 undefined 字段（DeepSeek API 不接受 undefined 值）
     for (const key of Object.keys(body) as Array<keyof typeof body>) {
       if (body[key] === undefined) {

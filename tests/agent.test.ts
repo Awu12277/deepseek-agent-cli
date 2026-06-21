@@ -251,24 +251,44 @@ describe("Session", () => {
   });
 
   it("单轮对话：工具调用回复", async () => {
-    const chunks: ChatChunk[] = [
-      { content: "让我查看一下这个文件", finishReason: null },
-      {
-        content: "",
-        finishReason: "tool_calls",
-        toolCalls: [
-          { id: "call_1", name: "read_file", arguments: '{"path":"/src/main.ts"}' },
-        ],
+    // 模拟工具调用场景：
+    // 第一轮：模型返回工具调用
+    // 第二轮：模型基于工具结果返回最终回答
+    let callCount = 0;
+    const toolCallProvider: Provider = {
+      name: "mock",
+      model: () => "deepseek-v4-flash",
+      countTokens: (text: string) => Math.ceil(text.length / 3),
+      chat: async function* (_messages: ChatMessage[], _opts?: unknown): AsyncIterable<ChatChunk> {
+        callCount++;
+        if (callCount === 1) {
+          // 第一轮：返回工具调用
+          yield { content: "让我查看一下这个文件", finishReason: null };
+          yield {
+            content: "",
+            finishReason: "tool_calls",
+            toolCalls: [
+              { id: "call_1", name: "read_file", arguments: '{"path":"/src/main.ts"}' },
+            ],
+          };
+          yield {
+            content: "",
+            finishReason: null,
+            usage: { promptTokens: 50, completionTokens: 30 },
+          };
+        } else {
+          // 第二轮：基于工具结果返回最终回答
+          yield { content: "文件内容如下", finishReason: "stop" };
+          yield {
+            content: "",
+            finishReason: null,
+            usage: { promptTokens: 100, completionTokens: 50 },
+          };
+        }
       },
-      {
-        content: "",
-        finishReason: null,
-        usage: { promptTokens: 50, completionTokens: 30 },
-      },
-    ];
+    };
 
-    const provider = createMockProvider(chunks);
-    const session = new Session(provider, [], costTracker);
+    const session = new Session(toolCallProvider, [], costTracker);
 
     const events: AgentEvent[] = [];
     for await (const event of session.chat("看看 main.ts")) {
@@ -279,9 +299,21 @@ describe("Session", () => {
     const toolCallsEvent = events.find((e) => e.type === "tool_calls");
     expect(toolCallsEvent).toBeDefined();
 
-    // 消息历史应该包含 user + assistant + tool
-    expect(session.messages).toHaveLength(3);
-    expect(session.messages[2]!.role).toBe("tool");
+    // 应该有工具结果事件（read_file 未注册，所以返回错误）
+    const toolResultEvent = events.find((e) => e.type === "tool_result");
+    expect(toolResultEvent).toBeDefined();
+    if (toolResultEvent && toolResultEvent.type === "tool_result") {
+      expect(toolResultEvent.name).toBe("read_file");
+      expect(toolResultEvent.result.success).toBe(false);
+    }
+
+    // 第二轮的文本回答应该也被接收
+    const textDeltas = events.filter((e) => e.type === "text_delta");
+    expect(textDeltas.length).toBeGreaterThan(1); // 至少有第一轮和第二轮的文本
+
+    // 应该有 done 事件
+    const doneEvent = events.find((e) => e.type === "done");
+    expect(doneEvent).toBeDefined();
   });
 
   it("错误处理：Provider 抛出异常", async () => {

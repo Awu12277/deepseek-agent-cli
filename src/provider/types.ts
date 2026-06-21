@@ -22,6 +22,8 @@ export interface ChatOptions {
   maxTokens?: number;
   /** 生成温度（0.0 ~ 2.0，覆盖配置中的默认值） */
   temperature?: number;
+  /** 可用工具定义列表，传给模型以启用 function calling */
+  tools?: ToolDefinition[];
 }
 
 /** 工具调用信息（模型返回的 function call） */

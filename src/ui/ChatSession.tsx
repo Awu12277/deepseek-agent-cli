@@ -17,6 +17,8 @@ import type { ProviderToolCall, UsageInfo, ModelId } from "../provider/index.js"
 import { createProvider } from "../provider/index.js";
 import { Session } from "../agent/index.js";
 import type { AgentEvent } from "../agent/types.js";
+import { builtinTools } from "../tool/index.js";
+import { ToolRegistry } from "../tool/registry.js";
 import {
   IDLE_GRADIENT_STOPS,
   STREAMING_GRADIENT_STOPS,
@@ -108,7 +110,7 @@ interface CompletedAssistant {
 
 /** 单条显示消息 */
 interface DisplayMessage {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "tool";
   content: string;
   /** 已完成的助手消息详情（仅在 role=assistant 时） */
   assistantDetail?: CompletedAssistant;
@@ -410,7 +412,10 @@ export function ChatSession({
     });
 
     const tracker = externalCostTracker ?? new CostTracker();
-    const session = new Session(provider, [], tracker, {
+    // 注册所有内置工具
+    const toolRegistry = new ToolRegistry();
+    toolRegistry.registerAll(builtinTools);
+    const session = new Session(provider, toolRegistry, tracker, {
       cwd: process.cwd(),
     });
     sessionRef.current = session;
@@ -633,6 +638,25 @@ export function ChatSession({
               currentToolCallsRef.current = next;
               return next;
             });
+            break;
+
+          case "tool_result":
+            // 工具执行完成 — 重置流式状态，准备接收模型的新一轮回复
+            // 这是因为 Agent 循环会在工具执行后再次调用模型
+            setCurrentContent("");
+            currentContentRef.current = "";
+            setCurrentToolCalls([]);
+            currentToolCallsRef.current = [];
+            // 将工具结果追加为一条用户可见的消息
+            setDisplayMessages((prev) => [
+              ...prev,
+              {
+                role: "tool" as const,
+                content: event.result.success
+                  ? `✅ ${event.name}: ${event.result.data.slice(0, 500)}${event.result.data.length > 500 ? "..." : ""}`
+                  : `❌ ${event.name}: ${event.result.error ?? "执行失败"}`,
+              },
+            ]);
             break;
 
           case "usage":

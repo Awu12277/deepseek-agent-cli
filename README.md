@@ -11,23 +11,25 @@
 
 ## 特性
 
-- **终端原生交互** — `dskcode chat` 进入交互式对话，在终端中直接与 AI 协作编码
-- **一次性任务执行** — `dskcode run 重构所有 TODO 为 Jira 链接` 让 AI 自动完成
-- **DeepSeek 深度集成** — 原生 DeepSeek API 支持，Prefix Cache 感知，成本透明
-- **模型支持** — 仅支持 **DeepSeek-V4-Flash**（默认）和 **DeepSeek-V4-Pro** 两个模型
-- **工具系统** — AI 可以读文件、写代码、执行命令、搜索代码，像人类开发者一样工作
-- **MCP 插件** — 通过 Model Context Protocol 扩展任意外部工具
-- **项目记忆** — AGENTS.md 让你的项目上下文被 AI 理解
-- **权限控制** — 三级审批策略（Allow / Ask / Deny），安全可控
-- **JSON 配置** — 多层级配置（全局 + 项目 + 环境变量 + CLI flag）
-- **中文优先** — 界面提示、帮助信息、文档均为中文
-- **股票行情** — `dskcode stock` 交互式 A 股行情终端，键盘选择 + 详情折线图 + 每 10 秒自动刷新
+- **终端原生交互** — `dskcode chat` 进入交互式对话，在终端中直接与 AI 协作编码 ✅
+- **一次性任务执行** — `dskcode run` 让 AI 自动完成任务 ✅
+- **DeepSeek 深度集成** — 原生 DeepSeek API 支持，Prefix Cache 感知，成本透明 ✅
+- **模型支持** — 仅支持 **DeepSeek-V4-Flash**（默认）和 **DeepSeek-V4-Pro** 两个模型 ✅
+- **工具系统** — 8 个内置工具（read_file / write_file / edit_file / bash / glob / grep / ls / fetch），Agent 可读写文件、执行命令、搜索代码 ✅
+- **MCP 插件** — 通过 Model Context Protocol 扩展任意外部工具 ⚡ 骨架就绪
+- **项目记忆** — AGENTS.md 注入系统提示词 ❌ 持久化未完成
+- **权限控制** — 三级审批策略（Allow / Ask / Deny），安全可控 ❌ 未开始
+- **JSON 配置** — 多层级配置（全局 + 项目 + 环境变量 + CLI flag） ✅
+- **中文优先** — 界面提示、帮助信息、文档均为中文 ✅
+- **Token 计价** — 会话级 / 日级 / 历史级三层成本统计，Prefix Cache 半价计费 ✅
+- **流式渲染** — 打字机效果、spinner、代码块高亮、工具调用可视化 ✅
+- **股票行情** — `dskcode stock` 交互式 A 股行情终端，键盘选择 + 详情折线图 + 每 10 秒自动刷新 ✅
 
 ![股票列表](https://raw.githubusercontent.com/Awu12277/deepseek-agent-cli/refs/heads/main/public/stock_list.png)
 
 ![股票详情](https://raw.githubusercontent.com/Awu12277/deepseek-agent-cli/refs/heads/main/public/stock_detail.png)
 
-- **内置小游戏** — `dskcode game` 启动游戏列表，打砖块、Coder Check 极速打字等内置游戏供休闲娱乐
+- **内置小游戏** — `dskcode game` 启动游戏列表，打砖块、Coder Check 极速打字等内置游戏供休闲娱乐 ✅
 
 ![Brick Breaker — 经典打砖块游戏，10 个关卡可选](https://raw.githubusercontent.com/Awu12277/deepseek-agent-cli/refs/heads/main/public/brickbreaker_preview.gif)
 
@@ -215,6 +217,41 @@ dskcode stock 000001 399006
 
 分时数据来自腾讯免费行情接口 `web.ifzq.gtimg.cn/appstock/app/minute/query`，全天 242 条分钟线（09:30~15:00）。
 
+## 实现进度
+
+15 章开发计划，当前进度：
+
+| # | 模块 | 说明 | 状态 |
+|---|------|------|------|
+| 01 | 项目初始化与工程基建 | monorepo、tsconfig、ESM/CJS、lint、test | ✅ 已完成 |
+| 02 | CLI 框架搭建与子命令路由 | commander + inquirer、chat/run/setup 子命令 | ✅ 已完成 |
+| 03 | 配置系统 | JSON 多级配置、环境变量、CLI flag 覆盖 | ✅ 已完成 |
+| 04 | Provider 抽象层 | Provider 接口、DeepSeek 适配器、工厂注册 | ✅ 已完成 |
+| 05 | LLM API 客户端 | 流式补全（SSE）、AbortController、超时重试 | ✅ 已完成 |
+| 06 | Token 计价与成本追踪 | CostTracker 三层统计、Prefix Cache 半价 | ✅ 已完成 |
+| 07 | Agent 主循环 | 消息编排、工具调用循环、轮次控制 | ✅ 已完成 |
+| 08 | 工具系统 | Tool 接口、Registry、8 个内置工具 | ✅ 已完成 |
+| 09 | MCP 插件系统 | stdio JSON-RPC、子进程管理 | ⚡ 骨架就绪 |
+| 10 | 权限控制 | Allow/Ask/Deny 三级策略、交互式审批 | ❌ 未开始 |
+| 11 | 会话管理与项目记忆 | 对话持久化、AGENTS.md 注入 | ❌ 未开始 |
+| 12 | 终端交互 | 打字机效果、spinner、代码块高亮 | ✅ 已完成 |
+| 13 | 管道模式 | stdin/stdout 集成、非交互模式、JSON 输出 | ❌ 未开始 |
+| 14 | 配置向导 | `dskcode setup` 交互式配置、API Key 管理 | ❌ 未开始 |
+| 15 | 构建发布与 CI/CD | tsup 打包、npm publish、GitHub Actions | ✅ 已完成 |
+
+### 内置工具详情（第 08 章）
+
+| 工具 | 说明 | 状态 |
+|------|------|------|
+| `read_file` | 读取文件，支持行号范围 | ✅ |
+| `write_file` | 写入/创建文件，自动创建中间目录 | ✅ |
+| `edit_file` | 精确文本替换，唯一匹配校验 | ✅ |
+| `bash` | 执行 shell 命令，超时控制 | ✅ |
+| `glob` | 文件路径模式搜索（`*` / `**` / `?`） | ✅ |
+| `grep` | 文件内容正则搜索，扩展名过滤 | ✅ |
+| `ls` | 目录列表，类型标记，隐藏文件控制 | ✅ |
+| `fetch` | HTTP 请求（GET/POST/PUT/DELETE） | ✅ |
+
 ## 架构
 
 ```
@@ -222,12 +259,13 @@ src/
 ├── index.ts          # 入口，shebang + 异常处理
 ├── cli/              # commander 命令路由
 ├── config/           # JSON 配置加载与合并
-├── provider/         # LLM Provider 接口（DeepSeek）
-├── tool/             # 内置工具接口（读文件、写文件、bash 等）
-├── plugin/           # MCP 插件管理器
+├── provider/          # LLM Provider 接口（DeepSeek）
+├── tool/             # 内置工具（Registry + 8 个内置工具）
+├── plugin/           # MCP 插件管理器（骨架就绪）
 ├── agent/            # Agent 会话循环
-├── stock/            # 股票行情（StockList 交互式行情终端 + asciichart 折线图）
+├── stock/            # 股票行情（交互式终端 + asciichart）
 ├── game/             # 内置小游戏
+├── types/            # 共享类型定义
 └── ui/               # Ink 交互式终端 UI
 ```
 

@@ -1,28 +1,31 @@
-/** 工具参数的 JSON Schema 表示 */
-export interface JSONSchema {
-  type: "object";
-  properties?: Record<string, unknown>;
-  required?: string[];
-  additionalProperties?: boolean;
-}
+// ---------------------------------------------------------------------------
+// 工具系统公共 API
+// ---------------------------------------------------------------------------
 
-/** 每次工具执行时传入的上下文 */
-export interface ToolContext {
-  cwd: string;
-  signal?: AbortSignal;
-}
+// 核心类型
+export type { JSONSchema, ToolContext, ToolResult, Tool } from "./types.js";
 
-/** 工具执行返回的结果 */
-export interface ToolResult {
-  success: boolean;
-  data: string;
-  error?: string;
-}
+// 注册表
+export { ToolRegistry } from "./registry.js";
+export type { ToolRegistryOptions } from "./registry.js";
 
-/** Tool 接口 — 每个内置工具或插件适配的工具都需要实现此接口。 */
-export interface Tool {
-  readonly name: string;
-  readonly description: string;
-  readonly parameters: JSONSchema;
-  execute(args: unknown, ctx: ToolContext): Promise<ToolResult>;
-}
+// 沙箱工具
+export {
+  resolvePath,
+  truncateOutput,
+  getDefaultTimeout,
+  getDefaultMaxFileSize,
+  createTimeoutSignal,
+  execCommand,
+} from "./sandbox.js";
+
+// 内置工具
+export { builtinTools, getBuiltinToolMap } from "./builtins/index.js";
+export { readFileTool } from "./builtins/read-file.js";
+export { writeFileTool } from "./builtins/write-file.js";
+export { editFileTool } from "./builtins/edit-file.js";
+export { bashTool } from "./builtins/bash.js";
+export { globTool } from "./builtins/glob.js";
+export { grepTool } from "./builtins/grep.js";
+export { lsTool } from "./builtins/ls.js";
+export { fetchTool } from "./builtins/fetch.js";
