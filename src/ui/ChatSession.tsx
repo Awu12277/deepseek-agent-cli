@@ -9,11 +9,13 @@ import { useDoubleCtrlC } from "./useDoubleCtrlC.js";
 import { CYBER_PALETTE, LOGO_LINES } from "./DskcodeSplash.js";
 import { Spinner } from "./Spinner.js";
 import { AssistantMessage } from "./AssistantMessage.js";
+import { DiffPreview } from "./DiffPreview.js";
 import { SkillSelector } from "./SkillSelector.js";
 import { FileSelector } from "./FileSelector.js";
 import type { SkillInfo } from "../cli/skill-import.js";
 import { CostTracker } from "../provider/cost-tracker.js";
-import type { ProviderToolCall, UsageInfo, ModelId } from "../provider/index.js";
+import type { ProviderToolCall, UsageInfo } from "../provider/index.js";
+import type { FileDiff } from "../tool/types.js";
 import { createProvider } from "../provider/index.js";
 import { Session } from "../agent/index.js";
 import type { AgentEvent } from "../agent/types.js";
@@ -114,6 +116,8 @@ interface DisplayMessage {
   content: string;
   /** 已完成的助手消息详情（仅在 role=assistant 时） */
   assistantDetail?: CompletedAssistant;
+  /** 文件变更 diff（仅在 role=tool 且有 diff 时） */
+  diff?: FileDiff;
 }
 
 interface ChatSessionProps {
@@ -655,6 +659,7 @@ export function ChatSession({
                 content: event.result.success
                   ? `✅ ${event.name}: ${event.result.data.slice(0, 500)}${event.result.data.length > 500 ? "..." : ""}`
                   : `❌ ${event.name}: ${event.result.error ?? "执行失败"}`,
+                diff: event.result.diff,
               },
             ]);
             break;
@@ -805,6 +810,23 @@ export function ChatSession({
                   <Box flexGrow={1}>
                     <Text wrap="wrap">{msg.content}</Text>
                   </Box>
+                </Box>
+              );
+            }
+
+            // 工具消息 — 显示文本内容 + Diff 预览
+            if (msg.role === "tool") {
+              return (
+                <Box key={i} marginTop={1} flexDirection="column">
+                  <Box flexDirection="row">
+                    <Box width={4} flexShrink={0}>
+                      <Text bold color="#f59e0b">{"🔧"}</Text>
+                    </Box>
+                    <Box flexGrow={1}>
+                      <Text wrap="wrap">{msg.content}</Text>
+                    </Box>
+                  </Box>
+                  {msg.diff && <DiffPreview diff={msg.diff} />}
                 </Box>
               );
             }
