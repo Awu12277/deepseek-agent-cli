@@ -13,7 +13,7 @@ interface FileSelectorProps {
   selectedIndex: number;
 }
 
-const HIGHLIGHT_COLOR = "#00bfff";
+const HIGHLIGHT_COLOR = "#00ff41";
 
 export function FileSelector({ files, input, selectedIndex }: FileSelectorProps) {
   // 匹配规则：@ 必须在输入开头，或者前面有空格
