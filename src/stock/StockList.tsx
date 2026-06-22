@@ -1,8 +1,37 @@
 import { Box, Text, useInput } from "ink";
 import { useState, useCallback, useEffect } from "react";
 import asciichart from "asciichart";
+import os from "node:os";
+import { join } from "node:path";
 import type { StockRow } from "./types.js";
 import { useDoubleCtrlC } from "../ui/useDoubleCtrlC.js";
+
+// ---------------------------------------------------------------------------
+// 自选股配置文件路径（取用户全局 ~/.dskcode/settings.json 的真实绝对路径）
+// ---------------------------------------------------------------------------
+
+const SETTINGS_PATH = join(os.homedir(), ".dskcode", "settings.json");
+
+/**
+ * 将本地绝对路径转换为 file:// URL，兼容 Windows 与 POSIX。
+ * Windows: C:\Users\me\.dskcode\settings.json → file:///C:/Users/me/.dskcode/settings.json
+ */
+function toFileUrl(p: string): string {
+  const norm = p.replace(/\\/g, "/");
+  if (process.platform === "win32") {
+    return "file://" + norm.replace(/^([a-zA-Z]:)/, "/$1");
+  }
+  return "file://" + norm;
+}
+
+/**
+ * 用 OSC 8 转义序列把 text 包装成可点击的终端超链接。
+ * 现代终端（Windows Terminal / iTerm2 / kitty / WezTerm 等）点击后会以系统默认程序打开该 URI。
+ * 不可见宽度的转义对 string-width 透明（strip-ansi 会剥除），不影响布局。
+ */
+function osc8Link(uri: string, text: string): string {
+  return `\x1b]8;;${uri}\x1b\\${text}\x1b]8;;\x1b\\`;
+}
 
 // ---------------------------------------------------------------------------
 // 分时数据接口
@@ -457,8 +486,9 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
         </Text>
       </Box>
       <Box>
-        <Text dimColor>
-          {`  最后更新: ${lastUpdate}  编辑自选股: ~/.dskcode/settings.json`}
+        <Text dimColor>{`  最后更新: ${lastUpdate}  编辑自选股: `}</Text>
+        <Text color="#c792ea">
+          {osc8Link(toFileUrl(SETTINGS_PATH), SETTINGS_PATH)}
         </Text>
       </Box>
 
