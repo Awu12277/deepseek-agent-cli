@@ -33,10 +33,12 @@ describe("工具系统集成测试", () => {
     registry.registerAll(builtinTools);
 
     // 验证注册
-    expect(registry.list().length).toBe(8);
+    expect(registry.list().length).toBe(10);
     expect(registry.names()).toContain("read_file");
     expect(registry.names()).toContain("write_file");
     expect(registry.names()).toContain("edit_file");
+    expect(registry.names()).toContain("multi_edit");
+    expect(registry.names()).toContain("delete_range");
     expect(registry.names()).toContain("bash");
     expect(registry.names()).toContain("glob");
     expect(registry.names()).toContain("grep");
