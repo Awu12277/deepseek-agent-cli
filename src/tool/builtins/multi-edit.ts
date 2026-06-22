@@ -8,6 +8,7 @@
 // ---------------------------------------------------------------------------
 
 import { readFile, writeFile } from "node:fs/promises";
+import { basename } from "node:path";
 import type { Tool, ToolContext, ToolResult, JSONSchema } from "../types.js";
 import { resolvePath } from "../sandbox.js";
 import { computeFileDiff } from "../diff.js";
@@ -150,6 +151,7 @@ export const multiEditTool: Tool = {
       return {
         success: true,
         data: `文件已编辑：${filePath}\n共执行 ${params.edits.length} 步替换\n变更：+${diff.additions} -${diff.deletions}`,
+        summary: `📝 修改: ${basename(filePath)} (${params.edits.length} 步, +${diff.additions} -${diff.deletions})`,
         diff,
       };
     } catch (err: unknown) {

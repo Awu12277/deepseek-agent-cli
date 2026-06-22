@@ -86,9 +86,16 @@ export const bashTool: Tool = {
       const success = result.exitCode === 0;
       const output = parts.length > 0 ? parts.join("\n") : "(无输出)";
 
+      // UI 摘要：命令本身截断到 60 字符，避免长命令撑屏
+      const cmdPreview = params.command.length > 60
+        ? params.command.slice(0, 57) + "..."
+        : params.command;
+      const summary = `🔧 $ ${cmdPreview}（exit ${result.exitCode ?? "未知"}）`;
+
       return {
         success,
         data: `${output}\n[退出码: ${result.exitCode ?? "未知"}]`,
+        summary,
         error: success ? undefined : `EXIT_CODE_${result.exitCode ?? "UNKNOWN"}`,
       };
     } catch (err: unknown) {

@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { readFile, writeFile } from "node:fs/promises";
+import { basename } from "node:path";
 import type { Tool, ToolContext, ToolResult, JSONSchema } from "../types.js";
 import { resolvePath } from "../sandbox.js";
 import { computeFileDiff } from "../diff.js";
@@ -108,9 +109,12 @@ export const editFileTool: Tool = {
       // 构建包含 diff 摘要的返回信息
       const diffSummary = `+${diff.additions} -${diff.deletions}`;
 
+      const summary = `📝 修改: ${basename(filePath)} (+${diff.additions} -${diff.deletions})`;
+
       return {
         success: true,
         data: `文件已编辑：${filePath}\n替换位置：第 ${startLine} 行\n${oldLines} 行 → ${newLines} 行\n变更：${diffSummary}`,
+        summary,
         diff,
       };
     } catch (err: unknown) {

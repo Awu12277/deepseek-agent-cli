@@ -175,6 +175,7 @@ export const grepTool: Tool = {
         return {
           success: true,
           data: `未找到匹配 "${params.pattern}" 的内容`,
+          summary: `🔍 "${params.pattern}" → 0 条命中`,
         };
       }
 
@@ -183,9 +184,14 @@ export const grepTool: Tool = {
         .map((m) => `${m.file}:${m.line}: ${m.content}`)
         .join("\n");
 
+      // 按文件汇总，UI 摘要不暴露具体行内容
+      const fileSet = new Set(matches.map((m) => m.file));
+      const summary = `🔍 "${params.pattern}" → ${matches.length} 条命中 / ${fileSet.size} 个文件`;
+
       return {
         success: true,
         data: truncateOutput(output),
+        summary,
       };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);

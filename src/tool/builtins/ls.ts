@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { readdir, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import type { Tool, ToolContext, ToolResult, JSONSchema } from "../types.js";
 import { resolvePath, truncateOutput } from "../sandbox.js";
 
@@ -99,12 +99,14 @@ export const lsTool: Tool = {
       }
 
       if (lines.length === 0) {
-        return { success: true, data: "目录为空" };
+        return { success: true, data: "目录为空", summary: `📂 ${relative(ctx.cwd, dirPath).replace(/\\/g, "/")}（空）` };
       }
 
+      const relPath = relative(ctx.cwd, dirPath).replace(/\\/g, "/");
       return {
         success: true,
         data: truncateOutput(`目录：${dirPath}\n${lines.join("\n")}`),
+        summary: `📂 ${relPath}（${lines.length} 项）`,
       };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);

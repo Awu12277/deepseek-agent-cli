@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { writeFile, mkdir, readFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, relative, basename } from "node:path";
 import type { Tool, ToolContext, ToolResult, JSONSchema } from "../types.js";
 import { resolvePath } from "../sandbox.js";
 import { computeFileDiff } from "../diff.js";
@@ -43,7 +43,7 @@ const writeFileSchema: JSONSchema = {
 export const writeFileTool: Tool = {
   name: "write_file",
   description:
-    "创建或覆盖文件。如果父目录不存在会自动创建。适用于创建新文件或完全替换文件内容。",
+    "创建或覆盖文件。如果父目录不存在会自动创建。适用于创建新文件或完全替换文件内容。请勿用此工具创建 _temp_、_debug_ 等用于诊断/调试的临时文件——如需诊断请改用 bash 工具内联脚本（node -e）。",
   parameters: writeFileSchema,
   readOnly: false,
 
@@ -88,9 +88,16 @@ export const writeFileTool: Tool = {
         ? `，+${diff.additions} -${diff.deletions}`
         : `，+${diff.additions} 行（新建）`;
 
+      // UI 一行摘要：状态 + 文件名 + 增删行数，避免暴露完整路径之外的信息
+      const fileName = basename(filePath);
+      const summary = existedBefore
+        ? `📝 修改: ${fileName} (+${diff.additions} -${diff.deletions})`
+        : `📝 新建: ${fileName} (+${diff.additions} 行)`;
+
       return {
         success: true,
-        data: `文件${action}：${filePath}（${lineCount} 行，${byteSize} 字节${diffSummary}）`,
+        data: `文件${action}：${relative(ctx.cwd, filePath).replace(/\\/g, "/")}（${lineCount} 行，${byteSize} 字节${diffSummary}）`,
+        summary,
         diff,
       };
     } catch (err: unknown) {

@@ -201,14 +201,12 @@ export class Session {
           // 风暴检测：检查上一个回合是否同一工具同一错误重复
           const stormBroken = this.#checkStormBreak(lastToolCalls);
           if (stormBroken) {
-            const stormMsg = "⚠️ 同一工具重复出错，已强制切换策略";
-            yield { type: "text_delta", content: `\n${stormMsg}\n` };
-            this.#messages.push({
-              role: "tool",
-              content: stormMsg,
-              toolCallId: "storm_break",
-              name: "system",
-            });
+            const stormMsg = "\n⚠️ 同一工具重复出错，已强制切换策略\n";
+            yield { type: "text_delta", content: stormMsg };
+            // 清除 assistant 消息中的 toolCalls，风暴中断不再执行这些调用
+            assistantMsg.toolCalls = undefined;
+            // 将风暴信息追加到助手消息文本中
+            assistantMsg.content += stormMsg;
             // 重置风暴计数
             this.#stormRecords = [];
             toolRounds++;

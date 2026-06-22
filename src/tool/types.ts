@@ -44,6 +44,12 @@ export interface ToolResult {
   error?: string;
   /** 文件变更 diff（仅文件修改工具携带） */
   diff?: FileDiff;
+  /**
+   * 给 UI 展示的简短摘要（一行）。
+   * 与 data 区别：data 喂给 LLM 保留完整内容，summary 仅做一行回显。
+   * 未设置时 UI 自动降级到 data 的前 500 字符。
+   */
+  summary?: string;
 }
 
 /**

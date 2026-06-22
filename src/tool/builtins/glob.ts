@@ -132,6 +132,7 @@ export const globTool: Tool = {
         return {
           success: true,
           data: `未找到匹配 "${params.pattern}" 的文件`,
+          summary: `${params.pattern} → 0 个文件`,
         };
       }
 
@@ -144,6 +145,7 @@ export const globTool: Tool = {
       return {
         success: true,
         data: truncateOutput(output + suffix),
+        summary: `${params.pattern} → ${matched.length} 个文件`,
       };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);

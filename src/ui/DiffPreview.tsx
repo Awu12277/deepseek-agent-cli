@@ -14,11 +14,12 @@ interface DiffPreviewProps {
  * 解析 unified diff 文本，按行着色渲染。
  *
  * 颜色方案：
- * - `--- a/file` / `+++ b/file`  → 青色（文件头）
  * - `@@ ... @@`                  → 青色（hunk 头）
  * - `+` 添加行                   → 绿色
  * - `-` 删除行                   → 红色
  * - ` ` 上下文行                 → 灰色
+ *
+ * 注意：文件头“--- a/...” / “+++ b/...”由摘要行展示，不重复渲染。
  */
 export function DiffPreview({ diff }: DiffPreviewProps) {
   const { patch, additions, deletions, existedBefore, filePath } = diff;
@@ -44,11 +45,13 @@ export function DiffPreview({ diff }: DiffPreviewProps) {
         </Text>
       </Box>
 
-      {/* Diff 内容 */}
+      {/* Diff 内容（跳过文件头两行“--- a/x” / "+++ b/x"，避免与摘要行重复展示文件名） */}
       <Box flexDirection="column" marginLeft={2}>
-        {lines.map((line, i) => (
-          <DiffLine key={i} line={line} />
-        ))}
+        {lines
+          .filter((line) => !line.startsWith("---") && !line.startsWith("+++"))
+          .map((line, i) => (
+            <DiffLine key={i} line={line} />
+          ))}
       </Box>
     </Box>
   );
@@ -56,9 +59,10 @@ export function DiffPreview({ diff }: DiffPreviewProps) {
 
 /** 渲染单行 diff 内容 */
 function DiffLine({ line }: { line: string }) {
-  // 文件头行
+  // 文件头行（如 "--- a/path" / "+++ b/path" / "--- /dev/null"）
+  // 摘要行已展示文件名与新建/修改状态，无需重复渲染
   if (line.startsWith("---") || line.startsWith("+++")) {
-    return <Text color="#00cccc" bold>{line}</Text>;
+    return null;
   }
 
   // Hunk 头行 @@ -x,y +a,b @@

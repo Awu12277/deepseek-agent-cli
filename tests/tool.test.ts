@@ -203,12 +203,14 @@ describe("ToolRegistry", () => {
 // ---------------------------------------------------------------------------
 
 describe("内置工具列表", () => {
-  it("包含所有 8 个内置工具", () => {
-    expect(builtinTools).toHaveLength(8);
+  it("包含所有 10 个内置工具", () => {
+    expect(builtinTools).toHaveLength(10);
     const names = builtinTools.map((t) => t.name);
     expect(names).toContain("read_file");
     expect(names).toContain("write_file");
     expect(names).toContain("edit_file");
+    expect(names).toContain("multi_edit");
+    expect(names).toContain("delete_range");
     expect(names).toContain("bash");
     expect(names).toContain("glob");
     expect(names).toContain("grep");

@@ -652,14 +652,17 @@ export function ChatSession({
             setCurrentToolCalls([]);
             currentToolCallsRef.current = [];
             // 将工具结果追加为一条用户可见的消息
+            // 优先使用工具提供的 summary（一行简短摘要），避免在 UI 中撑出大段文件内容
+            const r = event.result;
+            const line = r.success
+              ? r.summary ?? `✅ ${event.name}: ${r.data.slice(0, 500)}${r.data.length > 500 ? "..." : ""}`
+              : `❌ ${event.name}: ${r.error ?? "执行失败"}`;
             setDisplayMessages((prev) => [
               ...prev,
               {
                 role: "tool" as const,
-                content: event.result.success
-                  ? `✅ ${event.name}: ${event.result.data.slice(0, 500)}${event.result.data.length > 500 ? "..." : ""}`
-                  : `❌ ${event.name}: ${event.result.error ?? "执行失败"}`,
-                diff: event.result.diff,
+                content: line,
+                diff: r.diff,
               },
             ]);
             break;

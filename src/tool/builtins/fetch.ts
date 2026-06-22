@@ -109,9 +109,16 @@ export const fetchTool: Tool = {
       const header = `状态: ${statusText}\n内容类型: ${contentType}`;
       const separator = body.length > 0 ? "\n---\n" : "";
 
+      // UI 摘要：方法 + URL + 状态码，不暴露响应体
+      const urlPreview = params.url.length > 60
+        ? params.url.slice(0, 57) + "..."
+        : params.url;
+      const summary = `🌐 ${method} ${urlPreview} → ${response.status}`;
+
       return {
         success: response.ok,
         data: `${header}${separator}${truncatedBody}`,
+        summary,
         error: response.ok ? undefined : `HTTP_${response.status}`,
       };
     } catch (err: unknown) {

@@ -6,6 +6,7 @@
 // ---------------------------------------------------------------------------
 
 import { readFile, writeFile } from "node:fs/promises";
+import { basename } from "node:path";
 import type { Tool, ToolContext, ToolResult, JSONSchema } from "../types.js";
 import { resolvePath } from "../sandbox.js";
 import { computeFileDiff } from "../diff.js";
@@ -160,9 +161,12 @@ export const deleteRangeTool: Tool = {
 
       const deletedLines = rangeEnd - rangeStart + 1;
 
+      const summary = `📝 修改: ${basename(filePath)} (删 ${deletedLines} 行, +${diff.additions} -${diff.deletions})`;
+
       return {
         success: true,
         data: `文件已编辑：${filePath}\n删除行范围：第 ${rangeStart + 1} 行 ~ 第 ${rangeEnd + 1} 行（共 ${deletedLines} 行）\n变更：+${diff.additions} -${diff.deletions}`,
+        summary,
         diff,
       };
     } catch (err: unknown) {

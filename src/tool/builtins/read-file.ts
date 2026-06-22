@@ -4,6 +4,7 @@
 
 import { readFile, stat } from "node:fs/promises";
 import { open } from "node:fs/promises";
+import { relative } from "node:path";
 import type { Tool, ToolContext, ToolResult, JSONSchema } from "../types.js";
 import { resolvePath, truncateOutput } from "../sandbox.js";
 
@@ -138,9 +139,16 @@ export const readFileTool: Tool = {
         ? `\n\n[还有 ${remaining} 行；使用 startLine=${endLine + 1} 继续查看]`
         : "";
 
+      // UI 摘要：仅显示路径与行数范围，避免把文件内容塞进 UI
+      const relPath = relative(ctx.cwd, filePath).replace(/\\/g, "/");
+      const rangeLabel = (startLine > 0 || endLine < lines.length)
+        ? `第 ${startLine + 1}-${endLine} 行`
+        : `${lines.length} 行`;
+
       return {
         success: true,
         data: truncateOutput(result) + tailHint,
+        summary: `📖 ${relPath}（${rangeLabel}）`,
       };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
