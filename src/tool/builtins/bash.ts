@@ -49,6 +49,7 @@ export const bashTool: Tool = {
   description:
     "在 shell 中执行命令。返回标准输出、标准错误和退出码。支持超时控制和信号中止。适用于运行构建、测试、Git 操作等命令。",
   parameters: bashSchema,
+  readOnly: false, // bash 有副作用，不能并行执行
 
   async execute(args: unknown, ctx: ToolContext): Promise<ToolResult> {
     const params = args as BashArgs;

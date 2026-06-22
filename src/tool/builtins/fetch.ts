@@ -64,6 +64,7 @@ export const fetchTool: Tool = {
   description:
     "发起 HTTP 请求并返回响应内容。支持自定义方法和请求头。适用于获取网页内容、API 调用等场景。",
   parameters: fetchSchema,
+  readOnly: true,
 
   async execute(args: unknown, ctx: ToolContext): Promise<ToolResult> {
     const params = args as FetchArgs;

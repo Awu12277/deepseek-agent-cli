@@ -117,6 +117,7 @@ export const grepTool: Tool = {
   description:
     "在文件内容中搜索正则表达式。返回匹配行的文件路径、行号和内容。支持大小写敏感、文件扩展名过滤。",
   parameters: grepSchema,
+  readOnly: true,
 
   async execute(args: unknown, ctx: ToolContext): Promise<ToolResult> {
     const params = args as GrepArgs;

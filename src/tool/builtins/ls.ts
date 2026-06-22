@@ -49,6 +49,7 @@ export const lsTool: Tool = {
   description:
     "列出目录内容。显示条目类型（文件/目录/链接）和大小。可选择是否显示隐藏文件。",
   parameters: lsSchema,
+  readOnly: true,
 
   async execute(args: unknown, ctx: ToolContext): Promise<ToolResult> {
     const params = (args ?? {}) as LsArgs;

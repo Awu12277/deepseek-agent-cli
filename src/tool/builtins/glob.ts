@@ -105,6 +105,7 @@ export const globTool: Tool = {
   description:
     "按模式搜索文件路径。支持 *（匹配文件名部分）和 **（匹配多层目录）通配符。自动跳过 node_modules 和 .git 目录。",
   parameters: globSchema,
+  readOnly: true,
 
   async execute(args: unknown, ctx: ToolContext): Promise<ToolResult> {
     const params = args as GlobArgs;

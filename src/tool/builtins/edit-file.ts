@@ -52,6 +52,7 @@ export const editFileTool: Tool = {
   description:
     "对文件进行精确字符串替换。查找文件中的 old_text 并替换为 new_text。如果 old_text 出现多次或未找到则报错。适用于小范围精确修改。",
   parameters: editFileSchema,
+  readOnly: false,
 
   async execute(args: unknown, ctx: ToolContext): Promise<ToolResult> {
     const params = args as EditFileArgs;

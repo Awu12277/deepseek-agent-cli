@@ -45,6 +45,7 @@ export const writeFileTool: Tool = {
   description:
     "创建或覆盖文件。如果父目录不存在会自动创建。适用于创建新文件或完全替换文件内容。",
   parameters: writeFileSchema,
+  readOnly: false,
 
   async execute(args: unknown, ctx: ToolContext): Promise<ToolResult> {
     const params = args as WriteFileArgs;

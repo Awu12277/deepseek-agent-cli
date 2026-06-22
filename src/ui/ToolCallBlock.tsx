@@ -53,7 +53,7 @@ export function ToolCallBlock({ call, showPendingHint = true }: ToolCallBlockPro
       </Box>
       {showPendingHint && (
         <Box>
-          <Text color="yellow">⏳ 等待执行（工具系统将在第08章实现）</Text>
+          <Text color="yellow">⏳ 等待执行</Text>
         </Box>
       )}
     </Box>

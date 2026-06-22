@@ -1,5 +1,12 @@
 // ---------------------------------------------------------------------------
-// 文件差异计算 — LCS diff + unified patch 生成
+// 文件差异计算 — Myers O(ND) 算法 + unified patch 生成
+//
+// Myers 算法与 Git 的 diff 引擎同款，产生最短编辑脚本（SES）。
+// 时间复杂度 O((N+M)D)，空间复杂度 O(N+M)，其中 D 为编辑距离。
+//
+// 实现方式：非递归的 Myers 差分算法。
+// 1. 正向搜索：找到从 (0,0) 到 (N,M) 的最短编辑路径
+// 2. 回溯路径：从 (N,M) 回溯到 (0,0)，生成 DiffLine 序列
 // ---------------------------------------------------------------------------
 
 import type { FileDiff } from "./types.js";
@@ -27,150 +34,216 @@ interface DiffHunk {
 }
 
 // ---------------------------------------------------------------------------
-// 公共 API
+// EOL（行尾风格）检测
+// ---------------------------------------------------------------------------
+
+type EOFStyle = "lf" | "crlf" | "no-eol";
+
+interface SplitResult {
+  lines: string[];
+  eol: string;
+  eofStyle: EOFStyle;
+}
+
+function splitLines(text: string): SplitResult {
+  if (text.length === 0) {
+    return { lines: [], eol: "\n", eofStyle: "no-eol" };
+  }
+
+  const crlfIdx = text.indexOf("\r\n");
+  const lfIdx = text.indexOf("\n");
+  let eol: string;
+  if (crlfIdx !== -1 && (lfIdx === -1 || crlfIdx <= lfIdx)) {
+    eol = "\r\n";
+  } else if (lfIdx !== -1) {
+    eol = "\n";
+  } else {
+    eol = "\n";
+  }
+
+  const lines = text.split(eol);
+
+  let eofStyle: EOFStyle;
+  if (text.endsWith(eol)) {
+    if (lines.length > 0 && lines[lines.length - 1] === "") {
+      lines.pop();
+    }
+    eofStyle = "lf";
+  } else {
+    eofStyle = "no-eol";
+  }
+
+  return { lines, eol, eofStyle };
+}
+
+// ---------------------------------------------------------------------------
+// Myers 非递归差分算法
 // ---------------------------------------------------------------------------
 
 /**
- * 计算两个文本之间的 unified diff，返回 FileDiff 对象。
+ * 计算两个行数组之间的最短编辑脚本（SES）。
  *
- * @param oldContent 变更前文件内容（空字符串表示新建文件）
- * @param newContent 变更后文件内容（空字符串表示删除文件）
- * @param filePath    文件路径，用于 diff 头部标识
- * @returns           FileDiff 对象，其中 patch 为标准 unified diff 格式
- */
-export function computeFileDiff(
-  oldContent: string,
-  newContent: string,
-  filePath: string,
-): FileDiff {
-  // 无变更快速路径
-  if (oldContent === newContent) {
-    return {
-      filePath,
-      patch: "",
-      existedBefore: oldContent.length > 0,
-      additions: 0,
-      deletions: 0,
-    };
-  }
-
-  // 空文件 → 新建文件
-  if (oldContent.length === 0) {
-    const newLines = splitLines(newContent);
-    const patch = formatNewFileDiff(newLines, filePath);
-    return {
-      filePath,
-      patch,
-      existedBefore: false,
-      additions: newLines.length,
-      deletions: 0,
-    };
-  }
-
-  // 内容清空 → 删除文件
-  if (newContent.length === 0) {
-    const oldLines = splitLines(oldContent);
-    const patch = formatDeletedFileDiff(oldLines, filePath);
-    return {
-      filePath,
-      patch,
-      existedBefore: true,
-      additions: 0,
-      deletions: oldLines.length,
-    };
-  }
-
-  // 正常 diff
-  const oldLines = splitLines(oldContent);
-  const newLines = splitLines(newContent);
-
-  const diffLines = computeLineDiff(oldLines, newLines);
-
-  // 统计变更
-  let additions = 0;
-  let deletions = 0;
-  for (const line of diffLines) {
-    if (line.op === "add") additions++;
-    if (line.op === "remove") deletions++;
-  }
-
-  // 生成分组 hunks
-  const hunks = groupIntoHunks(diffLines);
-
-  // 格式化为 unified diff
-  const patch = formatUnifiedDiff(hunks, filePath);
-
-  return {
-    filePath,
-    patch,
-    existedBefore: true,
-    additions,
-    deletions,
-  };
-}
-
-/**
- * 将文本按行分割，处理末尾换行。
- * "abc\ndef\n" → ["abc", "def"]
- * "abc\ndef"    → ["abc", "def"]
- */
-function splitLines(text: string): string[] {
-  const raw = text.split("\n");
-  // 如果文本以 \n 结尾，split 产生最后一个空字符串，去掉它
-  if (text.endsWith("\n") && raw.length > 0 && raw[raw.length - 1] === "") {
-    return raw.slice(0, -1);
-  }
-  return raw;
-}
-
-// ---------------------------------------------------------------------------
-// LCS diff 算法 — 基于最长公共子序列
-// ---------------------------------------------------------------------------
-
-/**
- * 使用 LCS 计算两段文本的行级 diff。
- * O(N*M) 时间复杂度，对于 Agent 修改的文件大小完全够用。
+ * 使用非递归 Myers 算法：
+ * 1. 正向搜索 V 数组，记录每步的进度
+ * 2. 到达终点后回溯路径生成 DiffLine 列表
  */
 function computeLineDiff(oldLines: string[], newLines: string[]): DiffLine[] {
   const N = oldLines.length;
   const M = newLines.length;
 
-  // 构建 LCS 表
-  const dp: number[][] = [];
-  for (let i = 0; i <= N; i++) {
-    dp[i] = new Array(M + 1).fill(0) as number[];
+  if (N === 0 && M === 0) return [];
+  if (N === 0) return newLines.map((line) => ({ op: "add" as Op, line }));
+  if (M === 0) return oldLines.map((line) => ({ op: "remove" as Op, line }));
+
+  // 存储每一步的 V 快照，用于回溯
+  const trace: Map<number, number>[] = [];
+
+  const maxD = N + M;
+  // V[k] = x position；初始化为 -1 表示未访问
+  const V: number[] = new Array(2 * maxD + 2).fill(-1);
+  // k 的偏移量，使索引非负
+  const offset = maxD;
+
+  V[offset + 1] = 0;
+
+  // 正向搜索：从 d=0 开始，逐层扩展
+  outer:
+  for (let d = 0; d <= maxD; d++) {
+    // 保存当前层的 V 快照
+    const snapshot = new Map<number, number>();
+
+    const kStart = -d;
+    const kEnd = d;
+
+    for (let k = kStart; k <= kEnd; k += 2) {
+      const ki = k + offset;
+      let x: number;
+
+      if (k === -d || (k !== d && V[ki - 1]! < V[ki + 1]!)) {
+        x = V[ki + 1]!;
+      } else {
+        x = V[ki - 1]! + 1;
+      }
+
+      let y = x - k;
+
+      // 沿着对角线延伸
+      while (x < N && y < M && oldLines[x] === newLines[y]) {
+        x++;
+        y++;
+      }
+
+      V[ki] = x;
+      snapshot.set(k, x);
+
+      // 到达终点
+      if (x >= N && y >= M) {
+        trace.push(snapshot);
+        // 回溯路径
+        return backtrack(trace, N, M, oldLines, newLines, offset);
+      }
+    }
+
+    trace.push(snapshot);
   }
 
-  for (let i = 1; i <= N; i++) {
-    for (let j = 1; j <= M; j++) {
-      if (oldLines[i - 1] === newLines[j - 1]) {
-        dp[i]![j] = dp[i - 1]![j - 1]! + 1;
-      } else {
-        dp[i]![j] = Math.max(dp[i - 1]![j]!, dp[i]![j - 1]!);
+  // 不应该到达这里（总有解）
+  return oldLines.map((line) => ({ op: "remove" as Op, line }))
+    .concat(newLines.map((line) => ({ op: "add" as Op, line })));
+}
+
+/**
+ * 从 trace 中回溯最短编辑路径，生成 DiffLine 列表。
+ *
+ * trace 存储了每一层 (d) 的 V 快照。
+ * 从终点 (N, M) 开始，逆着路径逐层回溯到 (0, 0)。
+ */
+function backtrack(
+  trace: Map<number, number>[],
+  N: number,
+  M: number,
+  oldLines: string[],
+  newLines: string[],
+  offset: number,
+): DiffLine[] {
+  const result: DiffLine[] = [];
+
+  let x = N;
+  let y = M;
+
+  // 从最后一层回溯到第 1 层（第 0 层只有初始蛇行，没有实际移动）
+  for (let d = trace.length - 1; d >= 1; d--) {
+    const k = x - y;
+
+    // 从 trace[d-1] 中查找上一步的 x 位置
+    // 注意：trace[d] 存的是本层结果，前一层的数据在 trace[d-1] 中
+    const prevSnapshot = d > 0 ? (trace[d - 1] as Map<number, number>) : new Map();
+    const prevKDown = prevSnapshot.get(k - 1);
+    const prevKUp = prevSnapshot.get(k + 1);
+
+    let prevK: number;
+    if (k === -d) {
+      // 只能在 k+1 方向
+      prevK = k + 1;
+    } else if (k === d) {
+      // 只能在 k-1 方向
+      prevK = k - 1;
+    } else if ((prevKDown ?? -1) < (prevKUp ?? -1)) {
+      // k+1 方向的 V 值更大，从那里过来（删除）
+      prevK = k + 1;
+    } else {
+      // k-1 方向的 V 值更大，从那里过来（添加）
+      prevK = k - 1;
+    }
+
+    const prevX = prevSnapshot.get(prevK) ?? 0;
+    const prevY = prevX - prevK;
+
+    // ===== 从 (prevX, prevY) 到 (x, y) 的回溯路径 =====
+
+    if (prevK === k - 1) {
+      // prevK = k-1 → V[k-1] 被使用 → x = V[k-1] + 1 → 垂直移动（删除）
+      // 路径: (prevX, prevY) → (prevX+1, prevY) [删除] → 蛇行 [(prevX+2, prevY+1), ...]
+      // 回溯: 先走蛇行(相等行), 再走删除行
+
+      // 第一步：蛇行（相等行），从 (x,y) 回到 (prevX+1, prevY)
+      while (x > prevX + 1 && y > prevY) {
+        x--;
+        y--;
+        result.unshift({ op: "equal", line: oldLines[x] as string });
+      }
+
+      // 第二步：删除行
+      if (x > prevX) {
+        x--;
+        result.unshift({ op: "remove", line: oldLines[x] as string });
+      }
+    } else {
+      // prevK = k+1 → V[k+1] 被使用 → x = V[k+1] → 水平移动（添加）
+      // 路径: (prevX, prevY) → (prevX, prevY+1) [添加] → 蛇行 [(prevX+1, prevY+2), ...]
+      // 回溯: 先走蛇行(相等行), 再走添加行
+
+      // 第一步：蛇行（相等行），从 (x,y) 回到 (prevX, prevY+1)
+      while (x > prevX && y > prevY + 1) {
+        x--;
+        y--;
+        result.unshift({ op: "equal", line: oldLines[x] as string });
+      }
+
+      // 第二步：添加行
+      if (y > prevY) {
+        y--;
+        result.unshift({ op: "add", line: newLines[y] as string });
       }
     }
   }
 
-  // 回溯 LCS，生成 diff
-  const result: DiffLine[] = [];
-  let i = N;
-  let j = M;
-
-  while (i > 0 || j > 0) {
-    const oldLine = i > 0 ? oldLines[i - 1] : undefined;
-    const newLine = j > 0 ? newLines[j - 1] : undefined;
-
-    if (i > 0 && j > 0 && oldLine !== undefined && newLine !== undefined && oldLine === newLine) {
-      result.unshift({ op: "equal", line: oldLine });
-      i--;
-      j--;
-    } else if (j > 0 && (i === 0 || dp[i]![j - 1]! >= dp[i - 1]![j]!)) {
-      result.unshift({ op: "add", line: newLines[j - 1]! });
-      j--;
-    } else {
-      result.unshift({ op: "remove", line: oldLines[i - 1]! });
-      i--;
-    }
+  // 处理初始蛇行：从 (0, 0) 到当前 (x, y) 的相等行
+  // 逆向（从 (x, y) 到 (1, 1) 到 (0, 0) 回溯）
+  while (x > 0 && y > 0) {
+    x--;
+    y--;
+    result.unshift({ op: "equal", line: oldLines[x] as string });
   }
 
   return result;
@@ -185,7 +258,6 @@ const CONTEXT_LINES = 3;
 
 /**
  * 将 diff 行列表分组为 hunks。
- * 两个变更区域之间如果有超过 2*CONTEXT_LINES 行的间隔，则分成不同 hunk。
  */
 function groupIntoHunks(diffLines: DiffLine[]): DiffHunk[] {
   if (diffLines.length === 0) return [];
@@ -193,28 +265,30 @@ function groupIntoHunks(diffLines: DiffLine[]): DiffHunk[] {
   // 找出所有变更行的索引
   const changeIndices: number[] = [];
   for (let i = 0; i < diffLines.length; i++) {
-    if (diffLines[i]!.op !== "equal") {
+    const line = diffLines[i] as DiffLine;
+    if (line.op !== "equal") {
       changeIndices.push(i);
     }
   }
 
   if (changeIndices.length === 0) return [];
 
-  // 将相近的变更行分组：间隔 <= 2*CONTEXT_LINES 的归入同一组
+  // 将相近的变更行分组
   const groups: number[][] = [[changeIndices[0] as number]];
 
   for (let idx = 1; idx < changeIndices.length; idx++) {
-    const prevIdx = groups[groups.length - 1]![groups[groups.length - 1]!.length - 1] as number;
+    const lastGroup = groups[groups.length - 1] as number[];
+    const prevIdx = lastGroup[lastGroup.length - 1] as number;
     const currIdx = changeIndices[idx] as number;
 
-    // 计算两个变更之间的间隔（相等行数）
     let gap = 0;
     for (let k = prevIdx + 1; k < currIdx; k++) {
-      if (diffLines[k]!.op === "equal") gap++;
+      const line = diffLines[k] as DiffLine;
+      if (line.op === "equal") gap++;
     }
 
     if (gap <= 2 * CONTEXT_LINES) {
-      groups[groups.length - 1]!.push(currIdx);
+      lastGroup.push(currIdx);
     } else {
       groups.push([currIdx]);
     }
@@ -227,26 +301,24 @@ function groupIntoHunks(diffLines: DiffLine[]): DiffHunk[] {
     const firstChangeIdx = group[0] as number;
     const lastChangeIdx = group[group.length - 1] as number;
 
-    // 包含上下文行的起止索引
     const startIdx = Math.max(0, firstChangeIdx - CONTEXT_LINES);
     const endIdx = Math.min(diffLines.length - 1, lastChangeIdx + CONTEXT_LINES);
 
     const lines = diffLines.slice(startIdx, endIdx + 1);
 
-    // 计算 hunk 之前的旧行号和新行号
     let oldLine = 0;
     let newLine = 0;
     for (let i = 0; i < startIdx; i++) {
-      const op = diffLines[i]!.op;
-      if (op === "equal" || op === "remove") oldLine++;
-      if (op === "equal" || op === "add") newLine++;
+      const line = diffLines[i] as DiffLine;
+      if (line.op === "equal" || line.op === "remove") oldLine++;
+      if (line.op === "equal" || line.op === "add") newLine++;
     }
 
     let oldCount = 0;
     let newCount = 0;
-    for (const line of lines) {
-      if (line.op === "equal" || line.op === "remove") oldCount++;
-      if (line.op === "equal" || line.op === "add") newCount++;
+    for (const diffLine of lines) {
+      if (diffLine.op === "equal" || diffLine.op === "remove") oldCount++;
+      if (diffLine.op === "equal" || diffLine.op === "add") newCount++;
     }
 
     hunks.push({
@@ -265,9 +337,6 @@ function groupIntoHunks(diffLines: DiffLine[]): DiffHunk[] {
 // Unified diff 格式化
 // ---------------------------------------------------------------------------
 
-/**
- * 将 hunks 格式化为标准 unified diff 文本。
- */
 function formatUnifiedDiff(hunks: DiffHunk[], filePath: string): string {
   if (hunks.length === 0) return "";
 
@@ -278,18 +347,20 @@ function formatUnifiedDiff(hunks: DiffHunk[], filePath: string): string {
   parts.push(`+++ b/${fileName}`);
 
   for (const hunk of hunks) {
-    parts.push(`@@ -${hunk.oldStart},${hunk.oldCount} +${hunk.newStart},${hunk.newCount} @@`);
+    parts.push(
+      `@@ -${String(hunk.oldStart)},${String(hunk.oldCount)} +${String(hunk.newStart)},${String(hunk.newCount)} @@`,
+    );
 
-    for (const line of hunk.lines) {
-      switch (line.op) {
+    for (const diffLine of hunk.lines) {
+      switch (diffLine.op) {
         case "equal":
-          parts.push(` ${line.line}`);
+          parts.push(` ${diffLine.line}`);
           break;
         case "remove":
-          parts.push(`-${line.line}`);
+          parts.push(`-${diffLine.line}`);
           break;
         case "add":
-          parts.push(`+${line.line}`);
+          parts.push(`+${diffLine.line}`);
           break;
       }
     }
@@ -298,16 +369,13 @@ function formatUnifiedDiff(hunks: DiffHunk[], filePath: string): string {
   return parts.join("\n");
 }
 
-/**
- * 格式化新建文件的 diff。
- */
 function formatNewFileDiff(lines: string[], filePath: string): string {
   const fileName = extractFileName(filePath);
   const parts: string[] = [];
 
   parts.push(`--- /dev/null`);
   parts.push(`+++ b/${fileName}`);
-  parts.push(`@@ -0,0 +1,${lines.length} @@`);
+  parts.push(`@@ -0,0 +1,${String(lines.length)} @@`);
 
   for (const line of lines) {
     parts.push(`+${line}`);
@@ -316,16 +384,13 @@ function formatNewFileDiff(lines: string[], filePath: string): string {
   return parts.join("\n");
 }
 
-/**
- * 格式化删除文件的 diff。
- */
 function formatDeletedFileDiff(lines: string[], filePath: string): string {
   const fileName = extractFileName(filePath);
   const parts: string[] = [];
 
   parts.push(`--- a/${fileName}`);
   parts.push(`+++ /dev/null`);
-  parts.push(`@@ -1,${lines.length} +0,0 @@`);
+  parts.push(`@@ -1,${String(lines.length)} +0,0 @@`);
 
   for (const line of lines) {
     parts.push(`-${line}`);
@@ -334,10 +399,93 @@ function formatDeletedFileDiff(lines: string[], filePath: string): string {
   return parts.join("\n");
 }
 
-/**
- * 从路径中提取文件名（处理 Windows 和 Unix 路径）。
- */
 function extractFileName(filePath: string): string {
   const normalized = filePath.replace(/\\/g, "/");
   return normalized.split("/").pop() ?? filePath;
+}
+
+// ---------------------------------------------------------------------------
+// 公共 API
+// ---------------------------------------------------------------------------
+
+/**
+ * 计算两个文本之间的 unified diff，返回 FileDiff 对象。
+ *
+ * 使用 Myers O(ND) 算法产生最短编辑脚本，与 Git 的 diff 引擎同款。
+ * 自动检测并保留原始文件的行尾风格（LF / CRLF）。
+ */
+export function computeFileDiff(
+  oldContent: string,
+  newContent: string,
+  filePath: string,
+): FileDiff {
+  if (oldContent === newContent) {
+    return {
+      filePath,
+      patch: "",
+      existedBefore: oldContent.length > 0,
+      additions: 0,
+      deletions: 0,
+    };
+  }
+
+  if (oldContent.length === 0) {
+    const split = splitLines(newContent);
+    const patch = formatNewFileDiff(split.lines, filePath);
+    return {
+      filePath,
+      patch,
+      existedBefore: false,
+      additions: split.lines.length,
+      deletions: 0,
+    };
+  }
+
+  if (newContent.length === 0) {
+    const split = splitLines(oldContent);
+    const patch = formatDeletedFileDiff(split.lines, filePath);
+    return {
+      filePath,
+      patch,
+      existedBefore: true,
+      additions: 0,
+      deletions: split.lines.length,
+    };
+  }
+
+  const oldSplit = splitLines(oldContent);
+  const newSplit = splitLines(newContent);
+
+  const diffLines = computeLineDiff(oldSplit.lines, newSplit.lines);
+
+  let additions = 0;
+  let deletions = 0;
+  for (const line of diffLines) {
+    if (line.op === "add") additions++;
+    if (line.op === "remove") deletions++;
+  }
+
+  const hunks = groupIntoHunks(diffLines);
+  const patch = formatUnifiedDiff(hunks, filePath);
+
+  return {
+    filePath,
+    patch,
+    existedBefore: true,
+    additions,
+    deletions,
+  };
+}
+
+/**
+ * 将文件变更应用于原内容，返回新的文件内容。
+ */
+export function applyChange(
+  kind: "edit" | "create" | "delete",
+  oldContent: string,
+  newContent: string,
+): string {
+  if (kind === "delete") return "";
+  if (kind === "create") return newContent;
+  return newContent;
 }

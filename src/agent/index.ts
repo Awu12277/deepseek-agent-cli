@@ -17,6 +17,8 @@ import type { AgentEvent, SystemPromptOptions } from "./types.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 import { trimMessages, buildApiMessages } from "./message-builder.js";
 import { ToolRegistry } from "../tool/registry.js";
+import type { Gate, Previewer, ToolCallRecord, ToolResult } from "../tool/types.js";
+import { AlwaysAllowGate } from "../tool/types.js";
 
 /** Session 构造选项 */
 export interface SessionOptions {
@@ -30,6 +32,10 @@ export interface SessionOptions {
   preserveRecentRounds?: number;
   /** 项目上下文（AGENTS.md 内容），可选 */
   projectContext?: string;
+  /** Gate 权限门 — 控制工具执行前的审批，默认 AlwaysAllowGate */
+  gate?: Gate;
+  /** 写目录的白名单（用于 confine 路径安全），默认 [cwd] */
+  writeRoots?: string[];
 }
 
 /**
@@ -41,8 +47,13 @@ export class Session {
   readonly #provider: Provider;
   readonly #toolRegistry: ToolRegistry;
   readonly #costTracker: CostTracker;
-  readonly #options: Required<Pick<SessionOptions, "cwd" | "maxToolRounds" | "reservedForOutput" | "preserveRecentRounds">> & { projectContext?: string };
+  readonly #options: Required<
+    Pick<SessionOptions, "cwd" | "maxToolRounds" | "reservedForOutput" | "preserveRecentRounds">
+  > & { projectContext?: string; gate: Gate; writeRoots: string[] };
   readonly #abortController = new AbortController();
+
+  // 风暴检测：记录每轮的工具调用错误
+  #stormRecords: ToolCallRecord[] = [];
 
   constructor(
     provider: Provider,
@@ -65,6 +76,8 @@ export class Session {
       reservedForOutput: options?.reservedForOutput ?? 4096,
       preserveRecentRounds: options?.preserveRecentRounds ?? 10,
       projectContext: options?.projectContext,
+      gate: options?.gate ?? new AlwaysAllowGate(),
+      writeRoots: options?.writeRoots ?? [options?.cwd ?? process.cwd()],
     };
   }
 
@@ -108,20 +121,6 @@ export class Session {
    *    c. 如果有工具调用 → 执行工具 → 追加结果 → 继续循环
    *    d. 如果没有工具调用 → 退出循环
    * 3. yield done 事件
-   *
-   * 调用方式：
-   * ```ts
-   * for await (const event of session.chat("你好")) {
-   *   switch (event.type) {
-   *     case "text_delta":  // 追加文本
-   *     case "tool_calls":  // 展示工具调用
-   *     case "tool_result": // 工具执行结果
-   *     case "usage":       // 记录使用量
-   *     case "done":        // 本轮完成
-   *     case "error":       // 处理错误
-   *   }
-   * }
-   * ```
    */
   async *chat(userInput: string): AsyncGenerator<AgentEvent> {
     // 1. 追加用户消息
@@ -160,23 +159,19 @@ export class Session {
         let lastFinishReason: string | null = null;
 
         for await (const chunk of stream) {
-          // 文本增量
           if (chunk.content) {
             accumulatedText += chunk.content;
             yield { type: "text_delta", content: chunk.content };
           }
 
-          // 工具调用（累积方式）
           if (chunk.toolCalls && chunk.toolCalls.length > 0) {
             lastToolCalls = chunk.toolCalls;
           }
 
-          // 使用量统计
           if (chunk.usage) {
             lastUsage = chunk.usage;
           }
 
-          // 完成原因
           if (chunk.finishReason) {
             lastFinishReason = chunk.finishReason;
           }
@@ -203,43 +198,44 @@ export class Session {
         if (lastToolCalls && lastToolCalls.length > 0) {
           yield { type: "tool_calls", calls: lastToolCalls };
 
-          // 逐个执行工具调用
-          const toolCtx: ToolContext = {
-            cwd: this.#options.cwd,
-            signal: this.#abortController.signal,
-          };
+          // 风暴检测：检查上一个回合是否同一工具同一错误重复
+          const stormBroken = this.#checkStormBreak(lastToolCalls);
+          if (stormBroken) {
+            const stormMsg = "⚠️ 同一工具重复出错，已强制切换策略";
+            yield { type: "text_delta", content: `\n${stormMsg}\n` };
+            this.#messages.push({
+              role: "tool",
+              content: stormMsg,
+              toolCallId: "storm_break",
+              name: "system",
+            });
+            // 重置风暴计数
+            this.#stormRecords = [];
+            toolRounds++;
+            continue;
+          }
 
-          for (const tc of lastToolCalls) {
-            // 解析工具参数
-            let toolArgs: unknown;
-            try {
-              toolArgs = tc.arguments ? JSON.parse(tc.arguments) : {};
-            } catch {
-              toolArgs = {};
+          // 执行工具调用批次
+          const results = await this.#executeBatch(lastToolCalls);
+          this.#stormRecords = results.records;
+
+          for (const item of results.items) {
+            yield { type: "tool_result", name: item.name, result: item.result };
+
+            // 构建 tool 消息内容
+            let toolContent = item.result.data;
+            if (item.result.diff && item.result.diff.patch) {
+              toolContent += `\n\n${item.result.diff.patch}`;
             }
 
-            // 通过注册表执行工具
-            const result = await this.#toolRegistry.execute(tc.name, toolArgs, toolCtx);
-
-            // 发出工具结果事件
-            yield { type: "tool_result", name: tc.name, result };
-
-            // 构建 tool 消息内容：基本信息 + diff patch（如果有）
-            let toolContent = result.data;
-            if (result.diff && result.diff.patch) {
-              toolContent += `\n\n${result.diff.patch}`;
-            }
-
-            // 追加工具结果消息
             this.#messages.push({
               role: "tool",
               content: toolContent,
-              toolCallId: tc.id,
-              name: tc.name,
+              toolCallId: item.callId,
+              name: item.name,
             });
           }
 
-          // 继续循环，让模型基于工具结果生成回答
           toolRounds++;
           continue;
         }
@@ -248,7 +244,6 @@ export class Session {
         break;
       }
     } catch (err: unknown) {
-      // 如果是取消信号，正常退出
       if (err instanceof DOMException && err.name === "AbortError") {
         return;
       }
@@ -263,9 +258,161 @@ export class Session {
       return;
     }
 
-    // 本轮完成
     const elapsed = Date.now() - startTime;
     yield { type: "done", elapsed };
+  }
+
+  // -------------------------------------------------------------------------
+  // 工具执行 — 批量、并行/串行、Gate、风暴检测
+  // -------------------------------------------------------------------------
+
+  /**
+   * 执行一批工具调用。
+   *
+   * 并行策略：
+   * - 如果这批工具全部是 ReadOnly 的，并行执行（最多 8 并发）
+   * - 否则按顺序串行执行，保证写/读顺序
+   */
+  async #executeBatch(calls: ProviderToolCall[]): Promise<{ items: Array<{ name: string; callId: string; result: ToolResult }>; records: ToolCallRecord[] }> {
+    const toolCtx: ToolContext = {
+      cwd: this.#options.cwd,
+      signal: this.#abortController.signal,
+    };
+
+    // 判断是否能并行：全部 ReadOnly
+    const allReadOnly = calls.every((tc) => {
+      const tool = this.#toolRegistry.get(tc.name);
+      return tool?.readOnly === true;
+    });
+
+    if (allReadOnly && calls.length > 1) {
+      // 并行执行 ReadOnly 工具
+      const MAX_PARALLEL = 8;
+      const items: Array<{ name: string; callId: string; result: ToolResult }> = [];
+      const records: ToolCallRecord[] = [];
+
+      // 分批并行，每批最多 MAX_PARALLEL 个
+      for (let i = 0; i < calls.length; i += MAX_PARALLEL) {
+        const batch = calls.slice(i, i + MAX_PARALLEL);
+        const promises = batch.map((tc) => this.#executeOne(tc, toolCtx));
+        const batchResults = await Promise.all(promises);
+        for (const r of batchResults) {
+          items.push(r.item);
+          records.push(r.record);
+        }
+      }
+
+      return { items, records };
+    }
+
+    // 串行执行
+    const items: Array<{ name: string; callId: string; result: ToolResult }> = [];
+    const records: ToolCallRecord[] = [];
+    for (const tc of calls) {
+      const r = await this.#executeOne(tc, toolCtx);
+      items.push(r.item);
+      records.push(r.record);
+    }
+
+    return { items, records };
+  }
+
+  /**
+   * 执行单个工具调用，包含 Gate 检查和预览。
+   */
+  async #executeOne(
+    tc: ProviderToolCall,
+    ctx: ToolContext,
+  ): Promise<{ item: { name: string; callId: string; result: ToolResult }; record: ToolCallRecord }> {
+    const toolName = tc.name;
+    const timestamp = Date.now();
+
+    // 1. 查找工具
+    const tool = this.#toolRegistry.get(toolName);
+    if (!tool) {
+      const errMsg = `工具 "${toolName}" 不存在或已被禁用`;
+      return {
+        item: { name: toolName, callId: tc.id, result: { success: false, data: errMsg, error: "TOOL_NOT_FOUND" } },
+        record: { name: toolName, success: false, error: "TOOL_NOT_FOUND", timestamp },
+      };
+    }
+
+    // 2. 解析参数
+    let toolArgs: unknown;
+    try {
+      toolArgs = tc.arguments ? JSON.parse(tc.arguments) : {};
+    } catch {
+      toolArgs = {};
+    }
+
+    // 3. Gate 检查（权限门）
+    const gateResult = await this.#options.gate.check(toolName, toolArgs);
+    if (!gateResult) {
+      const errMsg = `工具 "${toolName}" 被权限门拒绝`;
+      return {
+        item: { name: toolName, callId: tc.id, result: { success: false, data: errMsg, error: "GATE_DENIED" } },
+        record: { name: toolName, success: false, error: "GATE_DENIED", timestamp },
+      };
+    }
+
+    // 4. Previewer 预览（仅写工具，不触盘）
+    if (!tool.readOnly) {
+      const maybePreviewer = tool as unknown as { preview?: Previewer["preview"] };
+      if (typeof maybePreviewer.preview === "function") {
+        try {
+          await maybePreviewer.preview(toolArgs, ctx);
+        } catch {
+          // 预览失败不影响执行
+        }
+      }
+    }
+
+    // 5. 执行工具
+    try {
+      const result = await tool.execute(toolArgs, ctx);
+      return {
+        item: { name: toolName, callId: tc.id, result },
+        record: {
+          name: toolName,
+          success: result.success,
+          error: result.error,
+          timestamp,
+        },
+      };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      const errorResult = { success: false, data: `工具 "${toolName}" 执行异常：${message}`, error: "EXECUTION_ERROR" };
+      return {
+        item: { name: toolName, callId: tc.id, result: errorResult },
+        record: { name: toolName, success: false, error: "EXECUTION_ERROR", timestamp },
+      };
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // 风暴检测 — 同一工具同一错误连续 3 次 → 强制换策略
+  // -------------------------------------------------------------------------
+
+  /**
+   * 连续 3 次同一工具同一错误 → 触发风暴中断。
+   */
+  #checkStormBreak(currentCalls: ProviderToolCall[]): boolean {
+    if (this.#stormRecords.length < 3) return false;
+
+    // 检查当前调用中是否有工具名与最近 3 次错误记录匹配
+    const recentErrors = this.#stormRecords.slice(-3);
+    if (recentErrors.length < 3) return false;
+
+    // 检查最近 3 次是否同一工具同一错误
+    const first = recentErrors[0] as ToolCallRecord;
+    const allSame = recentErrors.every(
+      (r) => r.name === first.name && r.error === first.error && !r.success,
+    );
+
+    if (!allSame) return false;
+
+    // 检查当前调用是否还包含这个工具
+    return currentCalls.some((tc) => tc.name === first.name);
   }
 
   // -------------------------------------------------------------------------
@@ -281,6 +428,7 @@ export class Session {
   reset(): void {
     this.#messages.length = 0;
     this.#costTracker.resetSession();
+    this.#stormRecords = [];
   }
 
   // -------------------------------------------------------------------------

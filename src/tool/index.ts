@@ -3,7 +3,17 @@
 // ---------------------------------------------------------------------------
 
 // 核心类型
-export type { JSONSchema, ToolContext, ToolResult, FileDiff, Tool } from "./types.js";
+export type {
+  JSONSchema,
+  ToolContext,
+  ToolResult,
+  FileDiff,
+  Tool,
+  Previewer,
+  Gate,
+  ToolCallRecord,
+} from "./types.js";
+export { AlwaysAllowGate } from "./types.js";
 
 // 注册表
 export { ToolRegistry } from "./registry.js";
@@ -20,13 +30,15 @@ export {
 } from "./sandbox.js";
 
 // Diff 计算
-export { computeFileDiff } from "./diff.js";
+export { computeFileDiff, applyChange } from "./diff.js";
 
 // 内置工具
 export { builtinTools, getBuiltinToolMap } from "./builtins/index.js";
 export { readFileTool } from "./builtins/read-file.js";
 export { writeFileTool } from "./builtins/write-file.js";
 export { editFileTool } from "./builtins/edit-file.js";
+export { multiEditTool } from "./builtins/multi-edit.js";
+export { deleteRangeTool } from "./builtins/delete-range.js";
 export { bashTool } from "./builtins/bash.js";
 export { globTool } from "./builtins/glob.js";
 export { grepTool } from "./builtins/grep.js";
