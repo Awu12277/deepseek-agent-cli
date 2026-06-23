@@ -2,11 +2,12 @@
 // write_file 工具 — 创建或覆盖文件
 // ---------------------------------------------------------------------------
 
-import { writeFile, mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname, relative, basename } from "node:path";
 import type { Tool, ToolContext, ToolResult, JSONSchema } from "../types.js";
-import { resolvePath } from "../sandbox.js";
+import { resolvePath, confine } from "../sandbox.js";
 import { computeFileDiff } from "../diff.js";
+import { writeFileWithEol } from "../eol.js";
 
 /** write_file 工具的参数格式 */
 interface WriteFileArgs {
@@ -59,6 +60,14 @@ export const writeFileTool: Tool = {
     const filePath = resolvePath(params.path, ctx.cwd);
 
     try {
+      // 写入范围安全检查：确保目标在允许根目录内
+      if (ctx.writeRoots && ctx.writeRoots.length > 0) {
+        const conf = await confine(ctx.writeRoots, filePath);
+        if (!conf.ok) {
+          return { success: false, data: conf.error, error: "OUTSIDE_WRITE_ROOTS" };
+        }
+      }
+
       // 写入前快照旧内容（文件可能不存在）
       let oldContent = "";
       let existedBefore = false;
@@ -73,7 +82,8 @@ export const writeFileTool: Tool = {
       await mkdir(dirname(filePath), { recursive: true });
 
       const content = String(params.content);
-      await writeFile(filePath, content, "utf-8");
+      // 按原文件 EOL 风格落盘，避免 CRLF/LF 翻转造成噪声 diff
+      await writeFileWithEol(filePath, oldContent, content);
 
       // 计算文件变更 diff
       const diff = computeFileDiff(oldContent, content, filePath);

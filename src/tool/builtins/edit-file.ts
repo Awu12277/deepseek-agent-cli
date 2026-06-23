@@ -2,11 +2,12 @@
 // edit_file 工具 — 精确字符串替换编辑文件
 // ---------------------------------------------------------------------------
 
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import type { Tool, ToolContext, ToolResult, JSONSchema } from "../types.js";
-import { resolvePath } from "../sandbox.js";
+import { resolvePath, confine } from "../sandbox.js";
 import { computeFileDiff } from "../diff.js";
+import { writeFileWithEol } from "../eol.js";
 
 /** edit_file 工具的参数格式 */
 interface EditFileArgs {
@@ -69,6 +70,14 @@ export const editFileTool: Tool = {
 
     const filePath = resolvePath(params.path, ctx.cwd);
 
+    // 写入范围安全检查：写之前先拦，避免在只读路径上浪费时间
+    if (ctx.writeRoots && ctx.writeRoots.length > 0) {
+      const conf = await confine(ctx.writeRoots, filePath);
+      if (!conf.ok) {
+        return { success: false, data: conf.error, error: "OUTSIDE_WRITE_ROOTS" };
+      }
+    }
+
     try {
       const content = await readFile(filePath, "utf-8");
 
@@ -94,7 +103,8 @@ export const editFileTool: Tool = {
 
       // 执行替换
       const newContent = content.replace(params.old_text, params.new_text);
-      await writeFile(filePath, newContent, "utf-8");
+      // 按原文件 EOL 风格落盘，避免 CRLF/LF 翻转
+      await writeFileWithEol(filePath, content, newContent);
 
       // 计算文件变更 diff
       const diff = computeFileDiff(content, newContent, filePath);

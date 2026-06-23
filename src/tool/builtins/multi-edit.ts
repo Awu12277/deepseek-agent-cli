@@ -7,11 +7,12 @@
 // - 所有步骤在内存中应用，要么全部成功（一次写入），要么全部失败
 // ---------------------------------------------------------------------------
 
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import type { Tool, ToolContext, ToolResult, JSONSchema } from "../types.js";
-import { resolvePath } from "../sandbox.js";
+import { resolvePath, confine } from "../sandbox.js";
 import { computeFileDiff } from "../diff.js";
+import { writeFileWithEol } from "../eol.js";
 
 /** 单个编辑步骤 */
 interface EditStep {
@@ -85,6 +86,14 @@ export const multiEditTool: Tool = {
 
     const filePath = resolvePath(params.path, ctx.cwd);
 
+    // 写入范围安全检查
+    if (ctx.writeRoots && ctx.writeRoots.length > 0) {
+      const conf = await confine(ctx.writeRoots, filePath);
+      if (!conf.ok) {
+        return { success: false, data: conf.error, error: "OUTSIDE_WRITE_ROOTS" };
+      }
+    }
+
     try {
       const originalContent = await readFile(filePath, "utf-8");
       let currentContent = originalContent;
@@ -141,8 +150,8 @@ export const multiEditTool: Tool = {
         }
       }
 
-      // 全部步骤成功 → 一次性写入磁盘
-      await writeFile(filePath, currentContent, "utf-8");
+      // 全部步骤成功 → 一次性写入磁盘（保留原文件 EOL）
+      await writeFileWithEol(filePath, originalContent, currentContent);
 
       // 计算总体 diff
       const diff = computeFileDiff(originalContent, currentContent, filePath);

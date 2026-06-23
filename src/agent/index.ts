@@ -275,6 +275,7 @@ export class Session {
     const toolCtx: ToolContext = {
       cwd: this.#options.cwd,
       signal: this.#abortController.signal,
+      writeRoots: this.#options.writeRoots,
     };
 
     // 判断是否能并行：全部 ReadOnly

@@ -5,11 +5,12 @@
 // 要求每个锚点在文件中恰好出现一次，避免模糊删除。
 // ---------------------------------------------------------------------------
 
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import type { Tool, ToolContext, ToolResult, JSONSchema } from "../types.js";
-import { resolvePath } from "../sandbox.js";
+import { resolvePath, confine } from "../sandbox.js";
 import { computeFileDiff } from "../diff.js";
+import { writeFileWithEol } from "../eol.js";
 
 /** delete_range 工具的参数格式 */
 interface DeleteRangeArgs {
@@ -103,6 +104,14 @@ export const deleteRangeTool: Tool = {
     const filePath = resolvePath(params.path, ctx.cwd);
     const inclusive = params.inclusive ?? false;
 
+    // 写入范围安全检查
+    if (ctx.writeRoots && ctx.writeRoots.length > 0) {
+      const conf = await confine(ctx.writeRoots, filePath);
+      if (!conf.ok) {
+        return { success: false, data: conf.error, error: "OUTSIDE_WRITE_ROOTS" };
+      }
+    }
+
     try {
       const content = await readFile(filePath, "utf-8");
       const lines = content.split("\n");
@@ -142,21 +151,13 @@ export const deleteRangeTool: Tool = {
         };
       }
 
-      // 执行删除
+      // 执行删除（用与原文件一致的 EOL 拼接，交给 writeFileWithEol 统一处理）
       const newLines = [...lines.slice(0, rangeStart), ...lines.slice(rangeEnd + 1)];
       const newContent = newLines.join("\n");
 
-      // 检测行尾风格并保留
-      let writeContent = newContent;
-      if (content.endsWith("\n") && !newContent.endsWith("\n")) {
-        writeContent = newContent + "\n";
-      } else if (content.endsWith("\r\n") && !newContent.endsWith("\r\n") && !newContent.endsWith("\n")) {
-        writeContent = newContent + "\r\n";
-      }
+      await writeFileWithEol(filePath, content, newContent);
 
-      await writeFile(filePath, writeContent, "utf-8");
-
-      const diff = computeFileDiff(content, writeContent, filePath);
+      const diff = computeFileDiff(content, newContent, filePath);
       diff.existedBefore = true;
 
       const deletedLines = rangeEnd - rangeStart + 1;

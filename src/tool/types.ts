@@ -18,6 +18,12 @@ export interface ToolContext {
   signal?: AbortSignal;
   /** 命令执行超时（毫秒），默认 30000 */
   timeout?: number;
+  /**
+   * 写操作的允许根目录列表（绝对路径）。
+   * 非空时，写工具必须确保目标路径在其中一个根下；
+   * 为空数组表示不限制（保持兼容）。
+   */
+  writeRoots?: string[];
 }
 
 /** 文件变更的 diff 信息 */

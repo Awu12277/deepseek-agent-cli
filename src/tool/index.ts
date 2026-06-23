@@ -22,6 +22,7 @@ export type { ToolRegistryOptions } from "./registry.js";
 // 沙箱工具
 export {
   resolvePath,
+  confine,
   truncateOutput,
   getDefaultTimeout,
   getDefaultMaxFileSize,
@@ -31,6 +32,9 @@ export {
 
 // Diff 计算
 export { computeFileDiff, applyChange } from "./diff.js";
+
+// EOL 风格检测与保留（写工具统一使用）
+export { detectEol, hasTrailingNewline, normalizeEol, writeFileWithEol } from "./eol.js";
 
 // 内置工具
 export { builtinTools, getBuiltinToolMap } from "./builtins/index.js";
