@@ -233,6 +233,8 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
   const [currentTime, setCurrentTime] = useState<string>(() =>
     new Date().toLocaleTimeString("zh-CN", { hour12: false }),
   );
+  // h 键一键置灰：所有高亮色替换为 dimColor
+  const [dimMode, setDimMode] = useState(false);
 
   const { doubleCtrlC, handleCtrlC } = useDoubleCtrlC(onExit);
 
@@ -348,9 +350,11 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
         } else if (input === "r") {
           setCountdown(5);
           loadData();
+        } else if (input === "h") {
+          setDimMode((v) => !v);
         }
       },
-      [stocks, selectedIndex, detailView, onExit, onBackToChat, loadData, handleCtrlC],
+      [stocks, selectedIndex, detailView, onExit, onBackToChat, loadData, handleCtrlC, setDimMode],
     ),
   );
 
@@ -367,11 +371,13 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
   }
 
   // ---------- 列表视图 ----------
+  // 置灰模式下，所有高亮色统一替换为 dimColor
+  const cp = (c: string) => dimMode ? { dimColor: true } : { color: c };
   return (
     <Box flexDirection="column">
       {/* 顶部状态栏 */}
       <Box marginBottom={1} justifyContent="space-between">
-        <Text bold color="#00ffff">
+        <Text bold {...cp("#00ffff")}>
           {"  📈 自选股监控"}
         </Text>
         <Text dimColor>
@@ -427,7 +433,7 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
             <Box key={stock.code}>
               <Box width={3} flexShrink={0}>
                 {isSelected ? (
-                  <Text bold color="#00ffff">
+                  <Text bold {...cp("#00ffff")}>
                     {"▸ "}
                   </Text>
                 ) : (
@@ -435,42 +441,42 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
                 )}
               </Box>
               <Box width={9}>
-                <Text bold color={isSelected ? "#00ffff" : "#ffffff"}>
+                <Text bold {...cp(isSelected ? "#00ffff" : "#ffffff")}>
                   {stock.code}
                 </Text>
               </Box>
               <Box width={16}>
-                <Text color={isSelected ? "#ffffff" : "#cccccc"}>
+                <Text {...cp(isSelected ? "#ffffff" : "#cccccc")}>
                   {stock.name}
                 </Text>
               </Box>
               <Box width={12}>
-                <Text bold color={color}>
+                <Text bold {...cp(color)}>
                   {formatPrice(stock.price)}
                 </Text>
               </Box>
               <Box width={12}>
-                <Text color={color}>
+                <Text {...cp(color)}>
                   {isUp ? "+" : ""}{stock.changePercent.toFixed(2)}%
                 </Text>
               </Box>
               <Box width={12}>
-                <Text color={color}>
+                <Text {...cp(color)}>
                   {isUp ? "+" : ""}{stock.changeAmount.toFixed(3)}
                 </Text>
               </Box>
               <Box width={12}>
-                <Text color="#cccccc">
+                <Text {...cp("#cccccc")}>
                   {formatPrice(stock.high)}
                 </Text>
               </Box>
               <Box width={12}>
-                <Text color="#888888">
+                <Text {...cp("#888888")}>
                   {formatPrice(stock.low)}
                 </Text>
               </Box>
               <Box>
-                <Text color="#888888">
+                <Text {...cp("#888888")}>
                   {formatAmount(stock.amount)}
                 </Text>
               </Box>
@@ -482,12 +488,12 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
       {/* 底栏 */}
       <Box marginTop={1}>
         <Text dimColor>
-          {`  ↑/↓ 选择  Enter 详情  r 手动刷新  q 返回`}
+          {`  ↑/↓ 选择  Enter 详情  r 手动刷新  h 置灰/恢复  q 返回`}
         </Text>
       </Box>
       <Box>
         <Text dimColor>{`  最后更新: ${lastUpdate}  编辑自选股: `}</Text>
-        <Text color="#c792ea">
+        <Text {...cp("#c792ea")}>
           {osc8Link(toFileUrl(SETTINGS_PATH), SETTINGS_PATH)}
         </Text>
       </Box>
@@ -495,7 +501,7 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
       {/* 双击 Ctrl+C 退出提示 */}
       {doubleCtrlC && (
         <Box marginTop={1}>
-          <Text color="#ff1493" bold>
+          <Text bold {...cp("#ff1493")}>
             {"  ⚠ 再按一次 Ctrl+C 退出 dskcode"}
           </Text>
         </Box>
