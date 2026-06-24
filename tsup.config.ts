@@ -9,4 +9,10 @@ export default defineConfig({
   sourcemap: true,
   minify: process.env.NODE_ENV === "production",
   shims: true,
+  esbuildOptions(opts) {
+    opts.loader = {
+      ...opts.loader,
+      ".hbs": "text",
+    };
+  },
 });

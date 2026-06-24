@@ -9,7 +9,7 @@
 // 2. 回溯路径：从 (N,M) 回溯到 (0,0)，生成 DiffLine 序列
 // ---------------------------------------------------------------------------
 
-interface  FileDiff {
+interface Diff {
   /** 文件路径（绝对路径） */
   filePath: string;
   /** unified diff 文本 */
@@ -429,7 +429,7 @@ export function computeFileDiff(
   oldContent: string,
   newContent: string,
   filePath: string,
-): FileDiff {
+): Diff {
   if (oldContent === newContent) {
     return {
       filePath,

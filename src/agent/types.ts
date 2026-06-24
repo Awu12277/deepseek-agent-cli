@@ -24,16 +24,19 @@ export type SessionPhase =
   | "tool_calling"
   | "error";
 
+/** 单个工具的描述（用于注入 system prompt） */
+export interface ToolDescription {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
 /** 构建系统提示词的选项 */
 export interface SystemPromptOptions {
   /** 当前使用的模型标识 */
   model: string;
   /** 可用工具定义列表（用于注入到 system prompt） */
-  tools?: Array<{
-    name: string;
-    description: string;
-    parameters: Record<string, unknown>;
-  }>;
+  tools?: ToolDescription[];
   /** 项目上下文（AGENTS.md 内容），可选 */
   projectContext?: string;
   /** 当前工作目录 */

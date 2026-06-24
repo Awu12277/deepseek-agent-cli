@@ -5,7 +5,13 @@
     "type": "git",
     "url": "git+https://github.com/Awu12277/deepseek-agent-cli/tree/main"
   },
-  "keywords": ["cli","ink","commander","deepseek","asciichart"],
+  "keywords": [
+    "cli",
+    "ink",
+    "commander",
+    "deepseek",
+    "asciichart"
+  ],
   "description": "A DeepSeek-native AI coding agent for your terminal",
   "type": "module",
   "bin": {
@@ -39,6 +45,7 @@
     "asciichart": "^1.5.25",
     "chalk": "^5.6.2",
     "commander": "^13.1.0",
+    "handlebars": "^4.7.9",
     "ink": "^7.1.0",
     "ink-spinner": "^5.0.0",
     "ink-text-input": "^6.0.0",
