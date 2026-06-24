@@ -7,7 +7,6 @@ import TextInput from "ink-text-input";
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useDoubleCtrlC } from "./useDoubleCtrlC.js";
 import { CYBER_PALETTE, LOGO_LINES } from "./DskcodeSplash.js";
-import { Spinner } from "./Spinner.js";
 import InkSpinner from "ink-spinner";
 import { AssistantMessage } from "./AssistantMessage.js";
 import { DiffPreview } from "./DiffPreview.js";
@@ -31,6 +30,14 @@ import {
 } from "../utils/gradient.js";
 import { SUPPORTED_MODELS, calculateCost } from "../provider/models.js";
 import { saveModelConfig } from "../config/loader.js";
+
+/** 流式阶段配置：图标、标签、颜色 */
+const PHASE_CONFIG = {
+  thinking: { icon: "🧠", label: "思考中", color: "#ff9800" },
+  generating: { icon: "✨", label: "生成中", color: "#00ff41" },
+  calling_tools: { icon: "🛠", label: "调用工具", color: "#f59e0b" },
+  executing_tools: { icon: "⚡", label: "执行工具", color: "#00ffff" },
+} as const;
 
 /** 命令处理结果的类型，支持文本响应和动作跳转 */
 export type CommandAction =
@@ -167,6 +174,7 @@ export function ChatSession({
 
   // 流式状态
   const [isStreaming, setIsStreaming] = useState(false);
+  const [streamingPhase, setStreamingPhase] = useState<"thinking" | "generating" | "calling_tools" | "executing_tools" | null>(null);
   const [streamingPlaceholder, setStreamingPlaceholder] = useState("");
   const [idlePlaceholder, setIdlePlaceholder] = useState(() => pickRandom(IDLE_PLACEHOLDERS));
   const [gradientColors, setGradientColors] = useState<string[]>([]);
@@ -751,6 +759,7 @@ export function ChatSession({
     setInput("");
     // 重置流式状态
     setIsStreaming(true);
+    setStreamingPhase("thinking");
     setStreamingPlaceholder(pickRandom(STREAMING_PLACEHOLDERS));
     setCurrentContent("");
     setCurrentToolCalls([]);
@@ -784,6 +793,7 @@ export function ChatSession({
 
         switch (event.type) {
           case "text_delta":
+            setStreamingPhase("generating");
             setCurrentContent((prev) => {
               const next = prev + event.content;
               currentContentRef.current = next;
@@ -792,6 +802,7 @@ export function ChatSession({
             break;
 
           case "tool_calls":
+            setStreamingPhase("calling_tools");
             setCurrentToolCalls((prev) => {
               const next = [...prev, ...event.calls];
               currentToolCallsRef.current = next;
@@ -802,6 +813,9 @@ export function ChatSession({
           case "tool_result":
             // 工具执行完成 — 重置流式状态，准备接收模型的新一轮回复
             // 这是因为 Agent 循环会在工具执行后再次调用模型
+            setStreamingPhase("executing_tools");
+            // 延迟重置为思考中，表示模型正在处理工具结果进行下一轮推理
+            setTimeout(() => setStreamingPhase("thinking"), 300);
             setCurrentContent("");
             currentContentRef.current = "";
             setCurrentToolCalls([]);
@@ -852,6 +866,7 @@ export function ChatSession({
       streamErrorRef.current = msg;
     } finally {
       setIsStreaming(false);
+      setStreamingPhase(null);
       setIdlePlaceholder(pickRandom(IDLE_PLACEHOLDERS));
       abortRef.current = null;
 
@@ -1030,13 +1045,6 @@ export function ChatSession({
           />
         )}
 
-        {/* 思考中 Spinner */}
-        {isStreaming && !currentContent && currentToolCalls.length === 0 && (
-          <Box marginTop={1} marginLeft={4}>
-            <Spinner type="dots" label="思考中..." />
-          </Box>
-        )}
-
         {/* 错误信息（流式结束后显示） */}
         {!isStreaming && streamError && (
           <Box marginTop={1} marginLeft={3}>
@@ -1077,11 +1085,20 @@ export function ChatSession({
         </Box>
       ) : (
         <>
+          {/* 流式状态指示器 — 上框上方居中显示 */}
+          {(hasConversationStarted || sessionMode === "plan") && isStreaming && streamingPhase ? (
+            <Box marginTop={1} justifyContent="center">
+              <Text bold color={PHASE_CONFIG[streamingPhase].color}>
+                {PHASE_CONFIG[streamingPhase].icon} {PHASE_CONFIG[streamingPhase].label}{" "}
+                <InkSpinner type="dots" />
+              </Text>
+            </Box>
+          ) : null}
           <Box marginTop={1}>
             {hasConversationStarted || sessionMode === "plan" ? (
               <Text color={sessionMode === "plan" ? "#ff69b4" : "#00ffff"} dimColor={sessionMode !== "plan"}>
                 <Text>{sessionMode === "plan"
-                  ? "─".repeat(Math.max(dividerWidth - 46, 1))
+                  ? "─".repeat(Math.max(dividerWidth - 48, 1))
                   : "─".repeat(Math.max(dividerWidth - 35, 10))}</Text>
                 {balance !== null && (
                   <Text color="yellow">{" 💰 余额 ¥"}{balance.toFixed(2)}</Text>
