@@ -112,8 +112,8 @@ describe("buildSystemPrompt", () => {
       cwd: "/test",
     });
     expect(prompt).toContain("回答格式");
-    expect(prompt).toContain("天蓝色");
     expect(prompt).toContain("反引号");
+    expect(prompt).toContain("加粗");
   });
 
   it("包含工作流程说明", () => {
