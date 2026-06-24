@@ -13,8 +13,8 @@ import type {
 import { CostTracker } from "../provider/index.js";
 import type { ToolContext, AnyAgentTool } from "../tool/index.js";
 import { isReadOnly } from "../tool/types.js";
-import type { AgentEvent, SystemPromptOptions } from "./types.js";
-import { buildSystemPrompt } from "./system-prompt.js";
+import type { AgentEvent, SessionMode, SystemPromptOptions } from "./types.js";
+import { buildSystemPrompt, buildPlanSystemPrompt } from "./system-prompt.js";
 import { trimMessages, buildApiMessages } from "./message-builder.js";
 import { ToolRegistry } from "../tool/registry.js";
 import type { Gate, ToolCallRecord, ToolResult } from "../tool/types.js";
@@ -54,6 +54,9 @@ export class Session {
 
   // 风暴检测：记录每轮的工具调用错误
   #stormRecords: ToolCallRecord[] = [];
+
+  /** 当前会话模式：code（代码模式）或 plan（计划模式） */
+  #mode: SessionMode = "code";
 
   constructor(
     provider: Provider,
@@ -104,6 +107,17 @@ export class Session {
   /** 获取工具注册表（只读视图） */
   get toolRegistry(): ToolRegistry {
     return this.#toolRegistry;
+  }
+
+  /** 获取当前会话模式 */
+  get mode(): SessionMode {
+    return this.#mode;
+  }
+
+  /** 切换会话模式，返回新模式 */
+  setMode(mode: SessionMode): SessionMode {
+    this.#mode = mode;
+    return this.#mode;
   }
 
   // -------------------------------------------------------------------------
@@ -456,12 +470,22 @@ export class Session {
       cwd: this.#options.cwd,
     };
 
+    if (this.#mode === "plan") {
+      return buildPlanSystemPrompt(opts);
+    }
     return buildSystemPrompt(opts);
   }
 
-  /** 将注册的工具转为 ToolDefinition 格式（预留给 function calling） */
+  /**
+   * 将注册的工具转为 ToolDefinition 格式（预留给 function calling）。
+   * 计划模式下只返回读工具，禁止非读工具暴露给 LLM。
+   */
   #buildToolDefinitions(): ToolDefinition[] {
-    return this.#toolRegistry.list().map((t) => ({
+    const tools = this.#mode === "plan"
+      ? this.#toolRegistry.listReadTools()
+      : this.#toolRegistry.list();
+
+    return tools.map((t) => ({
       type: "function" as const,
       function: {
         name: t.name,

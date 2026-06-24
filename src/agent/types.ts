@@ -16,6 +16,9 @@ export type AgentEvent =
 /** Agent 循环中的消息角色，包含 system 用于系统提示词 */
 export type MessageRole = "system" | "user" | "assistant" | "tool";
 
+/** 会话模式：代码模式 / 计划模式 */
+export type SessionMode = "code" | "plan";
+
 /** 会话状态：空闲 / 思考中 / 流式输出中 / 工具调用中 / 出错 */
 export type SessionPhase =
   | "idle"

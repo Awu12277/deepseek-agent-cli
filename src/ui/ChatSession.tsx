@@ -19,7 +19,7 @@ import type { ModelId, ProviderToolCall, UsageInfo } from "../provider/index.js"
 import type { FileDiff } from "../tool/types.js";
 import { createProvider } from "../provider/index.js";
 import { Session } from "../agent/index.js";
-import type { AgentEvent } from "../agent/types.js";
+import type { AgentEvent, SessionMode } from "../agent/types.js";
 import { builtinTools } from "../tool/index.js";
 import { ToolRegistry } from "../tool/registry.js";
 import {
@@ -78,6 +78,8 @@ registerCommand("/thinking", { desc: "切换深度思考模式", handler: () => 
 registerCommand("/effort", { desc: "切换推理等级 High/Max", handler: () => ({ kind: "text", content: "请直接输入 /effort 切换" }) });
 registerCommand("/game", { desc: "启动游戏", handler: () => ({ kind: "navigate", target: "game" }) });
 registerCommand("/stock", { desc: "查看股票行情", handler: () => ({ kind: "navigate", target: "stock" }) });
+registerCommand("/plan", { desc: "切换为计划模式（Shift+Tab）", handler: () => ({ kind: "text", content: "输入 /plan 或按 Shift+Tab 切换为计划模式" }) });
+registerCommand("/code", { desc: "切换回代码模式（Shift+Tab）", handler: () => ({ kind: "text", content: "输入 /code 或按 Shift+Tab 切换回代码模式" }) });
 
 /** 流式输出时，输入框随机展示的占位符列表 */
 const STREAMING_PLACEHOLDERS = [
@@ -179,6 +181,9 @@ export function ChatSession({
   const [activeModel, setActiveModel] = useState<ModelId>(model as ModelId);
   const [streamingModel, setStreamingModel] = useState<string | undefined>(undefined);
   const [streamError, setStreamError] = useState<string | undefined>(undefined);
+
+  // 会话模式（code / plan）
+  const [sessionMode, setSessionMode] = useState<SessionMode>("code");
 
   // 高级设置
   const [thinkingEnabled, setThinkingEnabled] = useState(true);
@@ -386,12 +391,31 @@ export function ChatSession({
           return;
         }
 
+        // Shift+Tab 切换计划模式 / 代码模式
+        if (key.shift && key.tab) {
+          if (!isStreaming) {
+            const newMode: SessionMode = sessionMode === "plan" ? "code" : "plan";
+            setSessionMode(newMode);
+            sessionRef.current?.setMode(newMode);
+            setToolChoice(undefined);
+            sessionRef.current?.reset();
+            setDisplayMessages((prev) => [
+              ...prev,
+              { role: "assistant", content: newMode === "plan"
+                ? "📋 已切换为 **计划模式**（Shift+Tab）\n\n在此模式下，我只能读取和分析代码，不会执行任何修改。"
+                : "🛠 已切换为 **代码模式**（Shift+Tab）\n\n现在可以正常读取和修改代码了。",
+              },
+            ]);
+          }
+          return;
+        }
+
         // 渐变占位符显示时（TextInput 未渲染），将按键字符加入 input 触发切换
         if (!input && !isStreaming && _input) {
           setInput(_input);
         }
       },
-      [selectingModel, modelSelectIndex, modelOptions, activeModel, isStreaming, handleCtrlC, input, skills, skillSelectIndex, fileSelectIndex, getFilteredSkills, getFilteredFiles]
+      [selectingModel, modelSelectIndex, modelOptions, activeModel, isStreaming, handleCtrlC, input, skills, skillSelectIndex, fileSelectIndex, getFilteredSkills, getFilteredFiles, sessionMode, setSessionMode]
     ),
   );
 
@@ -587,6 +611,56 @@ export function ChatSession({
       }
 
 
+
+      // /plan 命令：切换为计划模式（只读分析，不能修改代码）
+      if (cmdLower === "/plan") {
+        if (sessionMode === "plan") {
+          setDisplayMessages((prev) => [
+            ...prev,
+            { role: "user", content: trimmed },
+            { role: "assistant", content: "已经在计划模式中。输入 /code 切回代码模式。" },
+          ]);
+        } else {
+          setSessionMode("plan");
+          sessionRef.current?.setMode("plan");
+          // 计划模式下自动启用工具调用，确保模型可以使用读工具
+          setToolChoice(undefined);
+          setDisplayMessages((prev) => [
+            ...prev,
+            { role: "user", content: trimmed },
+            { role: "assistant", content: "📋 已切换为 **计划模式**\n\n在此模式下，我只能读取和分析代码，不会执行任何修改。\n输入 /code 切回代码模式。" },
+          ]);
+          // 清空会话历史，防止旧模式下产生的工具调用消息干扰新模式
+          sessionRef.current?.reset();
+        }
+        setInput("");
+        return;
+      }
+
+      // /code 命令：切换回代码模式
+      if (cmdLower === "/code") {
+        if (sessionMode === "code") {
+          setDisplayMessages((prev) => [
+            ...prev,
+            { role: "user", content: trimmed },
+            { role: "assistant", content: "已经在代码模式中。输入 /plan 切回计划模式。" },
+          ]);
+        } else {
+          setSessionMode("code");
+          sessionRef.current?.setMode("code");
+          // 回到代码模式时重置工具调用策略，确保可以正常使用所有工具
+          setToolChoice(undefined);
+          setDisplayMessages((prev) => [
+            ...prev,
+            { role: "user", content: trimmed },
+            { role: "assistant", content: "🛠 已切换为 **代码模式**\n\n现在可以正常读取和修改代码了。\n输入 /plan 切换为计划模式（只读分析）。" },
+          ]);
+          // 清空会话历史，防止计划模式下产生的消息干扰代码模式
+          sessionRef.current?.reset();
+        }
+        setInput("");
+        return;
+      }
 
       // /tools 命令：切换工具调用策略
       if (cmdLower === "/tools") {
@@ -805,7 +879,7 @@ export function ChatSession({
         ]);
       }
     }
-  }, [onLaunchGame, onLaunchStock, currentContent, currentToolCalls, skills, skillSelectIndex, getFilteredSkills, thinkingEnabled, thinkingEffort, responseFormat, toolChoice, activeModel]);
+  }, [onLaunchGame, onLaunchStock, currentContent, currentToolCalls, skills, skillSelectIndex, getFilteredSkills, thinkingEnabled, thinkingEffort, responseFormat, toolChoice, activeModel, sessionMode]);
 
   // 从 costTracker 更新今日消耗（每次流式结束后刷新）
   useEffect(() => {
@@ -842,6 +916,10 @@ export function ChatSession({
             <Text color="#00ffff">{"  🔧 模型 "}{SUPPORTED_MODELS[activeModel]?.displayName ?? activeModel}</Text>
             {thinkingEnabled && (
               <Text color="#ff9800">{"  🧠 深度思考 "}{thinkingEffort === "max" ? "Max" : "High"}</Text>
+            )}
+            {/* 模式指示器 */}
+            {sessionMode === "plan" && (
+              <Text color="#ff69b4" bold>{"  📋 计划模式"}</Text>
             )}
             {responseFormat === "json_object" && (
               <Text color="#4caf50">{"  📄 JSON"}</Text>
@@ -1000,9 +1078,11 @@ export function ChatSession({
       ) : (
         <>
           <Box marginTop={1}>
-            {hasConversationStarted && (balance !== null || sessionCost > 0 || isStreaming) ? (
-              <Text color="#00ffff" dimColor>
-                {"─".repeat(Math.max(dividerWidth - 35, 10))}
+            {hasConversationStarted || sessionMode === "plan" ? (
+              <Text color={sessionMode === "plan" ? "#ff69b4" : "#00ffff"} dimColor={sessionMode !== "plan"}>
+                <Text>{sessionMode === "plan"
+                  ? "─".repeat(Math.max(dividerWidth - 46, 1))
+                  : "─".repeat(Math.max(dividerWidth - 35, 10))}</Text>
                 {balance !== null && (
                   <Text color="yellow">{" 💰 余额 ¥"}{balance.toFixed(2)}</Text>
                 )}
@@ -1011,6 +1091,9 @@ export function ChatSession({
                 ) : sessionCost > 0 ? (
                   <Text color="cyan">{"  📊 本次 ¥"}{sessionCost.toFixed(4)}</Text>
                 ) : null}
+                {sessionMode === "plan" && (
+                  <Text color="#ff69b4" bold>{"  📋 计划模式"}</Text>
+                )}
               </Text>
             ) : (
               <Text color="#00ffff" dimColor>{"─".repeat(dividerWidth)}</Text>
