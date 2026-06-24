@@ -450,6 +450,7 @@ export class Session {
 
     const opts: SystemPromptOptions = {
       model: this.#provider.model(),
+      maxToolRounds: this.#options.maxToolRounds,
       tools: toolDescs.length > 0 ? toolDescs : undefined,
       projectContext: this.#options.projectContext ?? undefined,
       cwd: this.#options.cwd,

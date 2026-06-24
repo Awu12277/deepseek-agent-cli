@@ -49,6 +49,7 @@ export function buildSystemPrompt(opts: SystemPromptOptions): string {
 
   return compiledTemplate({
     model: opts.model,
+    maxToolRounds: opts.maxToolRounds,
     cwd: opts.cwd,
     date,
     time,

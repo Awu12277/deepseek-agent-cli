@@ -39,6 +39,8 @@ export interface SystemPromptOptions {
   tools?: ToolDescription[];
   /** 项目上下文（AGENTS.md 内容），可选 */
   projectContext?: string;
+  /** Agent 循环最大工具调用轮数 */
+  maxToolRounds: number;
   /** 当前工作目录 */
   cwd: string;
 }

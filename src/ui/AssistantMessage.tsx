@@ -7,6 +7,7 @@ import type { ProviderToolCall, UsageInfo } from "../provider/index.js";
 import { formatMoney, formatCallCostLine } from "../provider/cost-tracker.js";
 import { ToolCallBlock } from "./ToolCallBlock.js";
 import { formatUsageSummary } from "../agent/message-builder.js";
+import { HighlightedText } from "./HighlightedText.js";
 
 interface AssistantMessageProps {
   /** 助手回复的文本内容 */
@@ -65,9 +66,9 @@ export function AssistantMessage({
           <Text bold color="#ff00ff">{"🤖"}</Text>
         </Box>
         <Box flexGrow={1} flexDirection="column">
-          {/* 文本内容 */}
+          {/* 文本内容（带语法高亮） */}
           {content && (
-            <Text wrap="wrap">{content}</Text>
+            <HighlightedText>{content}</HighlightedText>
           )}
           {/* 流式输出时的光标 */}
           {isStreaming && !content && (

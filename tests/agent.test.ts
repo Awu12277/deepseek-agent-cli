@@ -36,6 +36,7 @@ describe("buildSystemPrompt", () => {
   it("包含角色定义和模型信息", () => {
     const prompt = buildSystemPrompt({
       model: "deepseek-v4-flash",
+      maxToolRounds: 15,
       cwd: "/home/user/project",
     });
     expect(prompt).toContain("dskcode");
@@ -46,6 +47,7 @@ describe("buildSystemPrompt", () => {
   it("包含时间上下文", () => {
     const prompt = buildSystemPrompt({
       model: "deepseek-v4-flash",
+      maxToolRounds: 15,
       cwd: "/test",
     });
     expect(prompt).toContain("当前日期");
@@ -55,6 +57,7 @@ describe("buildSystemPrompt", () => {
   it("包含工具描述（当 tools 非空时）", () => {
     const prompt = buildSystemPrompt({
       model: "deepseek-v4-flash",
+      maxToolRounds: 15,
       cwd: "/test",
       tools: [
         {
@@ -70,20 +73,22 @@ describe("buildSystemPrompt", () => {
     });
     expect(prompt).toContain("read_file");
     expect(prompt).toContain("读取文件内容");
-    expect(prompt).toContain("可用工具");
+    expect(prompt).toContain("当前可用的工具");
   });
 
   it("不包含工具描述（当 tools 为空时）", () => {
     const prompt = buildSystemPrompt({
       model: "deepseek-v4-flash",
+      maxToolRounds: 15,
       cwd: "/test",
     });
-    expect(prompt).not.toContain("可用工具");
+    expect(prompt).not.toContain("当前可用的工具");
   });
 
   it("包含项目上下文（当提供时）", () => {
     const prompt = buildSystemPrompt({
       model: "deepseek-v4-flash",
+      maxToolRounds: 15,
       cwd: "/test",
       projectContext: "这是一个 TypeScript CLI 项目",
     });
@@ -94,19 +99,31 @@ describe("buildSystemPrompt", () => {
   it("包含行为约束", () => {
     const prompt = buildSystemPrompt({
       model: "deepseek-v4-flash",
+      maxToolRounds: 15,
       cwd: "/test",
     });
     expect(prompt).toContain("行为约束");
   });
 
-  it("包含终端输出约束（extra-prompt）", () => {
+  it("包含回答格式约束", () => {
     const prompt = buildSystemPrompt({
       model: "deepseek-v4-flash",
+      maxToolRounds: 15,
       cwd: "/test",
     });
-    expect(prompt).toContain("终端输出约束");
-    expect(prompt).toContain("禁止使用的符号");
-    expect(prompt).toContain("推荐的组织方式");
+    expect(prompt).toContain("回答格式");
+    expect(prompt).toContain("天蓝色");
+    expect(prompt).toContain("反引号");
+  });
+
+  it("包含工作流程说明", () => {
+    const prompt = buildSystemPrompt({
+      model: "deepseek-v4-flash",
+      maxToolRounds: 15,
+      cwd: "/test",
+    });
+    expect(prompt).toContain("工作流程");
+    expect(prompt).toContain("15");
   });
 });
 
