@@ -4,10 +4,11 @@
 
 import { Box, Text, useInput, Static } from "ink";
 import TextInput from "ink-text-input";
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useDoubleCtrlC } from "./useDoubleCtrlC.js";
 import { CYBER_PALETTE, LOGO_LINES } from "./DskcodeSplash.js";
 import { Spinner } from "./Spinner.js";
+import InkSpinner from "ink-spinner";
 import { AssistantMessage } from "./AssistantMessage.js";
 import { DiffPreview } from "./DiffPreview.js";
 import { SkillSelector } from "./SkillSelector.js";
@@ -28,7 +29,7 @@ import {
   GRADIENT_ANIMATION,
   getGradientColors,
 } from "../utils/gradient.js";
-import { SUPPORTED_MODELS } from "../provider/models.js";
+import { SUPPORTED_MODELS, calculateCost } from "../provider/models.js";
 import { saveModelConfig } from "../config/loader.js";
 
 /** 命令处理结果的类型，支持文本响应和动作跳转 */
@@ -184,6 +185,18 @@ export function ChatSession({
   const [thinkingEffort, setThinkingEffort] = useState<"high" | "max">("high");
   const [responseFormat, setResponseFormat] = useState<"text" | "json_object">("text");
   const [toolChoice, setToolChoice] = useState<"auto" | "required" | "none" | undefined>(undefined);
+
+  // 本次会话累计费用（从已完成的助手消息中汇总）
+  const sessionCost = useMemo(() => {
+    return displayMessages.reduce((sum, msg) => {
+      if (msg.assistantDetail?.cost) {
+        return sum + msg.assistantDetail.cost;
+      }
+      return sum;
+    }, 0);
+  }, [displayMessages]);
+
+  const hasConversationStarted = displayMessages.length > 0;
 
   // 命令提示轮播索引
   const cmdTips = Array.from(getRegisteredCommands())
@@ -740,7 +753,12 @@ export function ChatSession({
             setStreamingModel(event.model);
             currentUsageRef.current = event.usage;
             currentModelRef.current = event.model;
-            // 使用量来自最后一个事件，费率已知后可同步计算
+            // 同步计算费用
+            {
+              const cost = calculateCost(event.usage, event.model as ModelId);
+              setCurrentCost(cost.totalCost);
+              currentCostRef.current = cost.totalCost;
+            }
             break;
 
           case "done":
@@ -796,90 +814,83 @@ export function ChatSession({
     }
   }, [isStreaming, externalCostTracker]);
 
-  // 从 usage 计算 cost（需要在 usage + model 都就绪后）
-  useEffect(() => {
-    if (currentUsage && streamingModel && !currentCost) {
-      import("../provider/models.js").then(({ calculateCost }) => {
-        const cost = calculateCost(currentUsage, streamingModel as ModelId);
-        setCurrentCost(cost.totalCost);
-        currentCostRef.current = cost.totalCost;
-      });
-    }
-  }, [currentUsage, streamingModel, currentCost]);
+
 
   return (
     <Box flexDirection="column" paddingLeft={1} paddingRight={1}>
-      {/* Logo + 状态栏 + 余额 — 三栏布局 */}
-      <Box flexDirection="row" marginBottom={1}>
-        {/* Logo */}
-        <Box flexDirection="column" marginRight={4}>
-          {LOGO_LINES.map((line, i) => {
-            const colorIndex = (i + offset) % CYBER_PALETTE.length;
-            return (
-              <Box key={i}>
-                <Text bold color={CYBER_PALETTE[colorIndex]}>
-                  {line}
+      {/* Logo + 状态栏 + 余额 — 三栏布局（仅对话未开始时显示） */}
+      {!hasConversationStarted && (
+        <Box flexDirection="row" marginBottom={1}>
+          {/* Logo */}
+          <Box flexDirection="column" marginRight={4}>
+            {LOGO_LINES.map((line, i) => {
+              const colorIndex = (i + offset) % CYBER_PALETTE.length;
+              return (
+                <Box key={i}>
+                  <Text bold color={CYBER_PALETTE[colorIndex]}>
+                    {line}
+                  </Text>
+                </Box>
+              );
+            })}
+          </Box>
+
+          {/* 状态信息 */}
+          <Box flexDirection="column" justifyContent="center">
+            <Text color="#00ff41">{"  ✔ "}已就绪 {skillCount} 个 Skill</Text>
+            <Text color="#00ffff">{"  ℹ "}已就绪 {toolCount} 个工具</Text>
+            <Text color="#00ffff">{"  🔧 模型 "}{SUPPORTED_MODELS[activeModel]?.displayName ?? activeModel}</Text>
+            {thinkingEnabled && (
+              <Text color="#ff9800">{"  🧠 深度思考 "}{thinkingEffort === "max" ? "Max" : "High"}</Text>
+            )}
+            {responseFormat === "json_object" && (
+              <Text color="#4caf50">{"  📄 JSON"}</Text>
+            )}
+            {toolChoice !== undefined && (
+              <Text color="#e91e63">{"  🛠 "}{
+                toolChoice === "none" ? "禁止工具"
+                : toolChoice === "required" ? "强制工具"
+                : ""
+              }</Text>
+            )}
+            {/* 命令提示轮播 */}
+            {cmdTips.length > 0 && (() => {
+              const tip = cmdTips[cmdTipIndex % cmdTips.length];
+              if (!tip) return null;
+              const text = `${tip.name} ${tip.desc}`;
+              return (
+                <Text>
+                  <Text color="#808080">{"  💡 "}</Text>
+                  {cmdTipGradientColors.length > 0
+                    ? text.split("").map((ch, i) => (
+                        <Text key={i} color={cmdTipGradientColors[i] || undefined}>{ch}</Text>
+                      ))
+                    : <Text color="#808080">{text}</Text>}
                 </Text>
+              );
+            })()}
+            {verbose ? <Text color="#ff1493">{"  ⚡ Verbose"}</Text> : null}
+          </Box>
+
+          {/* 右侧余额 + 今日消耗 */}
+          <Box flexGrow={1} flexDirection="column" justifyContent="center" alignItems="flex-end">
+            {balanceLoading && balance === null ? (
+              <Text color="yellow">{"  ⏳ 查询余额..."}</Text>
+            ) : balance !== null ? (
+              <Box flexDirection="row">
+                <Text color="yellow">{"💰 "}</Text>
+                <Text color="yellow">{"余额 ¥"}{balance.toFixed(2)}</Text>
               </Box>
-            );
-          })}
+            ) : null}
+            {todayCost !== null ? (
+              <Box flexDirection="row">
+                <Text color="cyan">{"📊 "}</Text>
+                <Text color="cyan">{"今日 ¥"}{todayCost.toFixed(2)}</Text>
+              </Box>
+            ) : null}
+          </Box>
         </Box>
-
-        {/* 状态信息 */}
-        <Box flexDirection="column" justifyContent="center">
-          <Text color="#00ff41">{"  ✔ "}已就绪 {skillCount} 个 Skill</Text>
-          <Text color="#00ffff">{"  ℹ "}已就绪 {toolCount} 个工具</Text>
-          <Text color="#00ffff">{"  🔧 模型 "}{SUPPORTED_MODELS[activeModel]?.displayName ?? activeModel}</Text>
-          {thinkingEnabled && (
-            <Text color="#ff9800">{"  🧠 深度思考 "}{thinkingEffort === "max" ? "Max" : "High"}</Text>
-          )}
-          {responseFormat === "json_object" && (
-            <Text color="#4caf50">{"  📄 JSON"}</Text>
-          )}
-          {toolChoice !== undefined && (
-            <Text color="#e91e63">{"  🛠 "}{
-              toolChoice === "none" ? "禁止工具"
-              : toolChoice === "required" ? "强制工具"
-              : ""
-            }</Text>
-          )}
-          {/* 命令提示轮播 — 每 5 秒切换下一条，渐变动画 */}
-          {cmdTips.length > 0 && (() => {
-            const tip = cmdTips[cmdTipIndex % cmdTips.length];
-            if (!tip) return null;
-            const text = `${tip.name} ${tip.desc}`;
-            return (
-              <Text>
-                <Text color="#808080">{"  💡 "}</Text>
-                {cmdTipGradientColors.length > 0
-                  ? text.split("").map((ch, i) => (
-                      <Text key={i} color={cmdTipGradientColors[i] || undefined}>{ch}</Text>
-                    ))
-                  : <Text color="#808080">{text}</Text>}
-              </Text>
-            );
-          })()}
-          {verbose ? <Text color="#ff1493">{"  ⚡ Verbose"}</Text> : null}
-        </Box>
-
-        {/* 右侧余额 + 今日消耗 */}
-        <Box flexGrow={1} flexDirection="column" justifyContent="center" alignItems="flex-end">
-          {balanceLoading && balance === null ? (
-            <Text color="yellow">{"  ⏳ 查询余额..."}</Text>
-          ) : balance !== null ? (
-            <Box flexDirection="row">
-              <Text color="yellow">{"💰 "}</Text>
-              <Text color="yellow">{"余额 ¥"}{balance.toFixed(2)}</Text>
-            </Box>
-          ) : null}
-          {todayCost !== null ? (
-            <Box flexDirection="row">
-              <Text color="cyan">{"📊 "}</Text>
-              <Text color="cyan">{"今日 ¥"}{todayCost.toFixed(2)}</Text>
-            </Box>
-          ) : null}
-        </Box>
-      </Box>
+      )}
 
       {/* 消息列表 - 已完成的消息用 Static 固定，避免重绘时丢失滚动位置 */}
       <Box flexDirection="column" marginTop={1}>
@@ -989,7 +1000,21 @@ export function ChatSession({
       ) : (
         <>
           <Box marginTop={1}>
-            <Text color="#00ffff" dimColor>{"─".repeat(dividerWidth)}</Text>
+            {hasConversationStarted && (balance !== null || sessionCost > 0 || isStreaming) ? (
+              <Text color="#00ffff" dimColor>
+                {"─".repeat(Math.max(dividerWidth - 35, 10))}
+                {balance !== null && (
+                  <Text color="yellow">{" 💰 余额 ¥"}{balance.toFixed(2)}</Text>
+                )}
+                {isStreaming ? (
+                  <Text color="cyan">{"  📊 本次 ¥"}{sessionCost > 0 ? sessionCost.toFixed(4) + " " : ""}<InkSpinner type="dots" /></Text>
+                ) : sessionCost > 0 ? (
+                  <Text color="cyan">{"  📊 本次 ¥"}{sessionCost.toFixed(4)}</Text>
+                ) : null}
+              </Text>
+            ) : (
+              <Text color="#00ffff" dimColor>{"─".repeat(dividerWidth)}</Text>
+            )}
           </Box>
           <Box>
             <Box width={4} flexShrink={0}>
