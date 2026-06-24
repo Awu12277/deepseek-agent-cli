@@ -3,67 +3,54 @@
 // ---------------------------------------------------------------------------
 
 import process from "node:process";
-import type { Tool, ToolContext, ToolResult, JSONSchema } from "../types.js";
+import { ToolKind, type AgentTool, type ToolContext, type ToolResult } from "../types.js";
 import { execCommand, truncateOutput, getDefaultTimeout } from "../sandbox.js";
 
 /** 是否为 Windows 平台 */
 const isWindows = process.platform === "win32";
 
 /** bash 工具的参数格式 */
-interface BashArgs {
+export interface BashArgs {
   /** 要执行的命令 */
   command: string;
   /** 执行超时时间（毫秒），默认 30000 */
   timeout?: number;
 }
 
-/** bash 工具的参数 JSON Schema */
-const bashSchema: JSONSchema = {
-  type: "object",
-  properties: {
-    command: {
-      type: "string",
-      description: "要执行的 shell 命令",
-    },
-    timeout: {
-      type: "number",
-      description: "执行超时时间（毫秒），默认 30000",
-    },
-  },
-  required: ["command"],
-  additionalProperties: false,
-};
-
 /**
  * bash 工具 — 在 shell 中执行命令。
- *
- * 功能：
- * - 支持任意 shell 命令
- * - 超时控制（默认 30 秒）
- * - 输出截断（默认 50K 字符）
- * - 返回标准输出、标准错误和退出码
- * - 支持外部中止信号
  */
-export const bashTool: Tool = {
+export const bashTool: AgentTool<BashArgs> = {
   name: "bash",
+  kind: ToolKind.Other,
   description:
     "在 shell 中执行命令。返回标准输出、标准错误和退出码。支持超时控制和信号中止。适用于运行构建、测试、Git 操作等命令。",
-  parameters: bashSchema,
-  readOnly: false, // bash 有副作用，不能并行执行
+  parameters: {
+    type: "object",
+    properties: {
+      command: {
+        type: "string",
+        description: "要执行的 shell 命令",
+      },
+      timeout: {
+        type: "number",
+        description: "执行超时时间（毫秒），默认 30000",
+      },
+    },
+    required: ["command"],
+    additionalProperties: false,
+  },
 
-  async execute(args: unknown, ctx: ToolContext): Promise<ToolResult> {
-    const params = args as BashArgs;
-    if (!params?.command || typeof params.command !== "string") {
+  async execute(args: BashArgs, ctx: ToolContext): Promise<ToolResult> {
+    if (!args?.command || typeof args.command !== "string") {
       return { success: false, data: "缺少必要参数 command", error: "INVALID_ARGS" };
     }
 
-    const timeout = params.timeout ?? ctx.timeout ?? getDefaultTimeout();
+    const timeout = args.timeout ?? ctx.timeout ?? getDefaultTimeout();
 
     try {
-      // Windows 使用 cmd /c 执行，Unix 使用 sh -c 执行
-      // isShellCommand=true 告知 execCommand 不需要再包装 shell
       const shellCommand = isWindows ? "cmd" : "sh";
-      const shellArgs = isWindows ? ["/c", params.command] : ["-c", params.command];
+      const shellArgs = isWindows ? ["/c", args.command] : ["-c", args.command];
 
       const result = await execCommand(
         shellCommand,
@@ -71,10 +58,9 @@ export const bashTool: Tool = {
         ctx.cwd,
         timeout,
         ctx.signal,
-        true, // isShellCommand — 已指定 shell 程序，不需要二次包装
+        true,
       );
 
-      // 组装输出
       const parts: string[] = [];
       if (result.stdout) {
         parts.push(truncateOutput(result.stdout));
@@ -86,10 +72,9 @@ export const bashTool: Tool = {
       const success = result.exitCode === 0;
       const output = parts.length > 0 ? parts.join("\n") : "(无输出)";
 
-      // UI 摘要：命令本身截断到 60 字符，避免长命令撑屏
-      const cmdPreview = params.command.length > 60
-        ? params.command.slice(0, 57) + "..."
-        : params.command;
+      const cmdPreview = args.command.length > 60
+        ? args.command.slice(0, 57) + "..."
+        : args.command;
       const summary = `🔧 $ ${cmdPreview}（exit ${result.exitCode ?? "未知"}）`;
 
       return {

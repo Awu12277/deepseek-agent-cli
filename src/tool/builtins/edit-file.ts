@@ -4,13 +4,13 @@
 
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
-import type { Tool, ToolContext, ToolResult, JSONSchema } from "../types.js";
+import { ToolKind, type AgentTool, type ToolContext, type ToolResult } from "../types.js";
 import { resolvePath, confine } from "../sandbox.js";
 import { computeFileDiff } from "../diff.js";
 import { writeFileWithEol } from "../eol.js";
 
 /** edit_file 工具的参数格式 */
-interface EditFileArgs {
+export interface EditFileArgs {
   /** 文件路径（相对于 cwd 或绝对路径） */
   path: string;
   /** 要查找的原始文本（精确匹配） */
@@ -19,58 +19,47 @@ interface EditFileArgs {
   new_text: string;
 }
 
-/** edit_file 工具的参数 JSON Schema */
-const editFileSchema: JSONSchema = {
-  type: "object",
-  properties: {
-    path: {
-      type: "string",
-      description: "文件路径（相对于当前工作目录或绝对路径）",
-    },
-    old_text: {
-      type: "string",
-      description: "要查找的原始文本（精确匹配）",
-    },
-    new_text: {
-      type: "string",
-      description: "替换后的新文本",
-    },
-  },
-  required: ["path", "old_text", "new_text"],
-  additionalProperties: false,
-};
-
 /**
  * edit_file 工具 — 对文件进行精确字符串替换。
- *
- * 功能：
- * - 精确匹配 old_text 并替换为 new_text
- * - 如果 old_text 在文件中出现多次则报错（避免误改）
- * - 如果 old_text 未找到则报错
- * - 返回替换前后的上下文信息
  */
-export const editFileTool: Tool = {
+export const editFileTool: AgentTool<EditFileArgs> = {
   name: "edit_file",
+  kind: ToolKind.Edit,
   description:
     "对文件进行精确字符串替换。查找文件中的 old_text 并替换为 new_text。如果 old_text 出现多次或未找到则报错。适用于小范围精确修改。",
-  parameters: editFileSchema,
-  readOnly: false,
+  parameters: {
+    type: "object",
+    properties: {
+      path: {
+        type: "string",
+        description: "文件路径（相对于当前工作目录或绝对路径）",
+      },
+      old_text: {
+        type: "string",
+        description: "要查找的原始文本（精确匹配）",
+      },
+      new_text: {
+        type: "string",
+        description: "替换后的新文本",
+      },
+    },
+    required: ["path", "old_text", "new_text"],
+    additionalProperties: false,
+  },
 
-  async execute(args: unknown, ctx: ToolContext): Promise<ToolResult> {
-    const params = args as EditFileArgs;
-    if (!params?.path || typeof params.path !== "string") {
+  async execute(args: EditFileArgs, ctx: ToolContext): Promise<ToolResult> {
+    if (!args?.path || typeof args.path !== "string") {
       return { success: false, data: "缺少必要参数 path", error: "INVALID_ARGS" };
     }
-    if (typeof params.old_text !== "string") {
+    if (typeof args.old_text !== "string") {
       return { success: false, data: "缺少必要参数 old_text", error: "INVALID_ARGS" };
     }
-    if (typeof params.new_text !== "string") {
+    if (typeof args.new_text !== "string") {
       return { success: false, data: "缺少必要参数 new_text", error: "INVALID_ARGS" };
     }
 
-    const filePath = resolvePath(params.path, ctx.cwd);
+    const filePath = resolvePath(args.path, ctx.cwd);
 
-    // 写入范围安全检查：写之前先拦，避免在只读路径上浪费时间
     if (ctx.writeRoots && ctx.writeRoots.length > 0) {
       const conf = await confine(ctx.writeRoots, filePath);
       if (!conf.ok) {
@@ -81,8 +70,7 @@ export const editFileTool: Tool = {
     try {
       const content = await readFile(filePath, "utf-8");
 
-      // 检查 old_text 是否存在
-      const firstIndex = content.indexOf(params.old_text);
+      const firstIndex = content.indexOf(args.old_text);
       if (firstIndex === -1) {
         return {
           success: false,
@@ -91,8 +79,7 @@ export const editFileTool: Tool = {
         };
       }
 
-      // 检查是否出现多次
-      const secondIndex = content.indexOf(params.old_text, firstIndex + 1);
+      const secondIndex = content.indexOf(args.old_text, firstIndex + 1);
       if (secondIndex !== -1) {
         return {
           success: false,
@@ -101,24 +88,18 @@ export const editFileTool: Tool = {
         };
       }
 
-      // 执行替换
-      const newContent = content.replace(params.old_text, params.new_text);
-      // 按原文件 EOL 风格落盘，避免 CRLF/LF 翻转
+      const newContent = content.replace(args.old_text, args.new_text);
       await writeFileWithEol(filePath, content, newContent);
 
-      // 计算文件变更 diff
       const diff = computeFileDiff(content, newContent, filePath);
       diff.existedBefore = true;
 
-      // 计算替换位置的行号
       const beforeText = content.slice(0, firstIndex);
       const startLine = beforeText.split("\n").length;
-      const oldLines = params.old_text.split("\n").length;
-      const newLines = params.new_text.split("\n").length;
+      const oldLines = args.old_text.split("\n").length;
+      const newLines = args.new_text.split("\n").length;
 
-      // 构建包含 diff 摘要的返回信息
       const diffSummary = `+${diff.additions} -${diff.deletions}`;
-
       const summary = `📝 修改: ${basename(filePath)} (+${diff.additions} -${diff.deletions})`;
 
       return {

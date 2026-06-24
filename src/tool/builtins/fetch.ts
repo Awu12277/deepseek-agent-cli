@@ -2,11 +2,11 @@
 // fetch 工具 — HTTP 请求
 // ---------------------------------------------------------------------------
 
-import type { Tool, ToolContext, ToolResult, JSONSchema } from "../types.js";
+import { ToolKind, type AgentTool, type ToolContext, type ToolResult } from "../types.js";
 import { truncateOutput } from "../sandbox.js";
 
 /** fetch 工具的参数格式 */
-interface FetchArgs {
+export interface FetchArgs {
   /** 请求 URL */
   url: string;
   /** 请求方法，默认 GET */
@@ -19,83 +19,69 @@ interface FetchArgs {
   max_length?: number;
 }
 
-/** fetch 工具的参数 JSON Schema */
-const fetchSchema: JSONSchema = {
-  type: "object",
-  properties: {
-    url: {
-      type: "string",
-      description: "请求的 URL",
-    },
-    method: {
-      type: "string",
-      description: "HTTP 方法（GET、POST、PUT、DELETE 等），默认 GET",
-    },
-    headers: {
-      type: "object",
-      description: "请求头键值对",
-      additionalProperties: { type: "string" },
-    },
-    body: {
-      type: "string",
-      description: "请求体内容（POST/PUT 时使用）",
-    },
-    max_length: {
-      type: "number",
-      description: "响应内容最大长度（字符），默认 50000",
-    },
-  },
-  required: ["url"],
-  additionalProperties: false,
-};
-
 /**
  * fetch 工具 — 发起 HTTP 请求并返回响应内容。
- *
- * 功能：
- * - 支持 GET/POST/PUT/DELETE 等 HTTP 方法
- * - 自定义请求头和请求体
- * - 超时控制（默认 30 秒）
- * - 响应大小限制
- * - 显示响应状态码和内容类型
  */
-export const fetchTool: Tool = {
+export const fetchTool: AgentTool<FetchArgs> = {
   name: "fetch",
+  kind: ToolKind.Read,
   description:
     "发起 HTTP 请求并返回响应内容。支持自定义方法和请求头。适用于获取网页内容、API 调用等场景。",
-  parameters: fetchSchema,
-  readOnly: true,
+  parameters: {
+    type: "object",
+    properties: {
+      url: {
+        type: "string",
+        description: "请求的 URL",
+      },
+      method: {
+        type: "string",
+        description: "HTTP 方法（GET、POST、PUT、DELETE 等），默认 GET",
+      },
+      headers: {
+        type: "object",
+        description: "请求头键值对",
+        additionalProperties: { type: "string" },
+      },
+      body: {
+        type: "string",
+        description: "请求体内容（POST/PUT 时使用）",
+      },
+      max_length: {
+        type: "number",
+        description: "响应内容最大长度（字符），默认 50000",
+      },
+    },
+    required: ["url"],
+    additionalProperties: false,
+  },
 
-  async execute(args: unknown, ctx: ToolContext): Promise<ToolResult> {
-    const params = args as FetchArgs;
-    if (!params?.url || typeof params.url !== "string") {
+  async execute(args: FetchArgs, ctx: ToolContext): Promise<ToolResult> {
+    if (!args?.url || typeof args.url !== "string") {
       return { success: false, data: "缺少必要参数 url", error: "INVALID_ARGS" };
     }
 
-    const method = (params.method ?? "GET").toUpperCase();
+    const method = (args.method ?? "GET").toUpperCase();
     const timeout = 30_000;
-    const maxLength = params.max_length ?? 50_000;
+    const maxLength = args.max_length ?? 50_000;
 
     try {
-      // 构建请求
       const fetchOptions: RequestInit = {
         method,
-        headers: params.headers ?? {},
+        headers: args.headers ?? {},
         signal: ctx.signal ?? AbortSignal.timeout(timeout),
       };
 
-      if (params.body && (method === "POST" || method === "PUT" || method === "PATCH")) {
+      if (args.body && (method === "POST" || method === "PUT" || method === "PATCH")) {
         (fetchOptions.headers as Record<string, string>)["Content-Type"] ??= "application/json";
-        fetchOptions.body = params.body;
+        fetchOptions.body = args.body;
       }
 
-      const response = await fetch(params.url, fetchOptions);
+      const response = await fetch(args.url, fetchOptions);
 
-      // 收集响应信息
       const contentType = response.headers.get("content-type") ?? "unknown";
       const statusText = `${response.status} ${response.statusText}`;
 
-      // 读取响应体
       let body: string;
       try {
         body = await response.text();
@@ -103,16 +89,14 @@ export const fetchTool: Tool = {
         body = "(无法读取响应体)";
       }
 
-      // 截断过长内容
       const truncatedBody = truncateOutput(body, maxLength);
 
       const header = `状态: ${statusText}\n内容类型: ${contentType}`;
       const separator = body.length > 0 ? "\n---\n" : "";
 
-      // UI 摘要：方法 + URL + 状态码，不暴露响应体
-      const urlPreview = params.url.length > 60
-        ? params.url.slice(0, 57) + "..."
-        : params.url;
+      const urlPreview = args.url.length > 60
+        ? args.url.slice(0, 57) + "..."
+        : args.url;
       const summary = `🌐 ${method} ${urlPreview} → ${response.status}`;
 
       return {

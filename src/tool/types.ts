@@ -1,13 +1,36 @@
 // ---------------------------------------------------------------------------
 // 工具系统核心类型定义
+//
+// 参照 Zed AgentTool 架构重构：
+// - AgentTool<I, O>：静态类型安全的工具定义（类似 Zed 的 AgentTool trait）
+// - AnyAgentTool：动态分发接口（类似 Zed 的 AnyAgentTool trait）
+// - ToolKind：语义化工具分类，替代 boolean readOnly
+// - Description 自动从 Schema 推导
+// - 结构化错误输出，让 LLM 能读懂的 Result
 // ---------------------------------------------------------------------------
+
+/** 工具的分类语义，替代原来的 boolean readOnly */
+export enum ToolKind {
+  /** 纯读操作，无副作用，可并行执行 */
+  Read = "read",
+  /** 文件/目录编辑（修改内容） */
+  Edit = "edit",
+  /** 文件/目录删除 */
+  Delete = "delete",
+  /** 移动/重命名 */
+  Move = "move",
+  /** 其他（bash、fetch 等） */
+  Other = "other",
+}
 
 /** 工具参数的 JSON Schema 表示 */
 export interface JSONSchema {
   type: "object";
   properties?: Record<string, unknown>;
   required?: string[];
-  additionalProperties?: boolean;
+  additionalProperties?: boolean | Record<string, unknown>;
+  /** Schema 自带的 description，自动用作 tool description */
+  description?: string;
 }
 
 /** 每次工具执行时传入的上下文 */
@@ -40,81 +63,169 @@ export interface FileDiff {
   deletions: number;
 }
 
-/** 工具执行返回的结果 */
+/**
+ * 工具执行结果。
+ *
+ * 设计要点（参照 Zed Result<Output, Output>）：
+ * - 成功和失败共用相同结构，LLM 总能读到可理解的 data
+ * - error 字段仅做分类标记（如 TEXT_NOT_FOUND），不暴露内部细节
+ * - diff 仅在文件修改工具携带
+ * - summary 给 UI 展示，不暴露完整 data 给 UI
+ */
 export interface ToolResult {
   /** 是否执行成功 */
   success: boolean;
-  /** 结果内容（成功时为输出，失败时为错误信息） */
+  /** 结果内容（成功时为输出，失败时为错误信息），LLM 可读 */
   data: string;
-  /** 错误详情（仅在 success=false 时有意义） */
+  /** 错误分类标记（仅在 success=false 时有意义） */
   error?: string;
   /** 文件变更 diff（仅文件修改工具携带） */
   diff?: FileDiff;
   /**
    * 给 UI 展示的简短摘要（一行）。
-   * 与 data 区别：data 喂给 LLM 保留完整内容，summary 仅做一行回显。
-   * 未设置时 UI 自动降级到 data 的前 500 字符。
-   */
+    * 与 data 区别：data 喂给 LLM 保留完整内容，summary 仅做一行回显。
+    * 未设置时 UI 自动降级到 data 的前 500 字符。
+    */
   summary?: string;
 }
 
+// ---------------------------------------------------------------------------
+// AgentTool — 静态类型安全的工具定义
+//
+// 参照 Zed 的 AgentTool trait：
+//    trait AgentTool {
+//        type Input: Deserialize + Serialize + JsonSchema;
+//        type Output: Into<LanguageModelToolResultContent>;
+//        const NAME: &'static str;
+//        fn description() -> SharedString;  // auto from schema
+//        fn kind() -> acp::ToolKind;
+//        fn run(self: Arc<Self>, input, event_stream, cx) -> Task<Result<Output, Output>>;
+//    }
+//
+// TypeScript 中没有 trait 系统，用泛型接口 + 工厂模式模拟。
+// 每个工具定义为一个对象，提供类型安全的泛型参数。
+// ---------------------------------------------------------------------------
+
 /**
- * Tool 接口 — 每个内置工具或插件适配的工具都需要实现此接口。
+ * AgentTool 定义 — 一个工具的完整声明。
  *
- * 设计要点：
- * - ReadOnly() 标志控制并行执行：读工具返回 true，写工具返回 false。
- *   代理在 executeBatch 中判断：全部 ReadOnly 的可并行执行，否则串行。
- * - 写工具（write_file/edit_file/delete_range等）返回 false，
- *   读工具（read_file/grep/ls/glob/fetch）返回 true。
+ * @template I 工具输入参数类型
+ * @template O 工具输出类型（从 ToolResult 继承）
  */
-export interface Tool {
+export interface AgentTool<I, O extends ToolResult = ToolResult> {
   /** 工具名称，全局唯一标识符 */
   readonly name: string;
-  /** 工具描述，供模型理解工具的功能和用法 */
-  readonly description: string;
-  /** 参数的 JSON Schema 定义，供模型理解输入格式 */
+
+  /** 工具的分类语义 */
+  readonly kind: ToolKind;
+
+  /** 参数 JSON Schema 定义 */
   readonly parameters: JSONSchema;
+
   /**
-   * 工具是否为只读。
-   * true = 无副作用的读操作，可并行执行；
-   * false = 有写操作，需串行执行。
+   * 工具描述 — 默认从 parameters.description 自动提取，
+   * 也可显式覆盖以提供更详细的说明。
    */
-  readonly readOnly: boolean;
-  /** 执行工具逻辑 */
+  readonly description: string;
+
+  /** 工具执行逻辑 */
+  execute(args: I, ctx: ToolContext): Promise<O>;
+
+  /**
+   * UI 初始标题（可选），类似 Zed 的 initial_title()。
+   * 用于在 UI 中显示正在执行的工具名称。
+   */
+  initialTitle?(args: I): string;
+
+  /**
+   * 是否支持输入流式传输（可选），对应 Zed 的 supports_input_streaming()。
+   * 用于支持 LLM 流式传输工具调用参数。
+   */
+  supportsInputStreaming?: boolean;
+
+  /**
+   * 工具支持的 LLM Provider（可选），对应 Zed 的 supports_provider()。
+   * 返回空/undefined 表示支持所有 provider。
+   */
+  supportedProviders?: string[];
+}
+
+// ---------------------------------------------------------------------------
+// AnyAgentTool — 动态分发接口（Type Erasure 模式）
+//
+// 对应 Zed 的 AnyAgentTool trait，将类型参数擦除。
+// 用于 Registry 等需要存储异构工具集合的场景。
+// ---------------------------------------------------------------------------
+
+/**
+ * AnyAgentTool — 类型擦除后的工具接口。
+ * Registry 存储的是此类型，执行时内部做反序列化。
+ */
+export interface AnyAgentTool {
+  readonly name: string;
+  readonly description: string;
+  readonly kind: ToolKind;
+  readonly parameters: JSONSchema;
+  readonly supportsInputStreaming: boolean;
+  readonly supportedProviders: string[];
+
   execute(args: unknown, ctx: ToolContext): Promise<ToolResult>;
+  initialTitle?(args: unknown): string;
 }
 
 /**
- * Previewer 可选接口 — 写工具可实现此接口。
- *
- * 给定相同的参数，计算文件变更的 diff 信息，而不实际写入磁盘。
- * 用于：
- * - 审批前预览变更
- * - 检查点快照
- * - 在不触盘的情况下展示改动
+ * 将类型安全的 AgentTool 擦除为 AnyAgentTool。
+ * 对应 Zed 的 erase() 方法。
  */
-export interface Previewer {
-  /**
-   * 预览文件变更。
-   * @param args 与 execute 相同的参数
-   * @returns 文件变更的 diff 信息
-   */
-  preview(args: unknown, ctx: ToolContext): Promise<FileDiff>;
+export function eraseTool<I, O extends ToolResult = ToolResult>(
+  tool: AgentTool<I, O>,
+): AnyAgentTool {
+  return {
+    get name() { return tool.name; },
+    get description() { return tool.description; },
+    get kind() { return tool.kind; },
+    get parameters() { return tool.parameters; },
+    get supportsInputStreaming() { return tool.supportsInputStreaming ?? false; },
+    get supportedProviders() { return tool.supportedProviders ?? []; },
+
+    async execute(args: unknown, ctx: ToolContext): Promise<ToolResult> {
+      return tool.execute(args as I, ctx);
+    },
+
+    initialTitle(args: unknown): string {
+      return tool.initialTitle?.(args as I) ?? `${tool.name}`;
+    },
+  };
 }
+
+/**
+ * 从 JSON Schema 中提取 description。
+ * 若 schema.properties 的顶层有 description，使用它；
+ * 否则使用 schema 本身的 description。
+ * 对应 Zed 的 AgentTool::description() 默认实现。
+ */
+export function extractDescription(schema: JSONSchema, fallback?: string): string {
+  if (schema.description) return schema.description;
+  if (fallback) return fallback;
+  return "";
+}
+
+/**
+ * 根据 ToolKind 判断是否只读（可并行执行）。
+ * Read 一定只读；Edit/Delete/Move 一定写；Other 默认非只读。
+ */
+export function isReadOnly(kind: ToolKind): boolean {
+  return kind === ToolKind.Read;
+}
+
+// ---------------------------------------------------------------------------
+// Permission/Gate 接口
+// ---------------------------------------------------------------------------
 
 /**
  * Gate 权限门接口 — 控制工具执行前是否需要审批。
- *
- * 当前预留接口，默认实现为 always-allow。
- * 未来可接入交互式审批或策略引擎。
  */
 export interface Gate {
-  /**
-   * 检查工具调用是否允许执行。
-   * @param toolName 工具名称
-   * @param args     工具参数
-   * @returns true = 允许执行，false = 拒绝执行
-   */
   check(toolName: string, args: unknown): boolean | Promise<boolean>;
 }
 
@@ -129,12 +240,8 @@ export class AlwaysAllowGate implements Gate {
 
 /** 工具调用记录（用于风暴检测等） */
 export interface ToolCallRecord {
-  /** 工具名称 */
   name: string;
-  /** 执行是否成功 */
   success: boolean;
-  /** 退出时是否发生错误 */
   error?: string;
-  /** 执行时间戳 */
   timestamp: number;
 }

@@ -1,19 +1,16 @@
 // ---------------------------------------------------------------------------
 // delete_range 工具 — 按行锚点删除文件中的行范围
-//
-// 通过两个唯一的行内容锚点（start_anchor / end_anchor）定位删除范围，
-// 要求每个锚点在文件中恰好出现一次，避免模糊删除。
 // ---------------------------------------------------------------------------
 
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
-import type { Tool, ToolContext, ToolResult, JSONSchema } from "../types.js";
+import { ToolKind, type AgentTool, type ToolContext, type ToolResult } from "../types.js";
 import { resolvePath, confine } from "../sandbox.js";
 import { computeFileDiff } from "../diff.js";
 import { writeFileWithEol } from "../eol.js";
 
 /** delete_range 工具的参数格式 */
-interface DeleteRangeArgs {
+export interface DeleteRangeArgs {
   /** 文件路径（相对于 cwd 或绝对路径） */
   path: string;
   /** 删除范围的起始标记行（必须唯一） */
@@ -24,36 +21,8 @@ interface DeleteRangeArgs {
   inclusive?: boolean;
 }
 
-/** delete_range 工具的参数 JSON Schema */
-const deleteRangeSchema: JSONSchema = {
-  type: "object",
-  properties: {
-    path: {
-      type: "string",
-      description: "文件路径（相对于当前工作目录或绝对路径）",
-    },
-    startAnchor: {
-      type: "string",
-      description: "删除范围的起始标记行内容（必须在文件中唯一，精确匹配整行）",
-    },
-    endAnchor: {
-      type: "string",
-      description: "删除范围的结束标记行内容（必须在文件中唯一，精确匹配整行，须在 start_anchor 之后）",
-    },
-    inclusive: {
-      type: "boolean",
-      description: "是否包含锚点行本身，默认 false（只删除两行之间的内容）",
-    },
-  },
-  required: ["path", "startAnchor", "endAnchor"],
-  additionalProperties: false,
-};
-
 /**
  * 在行列表中查找唯一匹配的行号。
- * 要求行内容精确匹配，且只能匹配一次。
- *
- * @returns 匹配的行号（0-based），如果不存在或不唯一则返回错误
  */
 function findUniqueLine(lines: string[], anchor: string, label: string): { line: number } | { error: string } {
   const matches: number[] = [];
@@ -75,36 +44,50 @@ function findUniqueLine(lines: string[], anchor: string, label: string): { line:
 
 /**
  * delete_range 工具 — 删除文件中两个锚点行之间的内容。
- *
- * 设计要点：
- * - 通过两个唯一行锚点定位范围
- * - 两个锚点必须在文件中恰好出现一次
- * - end_anchor 必须在 start_anchor 之后
- * - 可选择是否包含锚点行
  */
-export const deleteRangeTool: Tool = {
+export const deleteRangeTool: AgentTool<DeleteRangeArgs> = {
   name: "delete_range",
+  kind: ToolKind.Edit,
   description:
     "删除文件中两个锚点行之间的内容。通过两个唯一的行内容精确定位范围。适用于删除方法、代码块、配置段等。",
-  parameters: deleteRangeSchema,
-  readOnly: false,
+  parameters: {
+    type: "object",
+    properties: {
+      path: {
+        type: "string",
+        description: "文件路径（相对于当前工作目录或绝对路径）",
+      },
+      startAnchor: {
+        type: "string",
+        description: "删除范围的起始标记行内容（必须在文件中唯一，精确匹配整行）",
+      },
+      endAnchor: {
+        type: "string",
+        description: "删除范围的结束标记行内容（必须在文件中唯一，精确匹配整行，须在 start_anchor 之后）",
+      },
+      inclusive: {
+        type: "boolean",
+        description: "是否包含锚点行本身，默认 false（只删除两行之间的内容）",
+      },
+    },
+    required: ["path", "startAnchor", "endAnchor"],
+    additionalProperties: false,
+  },
 
-  async execute(args: unknown, ctx: ToolContext): Promise<ToolResult> {
-    const params = args as DeleteRangeArgs;
-    if (!params?.path || typeof params.path !== "string") {
+  async execute(args: DeleteRangeArgs, ctx: ToolContext): Promise<ToolResult> {
+    if (!args?.path || typeof args.path !== "string") {
       return { success: false, data: "缺少必要参数 path", error: "INVALID_ARGS" };
     }
-    if (typeof params.startAnchor !== "string") {
+    if (typeof args.startAnchor !== "string") {
       return { success: false, data: "缺少有效参数 startAnchor", error: "INVALID_ARGS" };
     }
-    if (typeof params.endAnchor !== "string") {
+    if (typeof args.endAnchor !== "string") {
       return { success: false, data: "缺少有效参数 endAnchor", error: "INVALID_ARGS" };
     }
 
-    const filePath = resolvePath(params.path, ctx.cwd);
-    const inclusive = params.inclusive ?? false;
+    const filePath = resolvePath(args.path, ctx.cwd);
+    const inclusive = args.inclusive ?? false;
 
-    // 写入范围安全检查
     if (ctx.writeRoots && ctx.writeRoots.length > 0) {
       const conf = await confine(ctx.writeRoots, filePath);
       if (!conf.ok) {
@@ -116,13 +99,12 @@ export const deleteRangeTool: Tool = {
       const content = await readFile(filePath, "utf-8");
       const lines = content.split("\n");
 
-      // 查找锚点
-      const startResult = findUniqueLine(lines, params.startAnchor, "start_anchor");
+      const startResult = findUniqueLine(lines, args.startAnchor, "start_anchor");
       if ("error" in startResult) {
         return { success: false, data: startResult.error, error: "ANCHOR_NOT_FOUND" };
       }
 
-      const endResult = findUniqueLine(lines, params.endAnchor, "end_anchor");
+      const endResult = findUniqueLine(lines, args.endAnchor, "end_anchor");
       if ("error" in endResult) {
         return { success: false, data: endResult.error, error: "ANCHOR_NOT_FOUND" };
       }
@@ -130,7 +112,6 @@ export const deleteRangeTool: Tool = {
       const startLine = startResult.line;
       const endLine = endResult.line;
 
-      // 验证顺序
       if (startLine >= endLine) {
         return {
           success: false,
@@ -139,7 +120,6 @@ export const deleteRangeTool: Tool = {
         };
       }
 
-      // 计算删除范围（0-based，含头含尾 slice）
       const rangeStart = inclusive ? startLine : startLine + 1;
       const rangeEnd = inclusive ? endLine : endLine - 1;
 
@@ -151,7 +131,6 @@ export const deleteRangeTool: Tool = {
         };
       }
 
-      // 执行删除（用与原文件一致的 EOL 拼接，交给 writeFileWithEol 统一处理）
       const newLines = [...lines.slice(0, rangeStart), ...lines.slice(rangeEnd + 1)];
       const newContent = newLines.join("\n");
 

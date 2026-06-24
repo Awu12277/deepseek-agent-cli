@@ -13,7 +13,7 @@ import { globTool } from "../src/tool/builtins/glob.js";
 import { grepTool } from "../src/tool/builtins/grep.js";
 import { lsTool } from "../src/tool/builtins/ls.js";
 import { fetchTool } from "../src/tool/builtins/fetch.js";
-import type { Tool, ToolContext, ToolResult } from "../src/tool/types.js";
+import { ToolKind, type AnyAgentTool, type ToolContext, type ToolResult } from "../src/tool/types.js";
 import { resolvePath, truncateOutput, createTimeoutSignal } from "../src/tool/sandbox.js";
 import { writeFile, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -44,41 +44,53 @@ describe("ToolRegistry", () => {
   });
 
   it("注册和获取工具", () => {
-    const mockTool: Tool = {
+    const mockTool: AnyAgentTool = {
       name: "mock",
       description: "测试工具",
+      kind: ToolKind.Read,
       parameters: { type: "object", properties: {}, required: [] },
+      supportsInputStreaming: false,
+      supportedProviders: [],
       execute: async () => ({ success: true, data: "ok" }),
     };
 
-    registry.register(mockTool);
+    registry.registerErased(mockTool);
     expect(registry.get("mock")).toBe(mockTool);
   });
 
   it("重复注册同名工具抛出错误", () => {
-    const tool: Tool = {
+    const tool: AnyAgentTool = {
       name: "dup",
       description: "重复",
+      kind: ToolKind.Read,
       parameters: { type: "object", properties: {}, required: [] },
+      supportsInputStreaming: false,
+      supportedProviders: [],
       execute: async () => ({ success: true, data: "ok" }),
     };
 
-    registry.register(tool);
-    expect(() => registry.register(tool)).toThrow("已注册");
+    registry.registerErased(tool);
+    expect(() => registry.registerErased(tool)).toThrow("已注册");
   });
 
   it("批量注册工具", () => {
-    const tools: Tool[] = [
+    const tools: AnyAgentTool[] = [
       {
         name: "a",
         description: "A",
+        kind: ToolKind.Read,
         parameters: { type: "object", properties: {}, required: [] },
+        supportsInputStreaming: false,
+        supportedProviders: [],
         execute: async () => ({ success: true, data: "a" }),
       },
       {
         name: "b",
         description: "B",
+        kind: ToolKind.Read,
         parameters: { type: "object", properties: {}, required: [] },
+        supportsInputStreaming: false,
+        supportedProviders: [],
         execute: async () => ({ success: true, data: "b" }),
       },
     ];
@@ -88,28 +100,34 @@ describe("ToolRegistry", () => {
   });
 
   it("注销工具", () => {
-    const tool: Tool = {
+    const tool: AnyAgentTool = {
       name: "removeme",
       description: "将被移除",
+      kind: ToolKind.Read,
       parameters: { type: "object", properties: {}, required: [] },
+      supportsInputStreaming: false,
+      supportedProviders: [],
       execute: async () => ({ success: true, data: "ok" }),
     };
 
-    registry.register(tool);
+    registry.registerErased(tool);
     expect(registry.has("removeme")).toBe(true);
     expect(registry.unregister("removeme")).toBe(true);
     expect(registry.has("removeme")).toBe(false);
   });
 
   it("禁用和启用工具", () => {
-    const tool: Tool = {
+    const tool: AnyAgentTool = {
       name: "toggle",
       description: "可禁用",
+      kind: ToolKind.Read,
       parameters: { type: "object", properties: {}, required: [] },
+      supportsInputStreaming: false,
+      supportedProviders: [],
       execute: async () => ({ success: true, data: "ok" }),
     };
 
-    registry.register(tool);
+    registry.registerErased(tool);
     expect(registry.isEnabled("toggle")).toBe(true);
 
     registry.disable("toggle");
@@ -124,14 +142,17 @@ describe("ToolRegistry", () => {
 
   it("构造函数支持禁用列表", () => {
     const reg = new ToolRegistry({ disabledTools: ["test"] });
-    const tool: Tool = {
+    const tool: AnyAgentTool = {
       name: "test",
       description: "被禁用",
+      kind: ToolKind.Read,
       parameters: { type: "object", properties: {}, required: [] },
+      supportsInputStreaming: false,
+      supportedProviders: [],
       execute: async () => ({ success: true, data: "ok" }),
     };
 
-    reg.register(tool);
+    reg.registerErased(tool);
     expect(reg.has("test")).toBe(true);
     expect(reg.isEnabled("test")).toBe(false);
     expect(reg.get("test")).toBeUndefined();
@@ -139,14 +160,17 @@ describe("ToolRegistry", () => {
   });
 
   it("execute 执行已注册工具", async () => {
-    const tool: Tool = {
+    const tool: AnyAgentTool = {
       name: "echo",
       description: "回声",
+      kind: ToolKind.Read,
       parameters: { type: "object", properties: {}, required: [] },
+      supportsInputStreaming: false,
+      supportedProviders: [],
       execute: async (args) => ({ success: true, data: JSON.stringify(args) }),
     };
 
-    registry.register(tool);
+    registry.registerErased(tool);
     const result = await registry.execute("echo", { msg: "hello" }, createTestContext());
     expect(result.success).toBe(true);
     expect(result.data).toContain("hello");
@@ -159,16 +183,19 @@ describe("ToolRegistry", () => {
   });
 
   it("execute 工具抛异常时捕获", async () => {
-    const tool: Tool = {
+    const tool: AnyAgentTool = {
       name: "crash",
       description: "抛异常",
+      kind: ToolKind.Read,
       parameters: { type: "object", properties: {}, required: [] },
+      supportsInputStreaming: false,
+      supportedProviders: [],
       execute: async () => {
         throw new Error("工具崩溃了");
       },
     };
 
-    registry.register(tool);
+    registry.registerErased(tool);
     const result = await registry.execute("crash", {}, createTestContext());
     expect(result.success).toBe(false);
     expect(result.data).toContain("工具崩溃了");
@@ -176,17 +203,23 @@ describe("ToolRegistry", () => {
   });
 
   it("names 和 list 返回正确结果", () => {
-    const tools: Tool[] = [
+    const tools: AnyAgentTool[] = [
       {
         name: "a",
         description: "A",
+        kind: ToolKind.Read,
         parameters: { type: "object", properties: {}, required: [] },
+        supportsInputStreaming: false,
+        supportedProviders: [],
         execute: async () => ({ success: true, data: "a" }),
       },
       {
         name: "b",
         description: "B",
+        kind: ToolKind.Read,
         parameters: { type: "object", properties: {}, required: [] },
+        supportsInputStreaming: false,
+        supportedProviders: [],
         execute: async () => ({ success: true, data: "b" }),
       },
     ];

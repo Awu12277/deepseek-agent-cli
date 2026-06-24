@@ -11,13 +11,13 @@ import type {
   ToolDefinition,
 } from "../provider/index.js";
 import { CostTracker } from "../provider/index.js";
-import type { Tool } from "../tool/index.js";
-import type { ToolContext } from "../tool/index.js";
+import type { ToolContext, AnyAgentTool } from "../tool/index.js";
+import { isReadOnly } from "../tool/types.js";
 import type { AgentEvent, SystemPromptOptions } from "./types.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 import { trimMessages, buildApiMessages } from "./message-builder.js";
 import { ToolRegistry } from "../tool/registry.js";
-import type { Gate, Previewer, ToolCallRecord, ToolResult } from "../tool/types.js";
+import type { Gate, ToolCallRecord, ToolResult } from "../tool/types.js";
 import { AlwaysAllowGate } from "../tool/types.js";
 
 /** Session 构造选项 */
@@ -57,12 +57,12 @@ export class Session {
 
   constructor(
     provider: Provider,
-    tools: Tool[] | ToolRegistry = [],
+    tools: AnyAgentTool[] | ToolRegistry = [],
     costTracker?: CostTracker,
     options?: SessionOptions,
   ) {
     this.#provider = provider;
-    // 兼容 Tool[] 和 ToolRegistry 两种入参
+    // 兼容 AnyAgentTool[] 和 ToolRegistry 两种入参
     if (tools instanceof ToolRegistry) {
       this.#toolRegistry = tools;
     } else {
@@ -278,10 +278,10 @@ export class Session {
       writeRoots: this.#options.writeRoots,
     };
 
-    // 判断是否能并行：全部 ReadOnly
+    // 判断是否能并行：全部 ReadOnly（使用 ToolKind 语义分类）
     const allReadOnly = calls.every((tc) => {
       const tool = this.#toolRegistry.get(tc.name);
-      return tool?.readOnly === true;
+      return tool ? isReadOnly(tool.kind) : true;
     });
 
     if (allReadOnly && calls.length > 1) {
@@ -354,12 +354,12 @@ export class Session {
       };
     }
 
-    // 4. Previewer 预览（仅写工具，不触盘）
-    if (!tool.readOnly) {
-      const maybePreviewer = tool as unknown as { preview?: Previewer["preview"] };
-      if (typeof maybePreviewer.preview === "function") {
+    // 4. 非只读工具有预览（可选）
+    if (!isReadOnly(tool.kind)) {
+      const maybePreview = (tool as { preview?: (args: unknown, ctx: ToolContext) => Promise<unknown> }).preview;
+      if (typeof maybePreview === "function") {
         try {
-          await maybePreviewer.preview(toolArgs, ctx);
+          await maybePreview(toolArgs, ctx);
         } catch {
           // 预览失败不影响执行
         }

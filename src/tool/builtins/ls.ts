@@ -4,11 +4,11 @@
 
 import { readdir, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
-import type { Tool, ToolContext, ToolResult, JSONSchema } from "../types.js";
+import { ToolKind, type AgentTool, type ToolContext, type ToolResult } from "../types.js";
 import { resolvePath, truncateOutput } from "../sandbox.js";
 
 /** ls 工具的参数格式 */
-interface LsArgs {
+export interface LsArgs {
   /** 目录路径，默认为 cwd */
   path?: string;
   /** 是否显示隐藏文件，默认 false */
@@ -17,23 +17,6 @@ interface LsArgs {
 
 /** 目录项类型标记 */
 type EntryType = "FILE" | "DIR" | "LINK";
-
-/** ls 工具的参数 JSON Schema */
-const lsSchema: JSONSchema = {
-  type: "object",
-  properties: {
-    path: {
-      type: "string",
-      description: "目录路径（相对于当前工作目录或绝对路径），默认为当前目录",
-    },
-    all: {
-      type: "boolean",
-      description: "是否显示隐藏文件（以 . 开头的文件），默认 false",
-    },
-  },
-  required: [],
-  additionalProperties: false,
-};
 
 /**
  * ls 工具 — 列出目录内容。
@@ -44,17 +27,30 @@ const lsSchema: JSONSchema = {
  * - 可选显示隐藏文件
  * - 自动跳过无权访问的目录
  */
-export const lsTool: Tool = {
+export const lsTool: AgentTool<LsArgs> = {
   name: "ls",
+  kind: ToolKind.Read,
   description:
     "列出目录内容。显示条目类型（文件/目录/链接）和大小。可选择是否显示隐藏文件。",
-  parameters: lsSchema,
-  readOnly: true,
+  parameters: {
+    type: "object",
+    properties: {
+      path: {
+        type: "string",
+        description: "目录路径（相对于当前工作目录或绝对路径），默认为当前目录",
+      },
+      all: {
+        type: "boolean",
+        description: "是否显示隐藏文件（以 . 开头的文件），默认 false",
+      },
+    },
+    required: [],
+    additionalProperties: false,
+  },
 
-  async execute(args: unknown, ctx: ToolContext): Promise<ToolResult> {
-    const params = (args ?? {}) as LsArgs;
-    const dirPath = params.path ? resolvePath(params.path, ctx.cwd) : ctx.cwd;
-    const showAll = params.all ?? false;
+  async execute(args: LsArgs, ctx: ToolContext): Promise<ToolResult> {
+    const dirPath = args.path ? resolvePath(args.path, ctx.cwd) : ctx.cwd;
+    const showAll = args.all ?? false;
 
     try {
       const entries = await readdir(dirPath, { withFileTypes: true });

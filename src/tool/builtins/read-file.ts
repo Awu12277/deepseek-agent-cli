@@ -5,11 +5,11 @@
 import { readFile, stat } from "node:fs/promises";
 import { open } from "node:fs/promises";
 import { relative } from "node:path";
-import type { Tool, ToolContext, ToolResult, JSONSchema } from "../types.js";
+import { ToolKind, type AgentTool, type ToolContext, type ToolResult } from "../types.js";
 import { resolvePath, truncateOutput } from "../sandbox.js";
 
 /** read_file 工具的参数格式 */
-interface ReadFileArgs {
+export interface ReadFileArgs {
   /** 文件路径（相对于 cwd 或绝对路径） */
   path: string;
   /** 起始行号（1-based），默认 1 */
@@ -17,27 +17,6 @@ interface ReadFileArgs {
   /** 结束行号（1-based，包含），默认到文件末尾 */
   endLine?: number;
 }
-
-/** read_file 工具的参数 JSON Schema */
-const readFileSchema: JSONSchema = {
-  type: "object",
-  properties: {
-    path: {
-      type: "string",
-      description: "文件路径（相对于当前工作目录或绝对路径）",
-    },
-    startLine: {
-      type: "number",
-      description: "起始行号（从 1 开始），默认为 1",
-    },
-    endLine: {
-      type: "number",
-      description: "结束行号（包含），默认到文件末尾",
-    },
-  },
-  required: ["path"],
-  additionalProperties: false,
-};
 
 /** 读取前 N 字节检测是否为二进制文件 */
 async function checkBinary(filePath: string): Promise<boolean> {
@@ -61,20 +40,37 @@ async function checkBinary(filePath: string): Promise<boolean> {
  * - 输出长度截断（默认 50K 字符）
  * - 二进制检测（阻止读取二进制文件）
  */
-export const readFileTool: Tool = {
+export const readFileTool: AgentTool<ReadFileArgs> = {
   name: "read_file",
+  kind: ToolKind.Read,
   description:
     "读取指定路径的文件内容。支持行号范围选择，输出带行号。适用于查看源代码、配置文件等文本文件。自动拒绝二进制文件。",
-  parameters: readFileSchema,
-  readOnly: true,
+  parameters: {
+    type: "object",
+    properties: {
+      path: {
+        type: "string",
+        description: "文件路径（相对于当前工作目录或绝对路径）",
+      },
+      startLine: {
+        type: "number",
+        description: "起始行号（从 1 开始），默认为 1",
+      },
+      endLine: {
+        type: "number",
+        description: "结束行号（包含），默认到文件末尾",
+      },
+    },
+    required: ["path"],
+    additionalProperties: false,
+  },
 
-  async execute(args: unknown, ctx: ToolContext): Promise<ToolResult> {
-    const params = args as ReadFileArgs;
-    if (!params?.path || typeof params.path !== "string") {
+  async execute(args: ReadFileArgs, ctx: ToolContext): Promise<ToolResult> {
+    if (!args?.path || typeof args.path !== "string") {
       return { success: false, data: "缺少必要参数 path", error: "INVALID_ARGS" };
     }
 
-    const filePath = resolvePath(params.path, ctx.cwd);
+    const filePath = resolvePath(args.path, ctx.cwd);
 
     try {
       // 检查文件大小
@@ -118,9 +114,9 @@ export const readFileTool: Tool = {
       }
 
       // 行号范围处理（1-based → 0-based）
-      const startLine = Math.max(1, params.startLine ?? 1) - 1;
-      const endLine = params.endLine
-        ? Math.min(params.endLine, lines.length)
+      const startLine = Math.max(1, args.startLine ?? 1) - 1;
+      const endLine = args.endLine
+        ? Math.min(args.endLine, lines.length)
         : lines.length;
       const selectedLines = lines.slice(startLine, endLine);
 
