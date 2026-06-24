@@ -1,12 +1,5 @@
 // ---------------------------------------------------------------------------
 // 工具系统核心类型定义
-//
-// 参照 Zed AgentTool 架构重构：
-// - AgentTool<I, O>：静态类型安全的工具定义（类似 Zed 的 AgentTool trait）
-// - AnyAgentTool：动态分发接口（类似 Zed 的 AnyAgentTool trait）
-// - ToolKind：语义化工具分类，替代 boolean readOnly
-// - Description 自动从 Schema 推导
-// - 结构化错误输出，让 LLM 能读懂的 Result
 // ---------------------------------------------------------------------------
 
 /** 工具的分类语义，替代原来的 boolean readOnly */
@@ -66,7 +59,7 @@ export interface FileDiff {
 /**
  * 工具执行结果。
  *
- * 设计要点（参照 Zed Result<Output, Output>）：
+ * 设计要点：
  * - 成功和失败共用相同结构，LLM 总能读到可理解的 data
  * - error 字段仅做分类标记（如 TEXT_NOT_FOUND），不暴露内部细节
  * - diff 仅在文件修改工具携带
@@ -92,17 +85,6 @@ export interface ToolResult {
 // ---------------------------------------------------------------------------
 // AgentTool — 静态类型安全的工具定义
 //
-// 参照 Zed 的 AgentTool trait：
-//    trait AgentTool {
-//        type Input: Deserialize + Serialize + JsonSchema;
-//        type Output: Into<LanguageModelToolResultContent>;
-//        const NAME: &'static str;
-//        fn description() -> SharedString;  // auto from schema
-//        fn kind() -> acp::ToolKind;
-//        fn run(self: Arc<Self>, input, event_stream, cx) -> Task<Result<Output, Output>>;
-//    }
-//
-// TypeScript 中没有 trait 系统，用泛型接口 + 工厂模式模拟。
 // 每个工具定义为一个对象，提供类型安全的泛型参数。
 // ---------------------------------------------------------------------------
 
@@ -132,19 +114,19 @@ export interface AgentTool<I, O extends ToolResult = ToolResult> {
   execute(args: I, ctx: ToolContext): Promise<O>;
 
   /**
-   * UI 初始标题（可选），类似 Zed 的 initial_title()。
+   * UI 初始标题（可选）。
    * 用于在 UI 中显示正在执行的工具名称。
    */
   initialTitle?(args: I): string;
 
   /**
-   * 是否支持输入流式传输（可选），对应 Zed 的 supports_input_streaming()。
+   * 是否支持输入流式传输（可选）。
    * 用于支持 LLM 流式传输工具调用参数。
    */
   supportsInputStreaming?: boolean;
 
   /**
-   * 工具支持的 LLM Provider（可选），对应 Zed 的 supports_provider()。
+   * 工具支持的 LLM Provider（可选）。
    * 返回空/undefined 表示支持所有 provider。
    */
   supportedProviders?: string[];
@@ -153,8 +135,7 @@ export interface AgentTool<I, O extends ToolResult = ToolResult> {
 // ---------------------------------------------------------------------------
 // AnyAgentTool — 动态分发接口（Type Erasure 模式）
 //
-// 对应 Zed 的 AnyAgentTool trait，将类型参数擦除。
-// 用于 Registry 等需要存储异构工具集合的场景。
+// 将类型参数擦除，用于 Registry 等需要存储异构工具集合的场景。
 // ---------------------------------------------------------------------------
 
 /**
@@ -175,7 +156,6 @@ export interface AnyAgentTool {
 
 /**
  * 将类型安全的 AgentTool 擦除为 AnyAgentTool。
- * 对应 Zed 的 erase() 方法。
  */
 export function eraseTool<I, O extends ToolResult = ToolResult>(
   tool: AgentTool<I, O>,
@@ -202,7 +182,6 @@ export function eraseTool<I, O extends ToolResult = ToolResult>(
  * 从 JSON Schema 中提取 description。
  * 若 schema.properties 的顶层有 description，使用它；
  * 否则使用 schema 本身的 description。
- * 对应 Zed 的 AgentTool::description() 默认实现。
  */
 export function extractDescription(schema: JSONSchema, fallback?: string): string {
   if (schema.description) return schema.description;

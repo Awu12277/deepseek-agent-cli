@@ -24,6 +24,32 @@ export interface ChatOptions {
   temperature?: number;
   /** 可用工具定义列表，传给模型以启用 function calling */
   tools?: ToolDefinition[];
+  /**
+   * 是否允许深度思考（thinking mode）。
+   * 启用后模型会在回答前进行更长的推理链，适合复杂问题。
+   * 仅 DeepSeek V4 Flash/Pro 支持。
+   */
+  thinkingAllowed?: boolean;
+  /**
+   * 推理努力等级，控制思考深度。
+   * - "high"：标准深度思考
+   * - "max"：最大努力思考（更长的推理链）
+   * 仅 thinkingAllowed=true 时有效。
+   */
+  thinkingEffort?: "high" | "max";
+  /**
+   * 响应格式控制。
+   * - "text"：普通文本（默认）
+   * - "json_object"：强制输出合法 JSON
+   */
+  responseFormat?: "text" | "json_object";
+  /**
+   * 工具调用策略。
+   * - "auto"：模型自行决定是否调用（默认）
+   * - "required"：强制模型调用工具
+   * - "none"：禁止调用工具
+   */
+  toolChoice?: "auto" | "required" | "none";
 }
 
 /** 工具调用信息（模型返回的 function call） */

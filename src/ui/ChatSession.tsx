@@ -14,7 +14,7 @@ import { SkillSelector } from "./SkillSelector.js";
 import { FileSelector } from "./FileSelector.js";
 import type { SkillInfo } from "../cli/skill-import.js";
 import { CostTracker } from "../provider/cost-tracker.js";
-import type { ProviderToolCall, UsageInfo } from "../provider/index.js";
+import type { ModelId, ProviderToolCall, UsageInfo } from "../provider/index.js";
 import type { FileDiff } from "../tool/types.js";
 import { createProvider } from "../provider/index.js";
 import { Session } from "../agent/index.js";
@@ -73,6 +73,8 @@ registerCommand("/help", {
 registerCommand("/clear", { desc: "清空对话历史", handler: () => ({ kind: "clear" }) });
 registerCommand("/version", { desc: "显示版本信息", handler: () => ({ kind: "text", content: "dskcode v0.1.10" }) });
 registerCommand("/model", { desc: "切换模型", handler: () => ({ kind: "text", content: "请直接输入 /model 进入选择界面" }) });
+registerCommand("/thinking", { desc: "切换深度思考模式", handler: () => ({ kind: "text", content: "请直接输入 /thinking 切换" }) });
+registerCommand("/effort", { desc: "切换推理等级 High/Max", handler: () => ({ kind: "text", content: "请直接输入 /effort 切换" }) });
 registerCommand("/game", { desc: "启动游戏", handler: () => ({ kind: "navigate", target: "game" }) });
 registerCommand("/stock", { desc: "查看股票行情", handler: () => ({ kind: "navigate", target: "stock" }) });
 
@@ -176,6 +178,12 @@ export function ChatSession({
   const [activeModel, setActiveModel] = useState<ModelId>(model as ModelId);
   const [streamingModel, setStreamingModel] = useState<string | undefined>(undefined);
   const [streamError, setStreamError] = useState<string | undefined>(undefined);
+
+  // 高级设置
+  const [thinkingEnabled, setThinkingEnabled] = useState(true);
+  const [thinkingEffort, setThinkingEffort] = useState<"high" | "max">("high");
+  const [responseFormat, setResponseFormat] = useState<"text" | "json_object">("text");
+  const [toolChoice, setToolChoice] = useState<"auto" | "required" | "none" | undefined>(undefined);
 
   // 命令提示轮播索引
   const cmdTips = Array.from(getRegisteredCommands())
@@ -348,9 +356,16 @@ export function ChatSession({
           }
         }
 
+        // 模型选择 / 设置选择模式下的通用键盘处理
+        if (selectingModel) {
+          if (key.upArrow || key.downArrow) {
+            // 已在模型选择模式下处理上下键
+          }
+          return;
+        }
+
         if (key.ctrl && _input === "c") {
           if (isStreaming) {
-            // 流式输出中，取消当前请求
             abortRef.current?.abort();
           } else {
             handleCtrlC();
@@ -367,12 +382,12 @@ export function ChatSession({
     ),
   );
 
-  // 命令提示轮播 — 每 5 秒切换下一条
+  // 命令提示轮播 — 每 2 秒切换下一条
   useEffect(() => {
     if (cmdTips.length <= 1) return;
     const timer = setInterval(() => {
       setCmdTipIndex((prev) => (prev + 1) % cmdTips.length);
-    }, 5000);
+    }, 2000);
     return () => clearInterval(timer);
   }, [cmdTips.length]);
 
@@ -522,9 +537,10 @@ export function ChatSession({
 
     // 处理斜杠命令
     if (trimmed.startsWith("/") && trimmed.length > 1) {
+      const cmdLower = trimmed.toLowerCase();
+
       // /model 命令：进入模型选择模式
-      if (trimmed.toLowerCase() === "/model") {
-        // 默认高亮当前模型
+      if (cmdLower === "/model") {
         const curIdx = modelOptions.indexOf(activeModel);
         setModelSelectIndex(curIdx >= 0 ? curIdx : 0);
         setSelectingModel(true);
@@ -532,7 +548,54 @@ export function ChatSession({
         return;
       }
 
-      const cmd = commandRegistry.get(trimmed.toLowerCase());
+      // /thinking 命令：切换深度思考
+      if (cmdLower === "/thinking") {
+        setThinkingEnabled((prev) => !prev);
+        setDisplayMessages((prev) => [
+          ...prev,
+          { role: "user", content: trimmed },
+          { role: "assistant", content: `深度思考已${thinkingEnabled ? "关闭" : "开启"}` },
+        ]);
+        setInput("");
+        return;
+      }
+
+      // /effort 命令：切换推理等级
+      if (cmdLower === "/effort") {
+        const next = thinkingEffort === "high" ? "max" : "high";
+        setThinkingEffort(next);
+        setDisplayMessages((prev) => [
+          ...prev,
+          { role: "user", content: trimmed },
+          { role: "assistant", content: `推理等级已切换为 ${next === "high" ? "High" : "Max"}` },
+        ]);
+        setInput("");
+        return;
+      }
+
+
+
+      // /tools 命令：切换工具调用策略
+      if (cmdLower === "/tools") {
+        const next = toolChoice === undefined ? "none"
+          : toolChoice === "none" ? "required"
+          : toolChoice === "required" ? "auto"
+          : undefined;
+        setToolChoice(next);
+        const label = next === undefined ? "自动（默认）"
+          : next === "none" ? "禁止调用"
+          : next === "required" ? "强制调用"
+          : "自动（默认）";
+        setDisplayMessages((prev) => [
+          ...prev,
+          { role: "user", content: trimmed },
+          { role: "assistant", content: `工具调用策略已切换为 ${label}` },
+        ]);
+        setInput("");
+        return;
+      }
+
+      const cmd = commandRegistry.get(cmdLower);
       if (cmd) {
         const result = cmd.handler();
 
@@ -623,7 +686,12 @@ export function ChatSession({
     abortRef.current = abortController;
 
     try {
-      for await (const event of session!.chat(trimmed)) {
+      for await (const event of session!.chat(trimmed, {
+        thinkingAllowed: thinkingEnabled || undefined,
+        thinkingEffort: thinkingEnabled ? thinkingEffort : undefined,
+        responseFormat: responseFormat !== "text" ? responseFormat : undefined,
+        toolChoice,
+      })) {
         // 如果请求被取消，跳过后续事件
         if (abortController.signal.aborted) break;
 
@@ -719,7 +787,7 @@ export function ChatSession({
         ]);
       }
     }
-  }, [onLaunchGame, onLaunchStock, currentContent, currentToolCalls, skills, skillSelectIndex, getFilteredSkills]);
+  }, [onLaunchGame, onLaunchStock, currentContent, currentToolCalls, skills, skillSelectIndex, getFilteredSkills, thinkingEnabled, thinkingEffort, responseFormat, toolChoice, activeModel]);
 
   // 从 costTracker 更新今日消耗（每次流式结束后刷新）
   useEffect(() => {
@@ -762,6 +830,19 @@ export function ChatSession({
           <Text color="#00ff41">{"  ✔ "}已就绪 {skillCount} 个 Skill</Text>
           <Text color="#00ffff">{"  ℹ "}已就绪 {toolCount} 个工具</Text>
           <Text color="#00ffff">{"  🔧 模型 "}{SUPPORTED_MODELS[activeModel]?.displayName ?? activeModel}</Text>
+          {thinkingEnabled && (
+            <Text color="#ff9800">{"  🧠 深度思考 "}{thinkingEffort === "max" ? "Max" : "High"}</Text>
+          )}
+          {responseFormat === "json_object" && (
+            <Text color="#4caf50">{"  📄 JSON"}</Text>
+          )}
+          {toolChoice !== undefined && (
+            <Text color="#e91e63">{"  🛠 "}{
+              toolChoice === "none" ? "禁止工具"
+              : toolChoice === "required" ? "强制工具"
+              : ""
+            }</Text>
+          )}
           {/* 命令提示轮播 — 每 5 秒切换下一条，渐变动画 */}
           {cmdTips.length > 0 && (() => {
             const tip = cmdTips[cmdTipIndex % cmdTips.length];

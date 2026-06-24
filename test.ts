@@ -420,7 +420,7 @@ function extractFileName(filePath: string): string {
 // ---------------------------------------------------------------------------
 
 /**
- * 计算两个文本之间的 unified diff，返回 FileDiff 对象。
+ * 计算两个文本之间的 unified diff，返回 Diff 对象。
  *
  * 使用 Myers O(ND) 算法产生最短编辑脚本，与 Git 的 diff 引擎同款。
  * 自动检测并保留原始文件的行尾风格（LF / CRLF）。

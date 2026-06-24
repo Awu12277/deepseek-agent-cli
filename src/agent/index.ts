@@ -122,7 +122,7 @@ export class Session {
    *    d. 如果没有工具调用 → 退出循环
    * 3. yield done 事件
    */
-  async *chat(userInput: string): AsyncGenerator<AgentEvent> {
+  async *chat(userInput: string, opts?: import("../provider/types.js").ChatOptions): AsyncGenerator<AgentEvent> {
     // 1. 追加用户消息
     this.#messages.push({ role: "user", content: userInput });
 
@@ -147,9 +147,14 @@ export class Session {
 
         // b. 调用 Provider 流式接口
         const toolDefs = this.#buildToolDefinitions();
+        // 合并内部选项与用户传入的设置
         const stream = this.#provider.chat(apiMessages, {
           signal: this.#abortController.signal,
           tools: toolDefs.length > 0 ? toolDefs : undefined,
+          thinkingAllowed: opts?.thinkingAllowed,
+          thinkingEffort: opts?.thinkingEffort,
+          responseFormat: opts?.responseFormat,
+          toolChoice: opts?.toolChoice,
         });
 
         // c. 逐步解析流式响应

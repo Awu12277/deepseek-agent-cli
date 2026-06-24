@@ -1,12 +1,5 @@
 // ---------------------------------------------------------------------------
 // 工具注册表 — 注册、查找、列出、过滤工具
-//
-// 参照 Zed 的 tools! 宏 + Thread::enabled_tools 架构重构：
-// - 注册时检查名称唯一性（编译期常量 + 运行时双重校验）
-// - Feature flag 门控：类似 Zed 的 tool_feature_flag_enabled()
-// - Provider 过滤：类似 Zed 的 tool_supports_provider()
-// - 语义化 ToolKind 分类
-// - ALL_TOOL_NAMES 编译期常量列表
 // ---------------------------------------------------------------------------
 
 import { ToolKind, type AnyAgentTool, type ToolContext, type ToolResult, type AgentTool, eraseTool, isReadOnly } from "./types.js";
@@ -17,14 +10,12 @@ export interface ToolRegistryOptions {
   disabledTools?: string[];
   /**
    * Feature Flag 检查函数，返回 true 表示该工具可用。
-   * 对应 Zed 的 tool_feature_flag_enabled()。
    * 不在列表中的工具默认启用。
    */
   featureFlagChecker?: (toolName: string) => boolean;
   /**
    * 当前使用的 LLM Provider ID。
    * 提供后只会列出支持该 provider 的工具。
-   * 对应 Zed 的 tool_supports_provider()。
    */
   provider?: string;
 }
@@ -32,8 +23,8 @@ export interface ToolRegistryOptions {
 /**
  * ToolRegistry — 管理所有已注册的工具。
  *
- * 设计要点（参照 Zed 的 tools! 宏 + Thread）：
- * - 注册时检查名称唯一性（如 Zed 的编译期 str_eq 检查）
+ * 设计要点：
+ * - 注册时检查名称唯一性
  * - 支持 disable/enable 工具（基于配置项过滤）
  * - 支持 Feature Flag 门控
  * - 支持 Provider 过滤
@@ -105,7 +96,6 @@ export class ToolRegistry {
   /**
    * 获取所有启用的工具列表。
    * 依次应用：禁用列表 → Feature Flag → Provider 过滤。
-   * 对应 Zed 的 built_in_tools() + enabled_tools()。
    */
   list(): AnyAgentTool[] {
     const result: AnyAgentTool[] = [];
@@ -214,7 +204,6 @@ export class ToolRegistry {
   /**
    * 判断工具是否应该启用。
    * 依次检查：是否在禁用列表 → 是否通过 Feature Flag → 是否支持当前 Provider。
-   * 对应 Zed 的 enabled_tools() 中的多层过滤逻辑。
    */
   #isToolEnabled(name: string): boolean {
     const tool = this.#tools.get(name);
@@ -223,10 +212,10 @@ export class ToolRegistry {
     // 1. 禁用列表检查
     if (this.#disabledNames.has(name)) return false;
 
-    // 2. Feature Flag 检查（对应 Zed 的 tool_feature_flag_enabled）
+    // 2. Feature Flag 检查
     if (!this.#featureFlagChecker(name)) return false;
 
-    // 3. Provider 兼容性检查（对应 Zed 的 tool_supports_provider）
+    // 3. Provider 兼容性检查
     if (this.#provider && tool.supportedProviders.length > 0) {
       if (!tool.supportedProviders.includes(this.#provider)) return false;
     }
