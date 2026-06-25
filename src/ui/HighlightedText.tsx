@@ -1,10 +1,11 @@
 // ---------------------------------------------------------------------------
 // HighlightedText — AI 回复文本高亮渲染
 //
-// 支持三种语法：
+// 支持四种语法：
 //   `` `code` ``          → 天蓝色（代码标识符、文件路径）
 //   `**bold**`            → 紫色（强调内容，如"第 12 行"）
 //   ```...``` 代码块       → 独立块渲染，diff 内容自动绿/红着色
+//   | col | col | 表格     → 框线表格，自动对齐
 // 流式传输中未闭合的标记自动降级为纯文本，不会闪烁。
 // ---------------------------------------------------------------------------
 
@@ -12,7 +13,7 @@ import { Box, Text } from "ink";
 import type { ReactNode } from "react";
 
 /** 解析后的文本段类型 */
-type SegmentType = "plain" | "code" | "bold" | "code_block";
+type SegmentType = "plain" | "code" | "bold" | "code_block" | "table";
 
 interface Segment {
   text: string;
@@ -60,6 +61,75 @@ function parseCodeBlocks(text: string): Segment[] {
   }
 
   return segments;
+}
+
+// ---------------------------------------------------------------------------
+// 第 0.5 遍：Markdown 表格检测（在 plain 段内）
+// ---------------------------------------------------------------------------
+
+/** 判断一行是不是表格行（以 | 开头并以 | 结尾） */
+function isTableRow(line: string): boolean {
+  const t = line.trim();
+  return /^\|.+\|$/.test(t);
+}
+
+/** 判断一行是不是表格分隔行（|:---:|:---:| 等） */
+function isTableSepRow(line: string): boolean {
+  const t = line.trim();
+  // 字符类需包含 | 以匹配多列分隔行，如 |---|---|
+  return /^\|[-: |]+\|$/.test(t) && t.includes("-");
+}
+
+/**
+ * 在 plain 文本中检测 Markdown 表格块（连续的 `|...|` 行），标记为 "table" 类型。
+ *
+ * 表格判定条件：
+ * 1. 开头行是表格行
+ * 2. 第二行是分隔行（含 `-`）
+ * 3. 第三行也是表格行
+ */
+function parseTables(text: string): Segment[] {
+  const lines = text.split("\n");
+  const result: Segment[] = [];
+  let plainBuf = "";
+
+  function flushPlain() {
+    if (plainBuf) {
+      result.push({ text: plainBuf, type: "plain" });
+      plainBuf = "";
+    }
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+
+    if (
+      isTableRow(line) &&
+      i + 1 < lines.length &&
+      isTableSepRow(lines[i + 1] ?? "") &&
+      i + 2 < lines.length &&
+      isTableRow(lines[i + 2] ?? "")
+    ) {
+      flushPlain();
+
+      // 收集所有连续的表格行（含分隔行）
+      const tableLineList: string[] = [];
+      let j = i;
+      while (j < lines.length && isTableRow(lines[j] ?? "")) {
+        tableLineList.push(lines[j]!);
+        j++;
+      }
+
+      result.push({ text: tableLineList.join("\n"), type: "table" });
+      i = j - 1;
+    } else {
+      if (plainBuf) plainBuf += "\n" + line;
+      else plainBuf = line;
+    }
+  }
+
+  flushPlain();
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -168,13 +238,13 @@ function parseInlineCode(text: string): Segment[] {
  * - **plain** 段内的 code → 标蓝，剩余部分保持默认色
  * - **bold** 段内的 code → 标蓝，剩余部分保持紫色
  * - 多反引号序列（```` ```code``` ````、`` ``code`` `` 等）统一降级为纯文本
- * - code_block 段直接透传
+ * - code_block / table 段直接透传
  */
 function parseCodePairs(segments: Segment[]): Segment[] {
   const result: Segment[] = [];
 
   for (const seg of segments) {
-    if (seg.type === "code_block") {
+    if (seg.type === "code_block" || seg.type === "table") {
       result.push(seg);
       continue;
     }
@@ -268,6 +338,177 @@ function CodeBlockRenderer({ code }: { code: string }): ReactNode {
         // 上下文行或非 diff 代码行
         return <Text key={i}>{line}</Text>;
       })}
+    </Box>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 表格渲染
+// ---------------------------------------------------------------------------
+
+/** 表格最大总宽度 */
+const TABLE_MAX_WIDTH = 90;
+/** 表格列最小宽度 */
+const TABLE_MIN_COL_WIDTH = 3;
+
+/**
+ * 计算单个字符在终端中的显示宽度。
+ * CJK 文字、全角符号、emoji 占 2 格；其余占 1 格。
+ */
+function charWidth(ch: string): number {
+  const cp = ch.codePointAt(0);
+  if (cp === undefined) return 0;
+
+  // CJK 相关范围
+  if (
+    (cp >= 0x1100 && cp <= 0x115F) || // Hangul Jamo
+    cp === 0x2329 || cp === 0x232A ||
+    (cp >= 0x2E80 && cp <= 0xA4CF) || // CJK Radicals ~ Yi
+    (cp >= 0xA960 && cp <= 0xA97F) || // Hangul Extended
+    (cp >= 0xAC00 && cp <= 0xD7AF) || // Hangul Syllables
+    (cp >= 0xF900 && cp <= 0xFAFF) || // CJK Compat
+    (cp >= 0xFE10 && cp <= 0xFE1F) || // Vertical forms
+    (cp >= 0xFF01 && cp <= 0xFF60) || // Fullwidth
+    (cp >= 0xFFE0 && cp <= 0xFFE6) ||
+    (cp >= 0x1F000 && cp <= 0x1FFFF)   // Emoji / Symbols
+  ) {
+    return 2;
+  }
+  return 1;
+}
+
+/** 计算字符串在终端中的视觉宽度 */
+function visualWidth(text: string): number {
+  let w = 0;
+  for (const ch of text) {
+    w += charWidth(ch);
+  }
+  return w;
+}
+
+/** 用空格将字符串填充到目标视觉宽度 */
+function padToWidth(text: string, targetWidth: number, align: "left" | "center" | "right"): string {
+  const vw = visualWidth(text);
+  const delta = targetWidth - vw;
+  if (delta <= 0) return text;
+
+  const leftPad = align === "right" ? delta : align === "center" ? Math.floor(delta / 2) : 0;
+  const rightPad = delta - leftPad;
+
+  return " ".repeat(leftPad) + text + " ".repeat(rightPad);
+}
+
+/** 解析表格一行为单元格数组 */
+function parseTableCells(line: string): string[] {
+  const t = line.trim();
+  // 去掉首尾的 |，再按 | 切割
+  const inner = t.slice(1, t.length - 1);
+  return inner.split("|").map((c) => c.trim());
+}
+
+/** 从分隔行解析每列对齐方式 */
+function parseAlignments(sepLine: string): Array<"left" | "center" | "right"> {
+  const cells = parseTableCells(sepLine);
+  return cells.map((c) => {
+    const l = c.startsWith(":");
+    const r = c.endsWith(":");
+    if (l && r) return "center";
+    if (r) return "right";
+    return "left";
+  });
+}
+
+/**
+ * 渲染 Markdown 表格为终端框线表格。
+ *
+ * 输出示例：
+ * ┌──────────┬──────────────────────────┬──────────────────────────┐
+ * │ 位置     │ 原内容                   │ 新内容                   │
+ * ├──────────┼──────────────────────────┼──────────────────────────┤
+ * │ 第 12 行 │ interface FileDiffs {    │ interface Diffs {        │
+ * └──────────┴──────────────────────────┴──────────────────────────┘
+ */
+function TableRenderer({ text }: { text: string }): ReactNode {
+  const rawLines = text.split("\n").filter((l) => l.trim().length > 0);
+  if (rawLines.length < 2) return <Text>{text}</Text>;
+
+  // 找到分隔行
+  let sepIdx = -1;
+  for (let k = 0; k < rawLines.length; k++) {
+    if (isTableSepRow(rawLines[k]!)) {
+      sepIdx = k;
+      break;
+    }
+  }
+  if (sepIdx === -1) return <Text>{text}</Text>;
+
+  // 表头（分隔行之前的所有行合并为一行，防止多行表头）
+  const headerText = rawLines.slice(0, sepIdx).join("");
+  const headerCells = parseTableCells(headerText);
+  const alignments = parseAlignments(rawLines[sepIdx]!);
+  const dataRows = rawLines.slice(sepIdx + 1).map(parseTableCells);
+
+  const colCount = headerCells.length;
+
+  // 计算每列最大视觉宽度
+  const colMaxWidths = headerCells.map((_, ci) => {
+    let max = visualWidth(headerCells[ci] ?? "");
+    for (const row of dataRows) {
+      const w = visualWidth(row[ci] ?? "");
+      if (w > max) max = w;
+    }
+    return Math.max(max, TABLE_MIN_COL_WIDTH);
+  });
+
+  // 计算每列最终宽度（留 2 格边距 = 左右各 1 空格）
+  const margin = 2;
+  const totalMinWidth = colMaxWidths.reduce((s, w) => s + w + margin, 1); // +1 for leading │
+  let colWidths: number[];
+  if (totalMinWidth <= TABLE_MAX_WIDTH) {
+    colWidths = colMaxWidths;
+  } else {
+    // 超出总宽 → 等比例缩减
+    const available = TABLE_MAX_WIDTH - 1 - margin * colCount;
+    const sum = colMaxWidths.reduce((s, w) => s + w, 0);
+    colWidths = colMaxWidths.map((w) => Math.max(TABLE_MIN_COL_WIDTH, Math.floor((w / sum) * available)));
+  }
+
+  // 框线字符
+  const H = "─";
+  const makeSep = (l: string, m: string, r: string) =>
+    l + colWidths.map((w) => H.repeat(w + margin)).join(m) + r;
+
+  const topBorder = makeSep("┌", "┬", "┐");
+  const midBorder = makeSep("├", "┼", "┤");
+  const botBorder = makeSep("└", "┴", "┘");
+
+  // 渲染一行单元格
+  function rowLine(cells: string[], keyBase: string): ReactNode {
+    return (
+      <Text key={keyBase}>
+        {"│"}
+        {cells.map((cell, ci) => (
+          <Text key={ci}>
+            {" "}
+            {padToWidth(cell.slice(0, colWidths[ci] ?? TABLE_MIN_COL_WIDTH), colWidths[ci] ?? TABLE_MIN_COL_WIDTH, alignments[ci] ?? "left")}
+            {" "}│
+          </Text>
+        ))}
+      </Text>
+    );
+  }
+
+  const rows: ReactNode[] = [
+    <Text key="top" color="#888888">{topBorder}</Text>,
+    rowLine(headerCells, "hdr"),
+    <Text key="mid" color="#888888">{midBorder}</Text>,
+    ...dataRows.map((cells, ri) => rowLine(cells, `d${ri}`)),
+    <Text key="bot" color="#888888">{botBorder}</Text>,
+  ];
+
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      {rows}
     </Box>
   );
 }
@@ -369,38 +610,46 @@ interface HighlightedTextProps {
 }
 
 /**
- * 渲染 AI 回复文本，支持三种标记高亮：
- * - `` `code` ``      → 天蓝色
- * - `**bold**`        → 紫色
- * - ```` ```diff ```` → 独立块，`+` 绿色 / `-` 红色 / `@@` 青色
- *
- * 用法：
- * ```tsx
- * <HighlightedText>已完成。`test.ts` 中 **第 12 行** 的修改。</HighlightedText>
- * ```
+ * 渲染 AI 回复文本，支持四种标记高亮：
+ * - `` `code` ``        → 天蓝色
+ * - `**bold**`          → 紫色
+ * - ```` ```diff ````   → 独立块，`+` 绿色 / `-` 红色 / `@@` 青色
+ * - `| ... |` Markdown  → 框线表格
  */
 export function HighlightedText({ children: text }: HighlightedTextProps): ReactNode {
   // 第 0 遍：提取 ```...``` 代码块
   const codeBlockSegments = parseCodeBlocks(text);
 
-  // 第 1 遍：在 inline plain 段内解析 **bold**
-  const boldSegments: Segment[] = [];
+  // 第 0.5 遍：在非代码块的 plain 段中检测 Markdown 表格
+  const tableSegments: Segment[] = [];
   for (const seg of codeBlockSegments) {
     if (seg.type === "code_block") {
+      tableSegments.push(seg);
+    } else {
+      tableSegments.push(...parseTables(seg.text));
+    }
+  }
+
+  // 第 1 遍：在 inline plain 段内解析 **bold**
+  const boldSegments: Segment[] = [];
+  for (const seg of tableSegments) {
+    if (seg.type === "code_block" || seg.type === "table") {
       boldSegments.push(seg);
     } else {
       boldSegments.push(...parseBoldPairs(seg.text));
     }
   }
 
-  // 第 2 遍：在 inline plain 段内解析 `code`（自动跳过 code_block / bold）
+  // 第 2 遍：在 inline plain 段内解析 `code`
   const segments = parseCodePairs(boldSegments);
 
-  // 检查是否包含代码块
-  const hasCodeBlock = segments.some((s) => s.type === "code_block");
+  // 检查是否包含块级元素
+  const hasBlock = segments.some(
+    (s) => s.type === "code_block" || s.type === "table",
+  );
 
-  // ---- 无代码块：纯内联渲染（与之前一致） ----
-  if (!hasCodeBlock) {
+  // ---- 无块级元素：纯内联渲染 ----
+  if (!hasBlock) {
     const isSimple = segments.length === 1 && segments[0]!.type === "plain";
     if (isSimple) {
       return <Text wrap="wrap">{text}</Text>;
@@ -425,7 +674,7 @@ export function HighlightedText({ children: text }: HighlightedTextProps): React
     );
   }
 
-  // ---- 有代码块：分组渲染（inline 组 + 块级渲染） ----
+  // ---- 有块级元素：分组渲染（inline 组 + 块级渲染） ----
   const rendered: ReactNode[] = [];
   let inlineGroup: Segment[] = [];
 
@@ -464,7 +713,14 @@ export function HighlightedText({ children: text }: HighlightedTextProps): React
   for (const seg of segments) {
     if (seg.type === "code_block") {
       flushInline(rendered.length);
-      rendered.push(<CodeBlockRenderer key={`b${rendered.length}`} code={seg.text} />);
+      rendered.push(
+        <CodeBlockRenderer key={`b${rendered.length}`} code={seg.text} />,
+      );
+    } else if (seg.type === "table") {
+      flushInline(rendered.length);
+      rendered.push(
+        <TableRenderer key={`t${rendered.length}`} text={seg.text} />,
+      );
     } else {
       inlineGroup.push(seg);
     }

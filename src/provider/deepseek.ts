@@ -15,7 +15,6 @@ import type {
   UsageInfo,
   ModelId,
   ClientOptions,
-  BalanceResult,
 } from "./types.js";
 import { estimateTokens } from "./models.js";
 import { HttpClient } from "./client.js";
@@ -233,7 +232,7 @@ export class DeepSeekProvider implements Provider {
   /**
    * 查询账户余额。
    */
-  async getBalance(): Promise<BalanceResult> {
+  async getBalance(): Promise<import("./types.js").BalanceResult> {
     return protocolBalance(this.#client, this.#baseUrl, this.#apiKey);
   }
 
