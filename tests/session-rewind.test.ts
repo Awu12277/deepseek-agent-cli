@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, readFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
@@ -41,7 +41,7 @@ describe("Session 持久化与 Rewind", () => {
     tempDir = await mkdtemp(join(tmpdir(), "dskcode-session-"));
     projectDir = join(tempDir, "project");
     storeDir = join(tempDir, "sessions");
-    await execFileAsync("mkdir", ["-p", projectDir]);
+    await mkdir(projectDir, { recursive: true });
     await initGitRepo(projectDir);
     await writeFile(join(projectDir, "a.txt"), "original\n");
     await execFileAsync("git", ["add", "."], { cwd: projectDir });
