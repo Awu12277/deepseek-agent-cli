@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Agent 会话 — 消息编排、流式 LLM 调用、工具执行循环、成本追踪
+// Agent 会话 — 消息编排、流式 LLM 调用、工具执行循环、成本追踪、检查点、持久化
 // ---------------------------------------------------------------------------
 
 import type {
@@ -20,29 +20,50 @@ import { trimMessages, buildApiMessages } from "./message-builder.js";
 import { ToolRegistry } from "../tool/registry.js";
 import type { Gate, ToolCallRecord, ToolResult } from "../tool/types.js";
 import { AlwaysAllowGate } from "../tool/types.js";
+import {
+  createCheckpoint,
+  restoreCheckpointForce,
+  discardCheckpoint,
+  type Checkpoint,
+} from "../checkpoint/index.js";
+import { SessionStore, type StoredSession } from "../session-store/index.js";
 
 /** Session 构造选项 */
 export interface SessionOptions {
-  /** 当前工作目录（注入到 system prompt） */
   cwd?: string;
-  /** 最大工具调用轮次（防止无限循环），默认 20 */
   maxToolRounds?: number;
-  /** 为模型输出预留的 token 数，默认 4096 */
   reservedForOutput?: number;
-  /** 强制保留最近 N 轮对话（不参与上下文裁剪），默认 10 */
   preserveRecentRounds?: number;
-  /** 项目上下文（AGENTS.md 内容），可选 */
   projectContext?: string;
-  /** Gate 权限门 — 控制工具执行前的审批，默认 AlwaysAllowGate */
   gate?: Gate;
-  /** 写目录的白名单（用于 confine 路径安全），默认 [cwd] */
   writeRoots?: string[];
+  /**
+   * 会话 ID。传入则复用，不传则生成新 UUID。
+   * 使用 Session.resume() 恢复会话时必须传。
+   */
+  sessionId?: string;
+  /**
+   * 会话存储实例。不传则使用默认 ~/.dskcode/sessions/。
+   * 传 false 禁用持久化（用于测试和不需要保存的场景）。
+   */
+  store?: SessionStore | false;
+  /** 是否启用 checkpoint（/rewind 需要），默认 true */
+  enableCheckpoint?: boolean;
 }
 
-/**
- * Session 表示一个 Agent 会话 — 与 LLM 的一次完整对话，
- * 包含消息历史、流式输出、工具执行、成本追踪。
- */
+/** 消息检查点信息（对外暴露） */
+export interface MessageCheckpointInfo {
+  index: number;
+  preview: string;
+  timestamp: number;
+  isGitRepo: boolean;
+}
+
+/** rewind 操作结果 */
+export type RewindResult =
+  | { ok: true; fileRestored: boolean }
+  | { ok: false; error: string };
+
 export class Session {
   readonly #messages: ChatMessage[] = [];
   readonly #provider: Provider;
@@ -50,13 +71,16 @@ export class Session {
   readonly #costTracker: CostTracker;
   readonly #options: Required<
     Pick<SessionOptions, "cwd" | "maxToolRounds" | "reservedForOutput" | "preserveRecentRounds">
-  > & { projectContext?: string; gate: Gate; writeRoots: string[] };
+  > & { projectContext?: string; gate: Gate; writeRoots: string[]; enableCheckpoint: boolean };
   readonly #abortController = new AbortController();
 
-  // 风暴检测：记录每轮的工具调用错误
-  #stormRecords: ToolCallRecord[] = [];
+  readonly #sessionId: string;
+  readonly #store: SessionStore | null;
+  #createdAt: number;
+  #persistTimer: NodeJS.Timeout | null = null;
 
-  /** 当前会话模式：code（代码模式）或 plan（计划模式） */
+  #checkpoints = new Map<number, Checkpoint>();
+  #stormRecords: ToolCallRecord[] = [];
   #mode: SessionMode = "code";
 
   constructor(
@@ -66,7 +90,6 @@ export class Session {
     options?: SessionOptions,
   ) {
     this.#provider = provider;
-    // 兼容 AnyAgentTool[] 和 ToolRegistry 两种入参
     if (tools instanceof ToolRegistry) {
       this.#toolRegistry = tools;
     } else {
@@ -82,77 +105,44 @@ export class Session {
       projectContext: options?.projectContext,
       gate: options?.gate ?? new AlwaysAllowGate(),
       writeRoots: options?.writeRoots ?? [options?.cwd ?? process.cwd()],
+      enableCheckpoint: options?.enableCheckpoint ?? true,
     };
+    this.#sessionId = options?.sessionId ?? SessionStore.newId();
+    this.#store = options?.store === false ? null : (options?.store ?? new SessionStore());
+    this.#createdAt = Date.now();
   }
 
-  // -------------------------------------------------------------------------
-  // 公共只读属性
-  // -------------------------------------------------------------------------
+  get messages(): readonly ChatMessage[] { return this.#messages; }
+  get accumulatedCost(): number { return this.#costTracker.sessionTotalCost; }
+  get costTracker(): CostTracker { return this.#costTracker; }
+  get model(): string { return this.#provider.model(); }
+  get toolRegistry(): ToolRegistry { return this.#toolRegistry; }
+  get mode(): SessionMode { return this.#mode; }
+  get id(): string { return this.#sessionId; }
+  get store(): SessionStore | null { return this.#store; }
+  get createdAt(): number { return this.#createdAt; }
 
-  get messages(): readonly ChatMessage[] {
-    return this.#messages;
-  }
+  setMode(mode: SessionMode): SessionMode { this.#mode = mode; return this.#mode; }
 
-  get accumulatedCost(): number {
-    return this.#costTracker.sessionTotalCost;
-  }
-
-  get costTracker(): CostTracker {
-    return this.#costTracker;
-  }
-
-  get model(): string {
-    return this.#provider.model();
-  }
-
-  /** 获取工具注册表（只读视图） */
-  get toolRegistry(): ToolRegistry {
-    return this.#toolRegistry;
-  }
-
-  /** 获取当前会话模式 */
-  get mode(): SessionMode {
-    return this.#mode;
-  }
-
-  /** 切换会话模式，返回新模式 */
-  setMode(mode: SessionMode): SessionMode {
-    this.#mode = mode;
-    return this.#mode;
-  }
-
-  // -------------------------------------------------------------------------
-  // 流式对话 — Agent 主循环
-  // -------------------------------------------------------------------------
-
-  /**
-   * 执行一轮用户对话，以 AsyncGenerator 形式逐步 yield 事件。
-   *
-   * 主循环流程：
-   * 1. 追加用户消息
-   * 2. 进入 Agent 循环（最多 maxToolRounds 轮）
-   *    a. 构建消息 → 裁剪 → 调用 Provider 流式接口
-   *    b. 解析响应：文本增量、工具调用、使用量
-   *    c. 如果有工具调用 → 执行工具 → 追加结果 → 继续循环
-   *    d. 如果没有工具调用 → 退出循环
-   * 3. yield done 事件
-   */
   async *chat(userInput: string, opts?: ChatOptions): AsyncGenerator<AgentEvent> {
-    // 1. 追加用户消息
     this.#messages.push({ role: "user", content: userInput });
+    const userMsgIndex = this.#messages.length - 1;
+    if (this.#options.enableCheckpoint) {
+      try {
+        const checkpoint = await createCheckpoint(this.#options.cwd);
+        this.#checkpoints.set(userMsgIndex, checkpoint);
+      } catch { /* swallow */ }
+    }
 
-    // 2. 进入 Agent 循环
     const startTime = Date.now();
     let toolRounds = 0;
 
     try {
       while (toolRounds < this.#options.maxToolRounds) {
-        // a. 构建消息
         const systemPrompt = this.#buildSystemPrompt();
         const [trimmed] = trimMessages(
           [...this.#messages],
           {
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
             model: this.#provider.model() as unknown as ModelId,
             reservedForOutput: this.#options.reservedForOutput,
             systemPrompt,
@@ -161,9 +151,7 @@ export class Session {
         );
         const apiMessages = buildApiMessages(systemPrompt, trimmed);
 
-        // b. 调用 Provider 流式接口
         const toolDefs = this.#buildToolDefinitions();
-        // 合并内部选项与用户传入的设置
         const stream = this.#provider.chat(apiMessages, {
           signal: this.#abortController.signal,
           tools: toolDefs.length > 0 ? toolDefs : undefined,
@@ -173,7 +161,6 @@ export class Session {
           toolChoice: opts?.toolChoice,
         });
 
-        // c. 逐步解析流式响应
         let accumulatedText = "";
         let lastUsage: UsageInfo | undefined;
         let lastToolCalls: ProviderToolCall[] | undefined;
@@ -184,75 +171,45 @@ export class Session {
             accumulatedText += chunk.content;
             yield { type: "text_delta", content: chunk.content };
           }
-
-          if (chunk.toolCalls && chunk.toolCalls.length > 0) {
-            lastToolCalls = chunk.toolCalls;
-          }
-
-          if (chunk.usage) {
-            lastUsage = chunk.usage;
-          }
-
-          if (chunk.finishReason) {
-            _lastFinishReason = chunk.finishReason;
-          }
+          if (chunk.toolCalls && chunk.toolCalls.length > 0) lastToolCalls = chunk.toolCalls;
+          if (chunk.usage) lastUsage = chunk.usage;
+          if (chunk.finishReason) _lastFinishReason = chunk.finishReason;
         }
 
-        // d. 记录使用量与成本
         if (lastUsage) {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
           const modelId = this.#provider.model() as unknown as ModelId;
           this.#costTracker.record(lastUsage, modelId);
           yield { type: "usage", usage: lastUsage, model: modelId };
         }
 
-        // e. 追加助手消息到历史
-        const assistantMsg: ChatMessage = {
-          role: "assistant",
-          content: accumulatedText,
-        };
-        if (lastToolCalls && lastToolCalls.length > 0) {
-          assistantMsg.toolCalls = lastToolCalls;
-        }
+        const assistantMsg: ChatMessage = { role: "assistant", content: accumulatedText };
+        if (lastToolCalls && lastToolCalls.length > 0) assistantMsg.toolCalls = lastToolCalls;
         this.#messages.push(assistantMsg);
 
-        // f. 如果有工具调用，执行工具并继续循环
         if (lastToolCalls && lastToolCalls.length > 0) {
           yield { type: "tool_calls", calls: lastToolCalls };
 
-          // 风暴检测：检查上一个回合是否同一工具同一错误重复
           const stormBroken = this.#checkStormBreak(lastToolCalls);
           if (stormBroken) {
             const stormMsg = "\n⚠️ 同一工具重复出错，已强制切换策略\n";
             yield { type: "text_delta", content: stormMsg };
-            // 清除 assistant 消息中的 toolCalls，风暴中断不再执行这些调用
             assistantMsg.toolCalls = undefined;
-            // 将风暴信息追加到助手消息文本中
             assistantMsg.content += stormMsg;
-            // 重置风暴计数
             this.#stormRecords = [];
             toolRounds++;
             continue;
           }
 
-          // 执行工具调用批次
           const results = await this.#executeBatch(lastToolCalls);
           this.#stormRecords = results.records;
 
           for (const item of results.items) {
             yield { type: "tool_result", name: item.name, result: item.result };
-
-            // 构建 tool 消息内容
             let toolContent = item.result.data;
-            if (item.result.diff && item.result.diff.patch) {
-              toolContent += `\n\n${item.result.diff.patch}`;
-            }
-
+            if (item.result.diff && item.result.diff.patch) toolContent += `\n\n${item.result.diff.patch}`;
             this.#messages.push({
-              role: "tool",
-              content: toolContent,
-              toolCallId: item.callId,
-              name: item.name,
+              role: "tool", content: toolContent,
+              toolCallId: item.callId, name: item.name,
             });
           }
 
@@ -260,39 +217,20 @@ export class Session {
           continue;
         }
 
-        // 没有工具调用，退出循环
         break;
       }
     } catch (err: unknown) {
-      if (err instanceof DOMException && err.name === "AbortError") {
-        return;
-      }
-      if (err instanceof Error && err.name === "AbortError") {
-        return;
-      }
-
-      yield {
-        type: "error",
-        error: err instanceof Error ? err : new Error(String(err)),
-      };
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      if (err instanceof Error && err.name === "AbortError") return;
+      yield { type: "error", error: err instanceof Error ? err : new Error(String(err)) };
       return;
     }
 
     const elapsed = Date.now() - startTime;
+    void this.#persist();
     yield { type: "done", elapsed };
   }
 
-  // -------------------------------------------------------------------------
-  // 工具执行 — 批量、并行/串行、Gate、风暴检测
-  // -------------------------------------------------------------------------
-
-  /**
-   * 执行一批工具调用。
-   *
-   * 并行策略：
-   * - 如果这批工具全部是 ReadOnly 的，并行执行（最多 8 并发）
-   * - 否则按顺序串行执行，保证写/读顺序
-   */
   async #executeBatch(calls: ProviderToolCall[]): Promise<{ items: Array<{ name: string; callId: string; result: ToolResult }>; records: ToolCallRecord[] }> {
     const toolCtx: ToolContext = {
       cwd: this.#options.cwd,
@@ -300,19 +238,15 @@ export class Session {
       writeRoots: this.#options.writeRoots,
     };
 
-    // 判断是否能并行：全部 ReadOnly（使用 ToolKind 语义分类）
     const allReadOnly = calls.every((tc) => {
       const tool = this.#toolRegistry.get(tc.name);
       return tool ? isReadOnly(tool.kind) : true;
     });
 
     if (allReadOnly && calls.length > 1) {
-      // 并行执行 ReadOnly 工具
       const MAX_PARALLEL = 8;
       const items: Array<{ name: string; callId: string; result: ToolResult }> = [];
       const records: ToolCallRecord[] = [];
-
-      // 分批并行，每批最多 MAX_PARALLEL 个
       for (let i = 0; i < calls.length; i += MAX_PARALLEL) {
         const batch = calls.slice(i, i + MAX_PARALLEL);
         const promises = batch.map((tc) => this.#executeOne(tc, toolCtx));
@@ -322,11 +256,9 @@ export class Session {
           records.push(r.record);
         }
       }
-
       return { items, records };
     }
 
-    // 串行执行
     const items: Array<{ name: string; callId: string; result: ToolResult }> = [];
     const records: ToolCallRecord[] = [];
     for (const tc of calls) {
@@ -334,21 +266,15 @@ export class Session {
       items.push(r.item);
       records.push(r.record);
     }
-
     return { items, records };
   }
 
-  /**
-   * 执行单个工具调用，包含 Gate 检查和预览。
-   */
   async #executeOne(
     tc: ProviderToolCall,
     ctx: ToolContext,
   ): Promise<{ item: { name: string; callId: string; result: ToolResult }; record: ToolCallRecord }> {
     const toolName = tc.name;
     const timestamp = Date.now();
-
-    // 1. 查找工具
     const tool = this.#toolRegistry.get(toolName);
     if (!tool) {
       const errMsg = `工具 "${toolName}" 不存在或已被禁用`;
@@ -358,15 +284,9 @@ export class Session {
       };
     }
 
-    // 2. 解析参数
     let toolArgs: unknown;
-    try {
-      toolArgs = tc.arguments ? JSON.parse(tc.arguments) : {};
-    } catch {
-      toolArgs = {};
-    }
+    try { toolArgs = tc.arguments ? JSON.parse(tc.arguments) : {}; } catch { toolArgs = {}; }
 
-    // 3. Gate 检查（权限门）
     const gateResult = await this.#options.gate.check(toolName, toolArgs);
     if (!gateResult) {
       const errMsg = `工具 "${toolName}" 被权限门拒绝`;
@@ -376,30 +296,18 @@ export class Session {
       };
     }
 
-    // 4. 非只读工具有预览（可选）
     if (!isReadOnly(tool.kind)) {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
       const maybePreview = (tool as { preview?: (args: unknown, ctx: ToolContext) => Promise<unknown> }).preview;
       if (typeof maybePreview === "function") {
-        try {
-          await maybePreview(toolArgs, ctx);
-        } catch {
-          // 预览失败不影响执行
-        }
+        try { await maybePreview(toolArgs, ctx); } catch { /* ignore */ }
       }
     }
 
-    // 5. 执行工具
     try {
       const result = await tool.execute(toolArgs, ctx);
       return {
         item: { name: toolName, callId: tc.id, result },
-        record: {
-          name: toolName,
-          success: result.success,
-          error: result.error,
-          timestamp,
-        },
+        record: { name: toolName, success: result.success, error: result.error, timestamp },
       };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -411,93 +319,185 @@ export class Session {
     }
   }
 
-  // -------------------------------------------------------------------------
-  // 风暴检测 — 同一工具同一错误连续 3 次 → 强制换策略
-  // -------------------------------------------------------------------------
-
-  /**
-   * 连续 3 次同一工具同一错误 → 触发风暴中断。
-   */
   #checkStormBreak(currentCalls: ProviderToolCall[]): boolean {
     if (this.#stormRecords.length < 3) return false;
-
-    // 检查当前调用中是否有工具名与最近 3 次错误记录匹配
     const recentErrors = this.#stormRecords.slice(-3);
     if (recentErrors.length < 3) return false;
-
-    // 检查最近 3 次是否同一工具同一错误
     const first = recentErrors[0]!;
-    const allSame = recentErrors.every(
-      (r) => r.name === first.name && r.error === first.error && !r.success,
-    );
-
+    const allSame = recentErrors.every((r) => r.name === first.name && r.error === first.error && !r.success);
     if (!allSame) return false;
-
-    // 检查当前调用是否还包含这个工具
     return currentCalls.some((tc) => tc.name === first.name);
   }
 
-  // -------------------------------------------------------------------------
-  // 会话管理
-  // -------------------------------------------------------------------------
-
-  /** 取消正在进行的流式请求 */
   abort(): void {
     this.#abortController.abort();
+    if (this.#persistTimer) { clearTimeout(this.#persistTimer); this.#persistTimer = null; }
   }
 
-  /** 重置会话历史（保留 provider/tools 配置，重置成本追踪） */
   reset(): void {
     this.#messages.length = 0;
     this.#costTracker.resetSession();
     this.#stormRecords = [];
+    this.#checkpoints.clear();
+  }
+
+  // -------------------------------------------------------------------------
+  // 持久化与恢复
+  // -------------------------------------------------------------------------
+
+  async persistNow(): Promise<void> {
+    if (this.#persistTimer) { clearTimeout(this.#persistTimer); this.#persistTimer = null; }
+    await this.#doPersist();
+  }
+
+  #persist(): void {
+    if (!this.#store) return;
+    if (this.#persistTimer) { this.#persistTimer.refresh(); return; }
+    this.#persistTimer = setTimeout(() => {
+      this.#persistTimer = null;
+      void this.#doPersist();
+    }, 500);
+    this.#persistTimer.unref();
+  }
+
+  async #doPersist(): Promise<void> {
+    if (!this.#store) return;
+    const stored: StoredSession = {
+      id: this.#sessionId,
+      title: this.#deriveTitle(),
+      createdAt: this.#createdAt,
+      updatedAt: Date.now(),
+      cwd: this.#options.cwd,
+      model: this.#provider.model(),
+      messages: this.#serializeMessages(),
+      totalCost: this.#costTracker.sessionTotalCost,
+    };
+    try { await this.#store.save(stored); }
+    catch (err) { console.error("[Session] 持久化失败:", err); }
+  }
+
+  #deriveTitle(): string {
+    for (const m of this.#messages) {
+      if (m.role === "user" && m.content.trim()) return m.content.trim().slice(0, 40);
+    }
+    return "新会话";
+  }
+
+  #serializeMessages(): StoredSession["messages"] {
+    return this.#messages.map((msg, idx) => {
+      const checkpoint = this.#checkpoints.get(idx);
+      if (msg.role === "user" && checkpoint) return { ...msg, checkpoint };
+      return { ...msg };
+    });
+  }
+
+  static async resume(
+    id: string,
+    provider: Provider,
+    tools: AnyAgentTool[] | ToolRegistry = [],
+    costTracker?: CostTracker,
+    options?: SessionOptions,
+  ): Promise<Session> {
+    const store = options?.store === false ? null : (options?.store ?? new SessionStore());
+    if (!store) throw new Error("resume 需要启用持久化（options.store 不能为 false）");
+    const stored = await store.load(id);
+    if (!stored) throw new Error(`会话 ${id} 不存在`);
+
+    const session = new Session(provider, tools, costTracker, { ...options, sessionId: id, store });
+    for (const m of stored.messages) {
+      session.#messages.push({
+        role: m.role, content: m.content,
+        toolCallId: m.toolCallId, name: m.name, toolCalls: m.toolCalls,
+      });
+    }
+    for (let i = 0; i < stored.messages.length; i++) {
+      const cp = stored.messages[i]?.checkpoint;
+      if (cp) session.#checkpoints.set(i, cp);
+    }
+    session.#createdAt = stored.createdAt;
+    return session;
+  }
+
+  // -------------------------------------------------------------------------
+  // 检查点与 Rewind
+  // -------------------------------------------------------------------------
+
+  listCheckpoints(): MessageCheckpointInfo[] {
+    const result: MessageCheckpointInfo[] = [];
+    for (const [index, checkpoint] of this.#checkpoints) {
+      const msg = this.#messages[index];
+      if (!msg || msg.role !== "user") continue;
+      result.push({ index, preview: msg.content.slice(0, 80), timestamp: checkpoint.timestamp, isGitRepo: checkpoint.isGitRepo });
+    }
+    return result.sort((a, b) => a.index - b.index);
+  }
+
+  async rewind(targetIndex: number): Promise<RewindResult> {
+    if (targetIndex < 0 || targetIndex >= this.#messages.length) {
+      return { ok: false, error: `无效的消息索引 ${targetIndex}` };
+    }
+    const target = this.#messages[targetIndex];
+    if (!target || target.role !== "user") {
+      return { ok: false, error: `索引 ${targetIndex} 不是 user 消息` };
+    }
+    const checkpoint = this.#checkpoints.get(targetIndex);
+    if (!checkpoint) return { ok: false, error: "该消息没有检查点" };
+
+    this.#messages.length = targetIndex + 1;
+    const toDiscard: Checkpoint[] = [];
+    for (const [idx, cp] of this.#checkpoints) {
+      if (idx > targetIndex) { toDiscard.push(cp); this.#checkpoints.delete(idx); }
+    }
+
+    let fileRestored = false;
+    if (checkpoint.isGitRepo && checkpoint.stashSha) {
+      try {
+        await restoreCheckpointForce(checkpoint);
+        fileRestored = true;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { ok: false, error: `对话已截断但文件恢复失败：${msg}` };
+      }
+    }
+
+    for (const cp of toDiscard) { void discardCheckpoint(cp); }
+    this.#persist();
+    return { ok: true, fileRestored };
+  }
+
+  hasCheckpoints(): boolean { return this.listCheckpoints().length > 0; }
+
+  async delete(): Promise<void> {
+    if (this.#store) await this.#store.delete(this.#sessionId);
+    for (const cp of this.#checkpoints.values()) { void discardCheckpoint(cp); }
+    this.#checkpoints.clear();
   }
 
   // -------------------------------------------------------------------------
   // 内部方法
   // -------------------------------------------------------------------------
 
-  /** 构建系统提示词 */
   #buildSystemPrompt(): string {
     const enabledTools = this.#toolRegistry.list();
     const toolDescs = enabledTools.map((t) => ({
-      name: t.name,
-      description: t.description,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+      name: t.name, description: t.description,
       parameters: t.parameters as unknown as Record<string, unknown>,
     }));
-
     const opts: SystemPromptOptions = {
-      model: this.#provider.model(),
-      maxToolRounds: this.#options.maxToolRounds,
+      model: this.#provider.model(), maxToolRounds: this.#options.maxToolRounds,
       tools: toolDescs.length > 0 ? toolDescs : undefined,
       projectContext: this.#options.projectContext ?? undefined,
       cwd: this.#options.cwd,
     };
-
-    if (this.#mode === "plan") {
-      return buildPlanSystemPrompt(opts);
-    }
+    if (this.#mode === "plan") return buildPlanSystemPrompt(opts);
     return buildSystemPrompt(opts);
   }
 
-  /**
-   * 将注册的工具转为 ToolDefinition 格式（预留给 function calling）。
-   * 计划模式下只返回读工具，禁止非读工具暴露给 LLM。
-   */
   #buildToolDefinitions(): ToolDefinition[] {
-    const tools = this.#mode === "plan"
-      ? this.#toolRegistry.listReadTools()
-      : this.#toolRegistry.list();
-
+    const tools = this.#mode === "plan" ? this.#toolRegistry.listReadTools() : this.#toolRegistry.list();
     return tools.map((t) => ({
       type: "function" as const,
-      function: {
-        name: t.name,
-        description: t.description,
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-        parameters: t.parameters as unknown as Record<string, unknown>,
-      },
+      function: { name: t.name, description: t.description, parameters: t.parameters as unknown as Record<string, unknown> },
     }));
   }
 }
