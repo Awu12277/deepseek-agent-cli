@@ -1,25 +1,73 @@
 // ---------------------------------------------------------------------------
 // HighlightedText — AI 回复文本高亮渲染
 //
-// 支持两种语法：
-//   `` `code` ``  → 天蓝色（代码标识符、文件路径）
-//   `**bold**`   → 紫色（强调内容，如"第 12 行"）
+// 支持三种语法：
+//   `` `code` ``          → 天蓝色（代码标识符、文件路径）
+//   `**bold**`            → 紫色（强调内容，如"第 12 行"）
+//   ```...``` 代码块       → 独立块渲染，diff 内容自动绿/红着色
 // 流式传输中未闭合的标记自动降级为纯文本，不会闪烁。
 // ---------------------------------------------------------------------------
 
-import { Text } from "ink";
+import { Box, Text } from "ink";
 import type { ReactNode } from "react";
 
 /** 解析后的文本段类型 */
-type SegmentType = "plain" | "code" | "bold";
+type SegmentType = "plain" | "code" | "bold" | "code_block";
 
 interface Segment {
   text: string;
   type: SegmentType;
 }
 
+// ---------------------------------------------------------------------------
+// 第 0 遍：提取三反引号代码块
+// ---------------------------------------------------------------------------
+
 /**
- * 第一遍：按 `**...**` 对拆分为段。
+ * 在全文中查找 ```...``` 代码块，将其标记为 "code_block" 类型。
+ * 代码块之外的内容保持 "plain" 类型，后续交给 bold/code 解析。
+ *
+ * 未闭合的三反引号降级为纯文本（流式传输安全）。
+ */
+function parseCodeBlocks(text: string): Segment[] {
+  const segments: Segment[] = [];
+  let current = 0;
+
+  while (current < text.length) {
+    const openIdx = text.indexOf("```", current);
+
+    if (openIdx === -1) {
+      segments.push({ text: text.slice(current), type: "plain" });
+      break;
+    }
+
+    if (openIdx > current) {
+      segments.push({ text: text.slice(current, openIdx), type: "plain" });
+    }
+
+    const closeIdx = text.indexOf("```", openIdx + 3);
+
+    if (closeIdx === -1) {
+      // 未闭合 → 降级为纯文本
+      segments.push({ text: text.slice(openIdx), type: "plain" });
+      break;
+    }
+
+    // 提取代码块内容（含开头的语言标识行）
+    const codeContent = text.slice(openIdx + 3, closeIdx);
+    segments.push({ text: codeContent, type: "code_block" });
+    current = closeIdx + 3;
+  }
+
+  return segments;
+}
+
+// ---------------------------------------------------------------------------
+// 第 1 遍：**bold** 解析（与之前相同）
+// ---------------------------------------------------------------------------
+
+/**
+ * 按 `**...**` 对拆分为段。
  * 未闭合的 `**`（流式传输中）降级为纯文本。
  */
 function parseBoldPairs(text: string): Segment[] {
@@ -55,34 +103,43 @@ function parseBoldPairs(text: string): Segment[] {
   return segments;
 }
 
-/**
- * 第二遍：在 plain 段内按 `` `...` `` 对拆分为 code 段。
- * 未闭合的反引号降级为纯文本。
- */
-function parseCodePairs(segments: Segment[]): Segment[] {
-  const result: Segment[] = [];
+// ---------------------------------------------------------------------------
+// 第 2 遍：`code` 解析（处理 plain 和 bold 段内的单反引号对）
+// ---------------------------------------------------------------------------
 
-  for (const seg of segments) {
-    if (seg.type !== "plain") {
-      result.push(seg);
-      continue;
+/**
+ * 在纯文本中查找成对的单反引号，返回 [plain, code, plain, ...] 段序列。
+ *
+ * - 只处理 `...` 单反引号对；多反引号序列降级为纯文本。
+ * - 未闭合的反引号降级为纯文本。
+ */
+function parseInlineCode(text: string): Segment[] {
+  const result: Segment[] = [];
+  let current = 0;
+
+  while (current < text.length) {
+    const openIdx = text.indexOf("`", current);
+
+    if (openIdx === -1) {
+      result.push({ text: text.slice(current), type: "plain" });
+      break;
     }
 
-    let current = 0;
-    const text = seg.text;
+    if (openIdx > current) {
+      result.push({ text: text.slice(current, openIdx), type: "plain" });
+    }
 
-    while (current < text.length) {
-      const openIdx = text.indexOf("`", current);
+    // 计算连续反引号的数量
+    let runLength = 1;
+    while (
+      openIdx + runLength < text.length &&
+      text[openIdx + runLength] === "`"
+    ) {
+      runLength++;
+    }
 
-      if (openIdx === -1) {
-        result.push({ text: text.slice(current), type: "plain" });
-        break;
-      }
-
-      if (openIdx > current) {
-        result.push({ text: text.slice(current, openIdx), type: "plain" });
-      }
-
+    if (runLength === 1) {
+      // 单反引号对 → code 段
       const closeIdx = text.indexOf("`", openIdx + 1);
 
       if (closeIdx === -1) {
@@ -92,64 +149,327 @@ function parseCodePairs(segments: Segment[]): Segment[] {
 
       result.push({ text: text.slice(openIdx + 1, closeIdx), type: "code" });
       current = closeIdx + 1;
+    } else {
+      // 多反引号序列（```、`` 等）保持原样
+      result.push({
+        text: text.slice(openIdx, openIdx + runLength),
+        type: "plain",
+      });
+      current = openIdx + runLength;
     }
   }
 
   return result;
 }
 
-/** 代码高亮色 — 天蓝 */
+/**
+ * 在 plain 和 bold 段内按 `` `...` `` 对拆分为 code 段。
+ *
+ * - **plain** 段内的 code → 标蓝，剩余部分保持默认色
+ * - **bold** 段内的 code → 标蓝，剩余部分保持紫色
+ * - 多反引号序列（```` ```code``` ````、`` ``code`` `` 等）统一降级为纯文本
+ * - code_block 段直接透传
+ */
+function parseCodePairs(segments: Segment[]): Segment[] {
+  const result: Segment[] = [];
+
+  for (const seg of segments) {
+    if (seg.type === "code_block") {
+      result.push(seg);
+      continue;
+    }
+
+    // 对 plain 和 bold 的内容都做反引号解析
+    const parts = parseInlineCode(seg.text);
+
+    for (const part of parts) {
+      if (part.type === "code") {
+        // 反引号内容始终标蓝
+        result.push(part);
+      } else if (seg.type === "bold") {
+        // bold 段内非反引号部分 → 保持紫色
+        result.push({ text: part.text, type: "bold" });
+      } else {
+        // plain 段内非反引号部分 → 保持默认色
+        result.push(part);
+      }
+    }
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// 代码块渲染
+// ---------------------------------------------------------------------------
+
+/** 添加行绿色 */
+const DIFF_ADD_COLOR = "#22c55e";
+/** 删除行红色 */
+const DIFF_DEL_COLOR = "#ef4444";
+/** Hunk 头青色 */
+const DIFF_HUNK_COLOR = "#00cccc";
+
+/**
+ * 渲染三反引号代码块的内容，对 diff 风格的内容行着色。
+ *
+ * 代码块内的第一行若为纯文本（非 `+`/`-`/`@@`/空格开头），
+ * 视为语言标识（如 "diff"、"python"），用灰色标出。
+ */
+function CodeBlockRenderer({ code }: { code: string }): ReactNode {
+  const lines = code.split("\n");
+
+  // 判断第一行是否为语言标识行
+  const firstLine = lines[0] ?? "";
+  const hasLangLine =
+    firstLine.trim().length > 0 &&
+    !firstLine.startsWith("+") &&
+    !firstLine.startsWith("-") &&
+    !firstLine.startsWith("@@") &&
+    !firstLine.startsWith(" ");
+
+  const lang = hasLangLine ? firstLine : undefined;
+  const codeLines = hasLangLine ? lines.slice(1) : lines;
+
+  // 空内容
+  if (codeLines.length === 0) {
+    return hasLangLine ? (
+      <Box marginLeft={2}>
+        <Text color="#888888">┌ {lang}</Text>
+      </Box>
+    ) : null;
+  }
+
+  return (
+    <Box flexDirection="column" marginLeft={2} marginTop={1}>
+      {lang && <Text color="#888888">┌ {lang}</Text>}
+      {codeLines.map((line, i) => {
+        if (line.startsWith("+")) {
+          return (
+            <Text key={i} color={DIFF_ADD_COLOR}>
+              {line}
+            </Text>
+          );
+        }
+        if (line.startsWith("-")) {
+          return (
+            <Text key={i} color={DIFF_DEL_COLOR}>
+              {line}
+            </Text>
+          );
+        }
+        if (line.startsWith("@@")) {
+          return (
+            <Text key={i} color={DIFF_HUNK_COLOR}>
+              {line}
+            </Text>
+          );
+        }
+        // 上下文行或非 diff 代码行
+        return <Text key={i}>{line}</Text>;
+      })}
+    </Box>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Emoji 检测 — 跳过图标字符的颜色包裹
+// ---------------------------------------------------------------------------
+
+/** 匹配 emoji 相关 code point 的正则 */
+const EMOJI_CP_RE = /[\u{1F000}-\u{1FFFF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}\u{2600}-\u{27BF}\u{231A}-\u{23FF}\u{2934}\u{2935}\u{25AA}-\u{25FE}\u{2B50}\u{2B55}\u{00A9}\u{00AE}\u{2122}\u{3030}\u{303D}\u{3297}\u{3299}]/u;
+
+/**
+ * 检测一个 grapheme cluster 是否属于 emoji 或图标字符。
+ * 此类字符在 bold 渲染中应跳过颜色包裹，避免终端渲染异常。
+ */
+function isEmojiCluster(text: string): boolean {
+  return EMOJI_CP_RE.test(text);
+}
+
+/**
+ * 将文本按 grapheme cluster 分割，标记每个 cluster 是否为 emoji。
+ * 降级策略：若 Intl.Segmenter 不可用，将整个文本视为纯文本。
+ */
+function splitEmojiClusters(
+  text: string,
+): Array<{ text: string; isEmoji: boolean }> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const segmenter = new (Intl as any).Segmenter("en", {
+      granularity: "grapheme",
+    });
+    const segments = [...segmenter.segment(text)];
+    return segments.map((s) => ({
+      text: s.segment,
+      isEmoji: isEmojiCluster(s.segment),
+    }));
+  } catch {
+    // 降级：整个文本作为一个纯文本块
+    return [{ text, isEmoji: false }];
+  }
+}
+
+/**
+ * 渲染 bold（紫色）文本，对 emoji 字符跳过颜色包裹。
+ */
+function renderBoldText(text: string, key: number | string): ReactNode {
+  const clusters = splitEmojiClusters(text);
+
+  // 不含 emoji — 简单路径（和之前一致）
+  if (clusters.length === 1 && !clusters[0]!.isEmoji) {
+    return (
+      <Text key={key} color={BOLD_COLOR}>
+        {text}
+      </Text>
+    );
+  }
+
+  // 合并相邻的同类 cluster 减少嵌套
+  const groups: Array<{ text: string; isEmoji: boolean }> = [];
+  for (const c of clusters) {
+    const last = groups[groups.length - 1];
+    if (last && last.isEmoji === c.isEmoji) {
+      last.text += c.text;
+    } else {
+      groups.push({ text: c.text, isEmoji: c.isEmoji });
+    }
+  }
+
+  return (
+    <Text key={key}>
+      {groups.map((g, i) =>
+        g.isEmoji ? (
+          g.text
+        ) : (
+          <Text key={i} color={BOLD_COLOR}>
+            {g.text}
+          </Text>
+        ),
+      )}
+    </Text>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 高亮颜色常量
+// ---------------------------------------------------------------------------
+
+/** 行内代码高亮色 — 天蓝 */
 const CODE_COLOR = "#00BFFF";
 /** 加粗强调色 — 紫色 */
 const BOLD_COLOR = "#A855F7";
+
+// ---------------------------------------------------------------------------
+// 主组件
+// ---------------------------------------------------------------------------
 
 interface HighlightedTextProps {
   children: string;
 }
 
 /**
- * 渲染 AI 回复文本，支持两种内联标记高亮：
- * - `` `code` `` → 天蓝色
- * - `**bold**`  → 紫色
+ * 渲染 AI 回复文本，支持三种标记高亮：
+ * - `` `code` ``      → 天蓝色
+ * - `**bold**`        → 紫色
+ * - ```` ```diff ```` → 独立块，`+` 绿色 / `-` 红色 / `@@` 青色
  *
  * 用法：
  * ```tsx
  * <HighlightedText>已完成。`test.ts` 中 **第 12 行** 的修改。</HighlightedText>
  * ```
- * 渲染结果：
- *   已完成。<Text color="#00BFFF">test.ts</Text> 中
- *   <Text color="#A855F7">第 12 行</Text> 的修改。
  */
 export function HighlightedText({ children: text }: HighlightedTextProps): ReactNode {
-  // 先解析 **bold**，再在 plain 段内解析 `code`
-  const boldSegments = parseBoldPairs(text);
-  const segments = parseCodePairs(boldSegments);
+  // 第 0 遍：提取 ```...``` 代码块
+  const codeBlockSegments = parseCodeBlocks(text);
 
-  // 纯文本捷径：不嵌套 Text 提高渲染性能
-  const isSimple = segments.length === 1 && segments[0]!.type === "plain";
-  if (isSimple) {
-    return <Text wrap="wrap">{text}</Text>;
+  // 第 1 遍：在 inline plain 段内解析 **bold**
+  const boldSegments: Segment[] = [];
+  for (const seg of codeBlockSegments) {
+    if (seg.type === "code_block") {
+      boldSegments.push(seg);
+    } else {
+      boldSegments.push(...parseBoldPairs(seg.text));
+    }
   }
 
-  return (
-    <Text wrap="wrap">
-      {segments.map((seg, i) => {
-        if (seg.type === "code") {
-          return (
-            <Text key={i} color={CODE_COLOR}>
-              {seg.text}
-            </Text>
-          );
-        }
-        if (seg.type === "bold") {
-          return (
-            <Text key={i} color={BOLD_COLOR}>
-              {seg.text}
-            </Text>
-          );
-        }
-        return seg.text;
-      })}
-    </Text>
-  );
+  // 第 2 遍：在 inline plain 段内解析 `code`（自动跳过 code_block / bold）
+  const segments = parseCodePairs(boldSegments);
+
+  // 检查是否包含代码块
+  const hasCodeBlock = segments.some((s) => s.type === "code_block");
+
+  // ---- 无代码块：纯内联渲染（与之前一致） ----
+  if (!hasCodeBlock) {
+    const isSimple = segments.length === 1 && segments[0]!.type === "plain";
+    if (isSimple) {
+      return <Text wrap="wrap">{text}</Text>;
+    }
+
+    return (
+      <Text wrap="wrap">
+        {segments.map((seg, i) => {
+          if (seg.type === "code") {
+            return (
+              <Text key={i} color={CODE_COLOR}>
+                {seg.text}
+              </Text>
+            );
+          }
+          if (seg.type === "bold") {
+            return renderBoldText(seg.text, i);
+          }
+          return seg.text;
+        })}
+      </Text>
+    );
+  }
+
+  // ---- 有代码块：分组渲染（inline 组 + 块级渲染） ----
+  const rendered: ReactNode[] = [];
+  let inlineGroup: Segment[] = [];
+
+  function flushInline(groupIdx: number) {
+    if (inlineGroup.length === 0) return;
+    const isSimpleInline =
+      inlineGroup.length === 1 && inlineGroup[0]!.type === "plain";
+    if (isSimpleInline) {
+      rendered.push(
+        <Text key={groupIdx} wrap="wrap">
+          {inlineGroup[0]!.text}
+        </Text>,
+      );
+    } else {
+      rendered.push(
+        <Text key={groupIdx} wrap="wrap">
+          {inlineGroup.map((seg, j) => {
+            if (seg.type === "code") {
+              return (
+                <Text key={j} color={CODE_COLOR}>
+                  {seg.text}
+                </Text>
+              );
+            }
+            if (seg.type === "bold") {
+              return renderBoldText(seg.text, j);
+            }
+            return seg.text;
+          })}
+        </Text>,
+      );
+    }
+    inlineGroup = [];
+  }
+
+  for (const seg of segments) {
+    if (seg.type === "code_block") {
+      flushInline(rendered.length);
+      rendered.push(<CodeBlockRenderer key={`b${rendered.length}`} code={seg.text} />);
+    } else {
+      inlineGroup.push(seg);
+    }
+  }
+  flushInline(rendered.length);
+
+  return <Box flexDirection="column">{rendered}</Box>;
 }
