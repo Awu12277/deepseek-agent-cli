@@ -32,8 +32,8 @@
     "dev": "tsup --watch",
     "build": "tsup",
     "type-check": "tsc --noEmit",
-    "lint": "eslint src/ tests/",
-    "lint:fix": "eslint src/ tests/ --fix",
+    "lint": "oxlint src/ tests/",
+    "lint:fix": "oxlint --fix src/ tests/",
     "format": "prettier --write src/ tests/",
     "format:check": "prettier --check src/ tests/",
     "test": "vitest run",
@@ -52,14 +52,13 @@
     "react": "^19.2.7"
   },
   "devDependencies": {
-    "@eslint/js": "^9.24.0",
     "@types/node": "^22.14.0",
     "@types/react": "^19.2.17",
-    "eslint": "^9.24.0",
+    "oxlint": "^1.71.0",
+    "oxlint-tsgolint": "^0.23.0",
     "prettier": "^3.5.3",
     "tsup": "^8.4.0",
     "typescript": "^5.8.3",
-    "typescript-eslint": "^8.30.0",
     "vitest": "^3.1.1"
   },
   "engines": {

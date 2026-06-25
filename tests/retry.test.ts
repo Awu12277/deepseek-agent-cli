@@ -72,19 +72,19 @@ describe("withRetry", () => {
   };
 
   it("首次成功应不重试", async () => {
-    const restore = instantSleep();
+    const _restore = instantSleep();
     try {
       const fn = vi.fn().mockResolvedValue("ok");
       const result = await withRetry(fn);
       expect(result).toBe("ok");
       expect(fn).toHaveBeenCalledTimes(1);
     } finally {
-      restore!();
+      _restore();
     }
   });
 
   it("应在可重试错误后最终成功", async () => {
-    const restore = instantSleep();
+    const _restore = instantSleep();
     try {
       const fn = vi
         .fn()
@@ -96,12 +96,12 @@ describe("withRetry", () => {
       expect(result).toBe("ok");
       expect(fn).toHaveBeenCalledTimes(3);
     } finally {
-      restore!();
+      _restore();
     }
   });
 
   it("应在达到 maxRetries 后抛出最后一次错误", async () => {
-    const restore = instantSleep();
+    const _restore = instantSleep();
     try {
       const fn = vi.fn().mockRejectedValue(new ServerError("500", 500));
       await expect(
@@ -110,12 +110,12 @@ describe("withRetry", () => {
       // 首次 + 重试 2 次 = 3 次
       expect(fn).toHaveBeenCalledTimes(3);
     } finally {
-      restore!();
+      _restore();
     }
   });
 
   it("RateLimitError 可重试", async () => {
-    const restore = instantSleep();
+    const _restore = instantSleep();
     try {
       const fn = vi
         .fn()
@@ -125,12 +125,12 @@ describe("withRetry", () => {
       expect(result).toBe("ok");
       expect(fn).toHaveBeenCalledTimes(2);
     } finally {
-      restore!();
+      _restore();
     }
   });
 
   it("NetworkError 可重试", async () => {
-    const restore = instantSleep();
+    const _restore = instantSleep();
     try {
       const fn = vi
         .fn()
@@ -139,34 +139,34 @@ describe("withRetry", () => {
       const result = await withRetry(fn);
       expect(result).toBe("ok");
     } finally {
-      restore!();
+      _restore();
     }
   });
 
   it("AuthError 不可重试应立即抛出", async () => {
-    const restore = instantSleep();
+    const _restore = instantSleep();
     try {
       const fn = vi.fn().mockRejectedValue(new AuthError("401", 401));
       await expect(withRetry(fn)).rejects.toBeInstanceOf(AuthError);
       expect(fn).toHaveBeenCalledTimes(1);
     } finally {
-      restore!();
+      _restore();
     }
   });
 
   it("普通 Error 不可重试应立即抛出", async () => {
-    const restore = instantSleep();
+    const _restore = instantSleep();
     try {
       const fn = vi.fn().mockRejectedValue(new Error("boom"));
       await expect(withRetry(fn)).rejects.toThrow("boom");
       expect(fn).toHaveBeenCalledTimes(1);
     } finally {
-      restore!();
+      _restore();
     }
   });
 
   it("RateLimitError 携带 retryAfterMs 时优先使用该延迟", async () => {
-    const restore = instantSleep();
+    const _restore = instantSleep();
     try {
       const calls: number[] = [];
       const sleepImpl = async (ms: number) => {
@@ -191,12 +191,12 @@ describe("withRetry", () => {
 
       restoreSleep();
     } finally {
-      restore!();
+      _restore();
     }
   });
 
   it("RateLimitError 的 retryAfterMs 受 maxDelayMs 截断", async () => {
-    const restore = instantSleep();
+    const _restore = instantSleep();
     try {
       const calls: number[] = [];
       const restoreSleep = overrideSleep(async (ms) => calls.push(ms));
@@ -216,12 +216,12 @@ describe("withRetry", () => {
 
       restoreSleep();
     } finally {
-      restore!();
+      _restore();
     }
   });
 
   it("应通过 onRetry 回调通知重试", async () => {
-    const restore = instantSleep();
+    const _restore = instantSleep();
     try {
       const onRetry = vi.fn();
       const fn = vi
@@ -231,17 +231,17 @@ describe("withRetry", () => {
 
       await withRetry(fn, { onRetry, maxRetries: 2 });
       expect(onRetry).toHaveBeenCalledTimes(1);
-      const [attempt, err, delayMs] = onRetry.mock.calls[0]!;
+      const [attempt, err, delayMs] = onRetry.mock.calls[0];
       expect(attempt).toBe(1);
       expect(err).toBeInstanceOf(ServerError);
       expect(typeof delayMs).toBe("number");
     } finally {
-      restore!();
+      _restore();
     }
   });
 
   it("maxRetries=0 应等同于不重试", async () => {
-    const restore = instantSleep();
+    const _restore = instantSleep();
     try {
       const fn = vi.fn().mockRejectedValue(new ServerError("500", 500));
       await expect(withRetry(fn, { maxRetries: 0 })).rejects.toBeInstanceOf(
@@ -249,14 +249,14 @@ describe("withRetry", () => {
       );
       expect(fn).toHaveBeenCalledTimes(1);
     } finally {
-      restore!();
+      _restore();
     }
   });
 
   it("overrideSleep 可恢复原始实现", () => {
-    const restore = overrideSleep(async () => {});
-    expect(typeof restore).toBe("function");
-    restore();
+    const _restore = overrideSleep(async () => {});
+    expect(typeof _restore).toBe("function");
+    _restore();
     // 再次调用应使用原 sleep（不抛错即可）
     expect(typeof overrideSleep).toBe("function");
   });

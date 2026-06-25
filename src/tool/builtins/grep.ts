@@ -33,7 +33,6 @@ interface GrepMatch {
  */
 async function collectFiles(
   dir: string,
-  baseDir: string,
   extension?: string,
   maxFiles = 200,
 ): Promise<string[]> {
@@ -56,7 +55,7 @@ async function collectFiles(
     const fullPath = join(dir, entry.name);
 
     if (entry.isDirectory()) {
-      results.push(...await collectFiles(fullPath, baseDir, extension, maxFiles - results.length));
+      results.push(...await collectFiles(fullPath, extension, maxFiles - results.length));
     } else {
       if (extension && !entry.name.endsWith(`.${extension}`)) {
         continue;
@@ -123,7 +122,7 @@ export const grepTool: AgentTool<GrepArgs> = {
         return { success: false, data: `路径不是目录：${searchDir}`, error: "NOT_DIRECTORY" };
       }
 
-      const files = await collectFiles(searchDir, searchDir, args.include, maxFiles);
+      const files = await collectFiles(searchDir, args.include, maxFiles);
       const matches: GrepMatch[] = [];
 
       for (const filePath of files) {
@@ -133,7 +132,7 @@ export const grepTool: AgentTool<GrepArgs> = {
           const relPath = relative(searchDir, filePath);
 
           for (let i = 0; i < lines.length; i++) {
-            if (regex.test(lines[i]!)) {
+            if (regex.test(lines[i] ?? "")) {
               regex.lastIndex = 0;
               matches.push({
                 file: relPath,

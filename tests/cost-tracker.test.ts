@@ -8,7 +8,7 @@ import {
   formatSessionCostLine,
   formatCallCostLine,
 } from "../src/provider/cost-tracker.js";
-import type { DailyCostSummary } from "../src/provider/cost-tracker.js";
+import type { DailyCostSummary, CostRecord } from "../src/provider/cost-tracker.js";
 import type { UsageInfo } from "../src/provider/types.js";
 
 // ---------------------------------------------------------------------------
@@ -146,8 +146,8 @@ describe("CostTracker", () => {
       const today = tracker.todaySummary;
       expect(today.byModel["deepseek-v4-flash"]).toBeDefined();
       expect(today.byModel["deepseek-v4-pro"]).toBeDefined();
-      expect(today.byModel["deepseek-v4-flash"]!.totalCalls).toBe(1);
-      expect(today.byModel["deepseek-v4-pro"]!.totalCalls).toBe(1);
+      expect(today.byModel["deepseek-v4-flash"].totalCalls).toBe(1);
+      expect(today.byModel["deepseek-v4-pro"].totalCalls).toBe(1);
     });
 
     it("todayTotalCost 应返回今日总费用", () => {
@@ -234,7 +234,7 @@ describe("CostTracker", () => {
       const today = new Date().toISOString().slice(0, 10);
       const results = await t.queryRange(today);
       expect(results.length).toBeGreaterThanOrEqual(1);
-      expect(results[0]!.totalCalls).toBe(1);
+      expect(results[0].totalCalls).toBe(1);
     });
   });
 });
@@ -324,7 +324,7 @@ describe("formatSessionCostLine", () => {
       totalCompletionTokens: 2000,
       totalCachedTokens: 1000,
       totalCost: 0.012,
-      records: [{}, {}, {}] as any,
+      records: Array.from<CostRecord>({ length: 3 }),
     };
 
     const line = formatSessionCostLine(summary);

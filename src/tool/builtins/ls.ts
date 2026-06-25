@@ -57,7 +57,7 @@ export const lsTool: AgentTool<LsArgs> = {
       const lines: string[] = [];
 
       // 按名称排序：目录在前，文件在后
-      const sorted = [...entries].sort((a, b) => {
+      const sorted = [...entries].toSorted((a, b) => {
         if (a.isDirectory() !== b.isDirectory()) {
           return a.isDirectory() ? -1 : 1;
         }

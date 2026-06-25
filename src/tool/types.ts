@@ -169,11 +169,13 @@ export function eraseTool<I, O extends ToolResult = ToolResult>(
     get supportedProviders() { return tool.supportedProviders ?? []; },
 
     async execute(args: unknown, ctx: ToolContext): Promise<ToolResult> {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
       return tool.execute(args as I, ctx);
     },
 
     initialTitle(args: unknown): string {
-      return tool.initialTitle?.(args as I) ?? `${tool.name}`;
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+      return tool.initialTitle?.(args as I) ?? tool.name;
     },
   };
 }

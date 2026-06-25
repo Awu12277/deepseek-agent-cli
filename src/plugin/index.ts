@@ -15,12 +15,6 @@ export interface PluginDescriptor {
  * 该适配器将 MCP 工具调用转换为内部的 AnyAgentTool 接口。
  */
 export class PluginManager {
-  readonly #descriptors: PluginDescriptor[];
-
-  constructor(descriptors: PluginDescriptor[]) {
-    this.#descriptors = descriptors;
-  }
-
   /** 返回所有已加载插件提供的工具 */
   async listTools(): Promise<AnyAgentTool[]> {
     // TODO(chapter-09): launch subprocesses, run listTools, return adapted Tools

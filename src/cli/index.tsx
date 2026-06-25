@@ -35,6 +35,7 @@ export function createCli(): Command {
 
   program.hook("preAction", async (thisCommand, actionCommand) => {
     const ctx = await loadConfigMiddleware.call(thisCommand);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
     (actionCommand as unknown as Record<string, unknown>).dskcodeCtx = ctx;
   });
 
@@ -48,6 +49,7 @@ export function createCli(): Command {
         process.exit(1);
       }
 
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
       let ctx = (this as unknown as Record<string, unknown>).dskcodeCtx as DskcodeContext | undefined;
 
       // 检查 API Key，如果没有则交互式输入
@@ -74,81 +76,8 @@ export function createCli(): Command {
       tokenBudgetLimit: ctx?.config.tokenBudgetLimit ?? 0,
     });
 
-    startChat(ctx, costTracker);
+    void startChat(ctx, costTracker);
   });
-
-  async function startChat(
-    ctx: DskcodeContext | undefined,
-    costTracker: CostTracker,
-  ) {
-    // 统计 skill 数量并获取详情列表，以及扫描项目文件
-    const [globalSkillCount, localSkillCount, skills, files] = await Promise.all([
-      countDskcodeSkills(),
-      countProjectLocalSkills(process.cwd()),
-      getAllSkills(process.cwd()),
-      scanProjectFiles(process.cwd()),
-    ]);
-    const skillCount = globalSkillCount + localSkillCount;
-    // 从配置中提取默认 Provider 的 apiKey 和 baseUrl
-    const defaultProvider = ctx?.config.providers.find(
-      (p) => p.name === (ctx?.config.defaultProvider ?? "deepseek"),
-    );
-    const model = defaultProvider?.model ?? "deepseek-v4-flash";
-    const chatApp = renderApp(
-      <ChatSession
-        skillCount={skillCount}
-        skills={skills}
-        files={files}
-        toolCount={ctx?.config.tools.length ?? 0}
-        verbose={ctx?.verbose ?? false}
-        apiKey={defaultProvider?.apiKey}
-        baseUrl={defaultProvider?.baseUrl ?? "https://api.deepseek.com"}
-        costTracker={costTracker}
-        model={model}
-        onLaunchGame={() => {
-          chatApp.unmount();
-          setImmediate(() => {
-            initGames();
-            const games = listGames();
-            const { unmount } = render(
-              <GamePicker
-                games={games}
-                onSelect={async (game: Game) => {
-                  unmount();
-                  await game.play();
-                  // 游戏结束后返回对话
-                  startChat(ctx, costTracker);
-                }}
-                onBackToChat={() => {
-                  unmount();
-                  setImmediate(() => startChat(ctx, costTracker));
-                }}
-              />,
-              { exitOnCtrlC: false },
-            );
-          });
-        }}
-        onLaunchStock={() => {
-          chatApp.unmount();
-          setImmediate(() => {
-            // 使用配置中的自选股列表或兜底默认值
-            const defaultStockCodes = ctx?.config.stock?.symbols?.map((s) => s.code)
-              ?? ["sh000001", "sz399006", "sh601688"];
-            const stockApp = renderApp(
-              <StockList
-                codes={defaultStockCodes}
-                onBackToChat={() => {
-                  stockApp.unmount();
-                  setImmediate(() => startChat(ctx, costTracker));
-                }}
-                onExit={() => process.exit(0)}
-              />,
-            );
-          });
-        }}
-      />,
-    );
-  }
 
   // run
   program
@@ -224,7 +153,8 @@ compdef _dskcode_completion dskcode`);
     .description("查看自选股实时行情")
     .argument("[codes...]", "股票代码（空格分隔），如 513090 600519")
     .action(async function (codes: string[]) {
-      const ctx = (this as unknown as Record<string, unknown>).dskcodeCtx as DskcodeContext | undefined;
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+      const _ctx = (this as unknown as Record<string, unknown>).dskcodeCtx as DskcodeContext | undefined;
 
       // 检查用户全局配置文件是否已有自选股配置；没有则自动创建
       const home = process.env.HOME ?? process.env.USERPROFILE ?? "~";
@@ -232,9 +162,11 @@ compdef _dskcode_completion dskcode`);
       let globalConfigHasStock = false;
       try {
         const raw = await readFile(globalConfigPath, "utf-8");
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
         const parsed = JSON.parse(raw) as Record<string, unknown>;
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
         const stock = parsed.stock as Record<string, unknown> | undefined;
-        globalConfigHasStock = Array.isArray(stock?.symbols) && (stock!.symbols as unknown[]).length > 0;
+        globalConfigHasStock = Array.isArray(stock?.symbols) && (stock.symbols as unknown[]).length > 0;
       } catch {
         // 文件不存在 — 需要创建
       }
@@ -315,4 +247,77 @@ compdef _dskcode_completion dskcode`);
     });
 
   return program;
+}
+
+async function startChat(
+  ctx: DskcodeContext | undefined,
+  costTracker: CostTracker,
+) {
+  // 统计 skill 数量并获取详情列表，以及扫描项目文件
+  const [globalSkillCount, localSkillCount, skills, files] = await Promise.all([
+    countDskcodeSkills(),
+    countProjectLocalSkills(process.cwd()),
+    getAllSkills(process.cwd()),
+    scanProjectFiles(process.cwd()),
+  ]);
+  const skillCount = globalSkillCount + localSkillCount;
+  // 从配置中提取默认 Provider 的 apiKey 和 baseUrl
+  const defaultProvider = ctx?.config.providers.find(
+    (p) => p.name === (ctx?.config.defaultProvider ?? "deepseek"),
+  );
+  const model = defaultProvider?.model ?? "deepseek-v4-flash";
+  const chatApp = renderApp(
+    <ChatSession
+      skillCount={skillCount}
+      skills={skills}
+      files={files}
+      toolCount={ctx?.config.tools.length ?? 0}
+      verbose={ctx?.verbose ?? false}
+      apiKey={defaultProvider?.apiKey}
+      baseUrl={defaultProvider?.baseUrl ?? "https://api.deepseek.com"}
+      costTracker={costTracker}
+      model={model}
+      onLaunchGame={() => {
+        chatApp.unmount();
+        setImmediate(() => {
+          initGames();
+          const games = listGames();
+          const { unmount } = render(
+            <GamePicker
+              games={games}
+              onSelect={async (game: Game) => {
+                unmount();
+                await game.play();
+                // 游戏结束后返回对话
+                void startChat(ctx, costTracker);
+              }}
+              onBackToChat={() => {
+                unmount();
+                setImmediate(() => startChat(ctx, costTracker));
+              }}
+            />,
+            { exitOnCtrlC: false },
+          );
+        });
+      }}
+      onLaunchStock={() => {
+        chatApp.unmount();
+        setImmediate(() => {
+          // 使用配置中的自选股列表或兜底默认值
+          const defaultStockCodes = ctx?.config.stock?.symbols?.map((s) => s.code)
+            ?? ["sh000001", "sz399006", "sh601688"];
+          const stockApp = renderApp(
+            <StockList
+              codes={defaultStockCodes}
+              onBackToChat={() => {
+                stockApp.unmount();
+                setImmediate(() => startChat(ctx, costTracker));
+              }}
+              onExit={() => process.exit(0)}
+            />,
+          );
+        });
+      }}
+    />,
+  );
 }

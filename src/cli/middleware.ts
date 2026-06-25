@@ -28,6 +28,7 @@ export interface DskcodeContext {
 export async function loadConfigMiddleware(
   this: Command,
 ): Promise<DskcodeContext> {
+  // eslint-disable-next-line oxc/no-this-in-exported-function, @typescript-eslint/no-unsafe-type-assertion
   const opts = this.optsWithGlobals() as {
     verbose?: boolean;
     config?: string;

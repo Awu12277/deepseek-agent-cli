@@ -5,9 +5,8 @@
 // 不依赖任何 Provider 框架类型，可被任何调用方复用。
 // ---------------------------------------------------------------------------
 
-import { HttpClient, type RequestOptions } from "./client.js";
+import type { HttpClient, RequestOptions } from "./client.js";
 import { parseSSE } from "./sse.js";
-import { mapHttpError } from "./errors.js";
 
 // ============================================================================
 // 类型定义 — 镜像 DeepSeek API 协议
@@ -203,7 +202,8 @@ export async function* streamCompletion(
 
     let chunk: DeepSeekStreamChunk;
     try {
-      chunk = JSON.parse(evt.data) as DeepSeekStreamChunk;
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+      chunk = JSON.parse(evt.data) as unknown as DeepSeekStreamChunk;
     } catch {
       continue;
     }
@@ -225,7 +225,8 @@ export async function getBalance(
     headers: { Authorization: `Bearer ${apiKey}` },
   });
 
-  const data = (await response.json()) as DeepSeekBalanceResponse;
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+  const data = (await response.json()) as unknown as DeepSeekBalanceResponse;
 
   return {
     isAvailable: data.is_available,

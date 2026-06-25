@@ -4,7 +4,7 @@
 
 import { Box, Text } from "ink";
 import type { ProviderToolCall, UsageInfo } from "../provider/index.js";
-import { formatMoney, formatCallCostLine } from "../provider/cost-tracker.js";
+import { formatMoney } from "../provider/cost-tracker.js";
 import { ToolCallBlock } from "./ToolCallBlock.js";
 import { formatUsageSummary } from "../agent/message-builder.js";
 import { HighlightedText } from "./HighlightedText.js";
@@ -51,7 +51,7 @@ export function AssistantMessage({
   usage,
   elapsed,
   cost,
-  model,
+  model: _model,
 }: AssistantMessageProps) {
   // 内容为空且无工具调用时不渲染
   if (!content && (!toolCalls || toolCalls.length === 0) && !isStreaming) {

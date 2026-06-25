@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import type { GameState, GameConfig, Point } from './types.js';
+import type { GameState, GameConfig } from './types.js';
 
 // 每个格子在终端中占 2 个字符宽度，让网格看起来更接近正方形
 const CELL_W = 2;
@@ -116,7 +116,8 @@ function buildRenderLines(state: GameState, config: GameConfig): string[] {
         default:
           char = EMPTY;
       }
-      row += cellColor(char, cellType as any);
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+      row += cellColor(char, cellType as unknown as 'snake-head' | 'snake-body' | 'normal-food' | 'special-food' | 'empty');
     }
     row += chalk.gray('║');
     lines.push(row);

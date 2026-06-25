@@ -73,6 +73,7 @@ export const fetchTool: AgentTool<FetchArgs> = {
       };
 
       if (args.body && (method === "POST" || method === "PUT" || method === "PATCH")) {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
         (fetchOptions.headers as Record<string, string>)["Content-Type"] ??= "application/json";
         fetchOptions.body = args.body;
       }

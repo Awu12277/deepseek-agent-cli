@@ -13,7 +13,7 @@ const CTRL_C_TIMEOUT_MS = 1500;
  */
 export function useDoubleCtrlC(onExit: () => void) {
   const [doubleCtrlC, setDoubleCtrlC] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout>>(null);
   const onExitRef = useRef(onExit);
   onExitRef.current = onExit;
 

@@ -111,7 +111,8 @@ export function mapHttpError(status: number, body: string): ProviderError {
       // 尝试从响应体中解析重试等待时间
       let retryAfterMs: number | undefined;
       try {
-        const parsed = JSON.parse(body) as { error?: { message?: string } };
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+        const parsed = JSON.parse(body) as unknown as { error?: { message?: string } };
         const msg = parsed.error?.message ?? "";
         const match = /(\d+)\s*second/i.exec(msg);
         if (match?.[1]) {
@@ -129,7 +130,8 @@ export function mapHttpError(status: number, body: string): ProviderError {
     case 400: {
       let detail = "";
       try {
-        const parsed = JSON.parse(body) as { error?: { message?: string } };
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+        const parsed = JSON.parse(body) as unknown as { error?: { message?: string } };
         detail = parsed.error?.message ?? "";
       } catch {
         // 解析失败 — 不提取详情

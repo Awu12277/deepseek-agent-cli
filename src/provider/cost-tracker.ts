@@ -409,7 +409,8 @@ export class CostTracker {
     const filePath = join(this.#costDir, "history.json");
     try {
       const raw = await readFile(filePath, "utf-8");
-      return JSON.parse(raw) as CostStore;
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+      return JSON.parse(raw) as unknown as CostStore;
     } catch {
       return { version: 1, daily: {} };
     }

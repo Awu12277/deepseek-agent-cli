@@ -100,14 +100,14 @@ function computeLineDiff(oldLines: string[], newLines: string[]): DiffLine[] {
 
   const maxD = N + M;
   // V[k] = x position；初始化为 -1 表示未访问
-  const V: number[] = new Array(2 * maxD + 2).fill(-1);
+  // eslint-disable-next-line unicorn/no-new-array, @typescript-eslint/no-unsafe-type-assertion
+  const V: number[] = new Array(2 * maxD + 2).fill(-1) as number[];
   // k 的偏移量，使索引非负
   const offset = maxD;
 
   V[offset + 1] = 0;
 
   // 正向搜索：从 d=0 开始，逐层扩展
-  outer:
   for (let d = 0; d <= maxD; d++) {
     // 保存当前层的 V 快照
     const snapshot = new Map<number, number>();
@@ -164,7 +164,7 @@ function backtrack(
   M: number,
   oldLines: string[],
   newLines: string[],
-  offset: number,
+  _offset: number,
 ): DiffLine[] {
   const result: DiffLine[] = [];
 
@@ -177,7 +177,7 @@ function backtrack(
 
     // 从 trace[d-1] 中查找上一步的 x 位置
     // 注意：trace[d] 存的是本层结果，前一层的数据在 trace[d-1] 中
-    const prevSnapshot = d > 0 ? (trace[d - 1] as Map<number, number>) : new Map();
+    const prevSnapshot = trace[d - 1]!;
     const prevKDown = prevSnapshot.get(k - 1);
     const prevKUp = prevSnapshot.get(k + 1);
 
@@ -210,13 +210,13 @@ function backtrack(
       while (x > prevX + 1 && y > prevY) {
         x--;
         y--;
-        result.unshift({ op: "equal", line: oldLines[x] as string });
+        result.unshift({ op: "equal", line: oldLines[x]! });
       }
 
       // 第二步：删除行
       if (x > prevX) {
         x--;
-        result.unshift({ op: "remove", line: oldLines[x] as string });
+        result.unshift({ op: "remove", line: oldLines[x]! });
       }
     } else {
       // prevK = k+1 → V[k+1] 被使用 → x = V[k+1] → 水平移动（添加）
@@ -227,13 +227,13 @@ function backtrack(
       while (x > prevX && y > prevY + 1) {
         x--;
         y--;
-        result.unshift({ op: "equal", line: oldLines[x] as string });
+        result.unshift({ op: "equal", line: oldLines[x]! });
       }
 
       // 第二步：添加行
       if (y > prevY) {
         y--;
-        result.unshift({ op: "add", line: newLines[y] as string });
+        result.unshift({ op: "add", line: newLines[y]! });
       }
     }
   }
@@ -243,7 +243,7 @@ function backtrack(
   while (x > 0 && y > 0) {
     x--;
     y--;
-    result.unshift({ op: "equal", line: oldLines[x] as string });
+    result.unshift({ op: "equal", line: oldLines[x]! });
   }
 
   return result;
@@ -265,7 +265,7 @@ function groupIntoHunks(diffLines: DiffLine[]): DiffHunk[] {
   // 找出所有变更行的索引
   const changeIndices: number[] = [];
   for (let i = 0; i < diffLines.length; i++) {
-    const line = diffLines[i] as DiffLine;
+    const line = diffLines[i]!;
     if (line.op !== "equal") {
       changeIndices.push(i);
     }
@@ -274,16 +274,16 @@ function groupIntoHunks(diffLines: DiffLine[]): DiffHunk[] {
   if (changeIndices.length === 0) return [];
 
   // 将相近的变更行分组
-  const groups: number[][] = [[changeIndices[0] as number]];
+  const groups: number[][] = [[changeIndices[0]!]];
 
   for (let idx = 1; idx < changeIndices.length; idx++) {
-    const lastGroup = groups[groups.length - 1] as number[];
-    const prevIdx = lastGroup[lastGroup.length - 1] as number;
-    const currIdx = changeIndices[idx] as number;
+    const lastGroup = groups[groups.length - 1]!;
+    const prevIdx = lastGroup[lastGroup.length - 1]!;
+    const currIdx = changeIndices[idx]!;
 
     let gap = 0;
     for (let k = prevIdx + 1; k < currIdx; k++) {
-      const line = diffLines[k] as DiffLine;
+      const line = diffLines[k]!;
       if (line.op === "equal") gap++;
     }
 
@@ -298,8 +298,8 @@ function groupIntoHunks(diffLines: DiffLine[]): DiffHunk[] {
   const hunks: DiffHunk[] = [];
 
   for (const group of groups) {
-    const firstChangeIdx = group[0] as number;
-    const lastChangeIdx = group[group.length - 1] as number;
+    const firstChangeIdx = group[0]!;
+    const lastChangeIdx = group[group.length - 1]!;
 
     const startIdx = Math.max(0, firstChangeIdx - CONTEXT_LINES);
     const endIdx = Math.min(diffLines.length - 1, lastChangeIdx + CONTEXT_LINES);
@@ -309,7 +309,7 @@ function groupIntoHunks(diffLines: DiffLine[]): DiffHunk[] {
     let oldLine = 0;
     let newLine = 0;
     for (let i = 0; i < startIdx; i++) {
-      const line = diffLines[i] as DiffLine;
+      const line = diffLines[i]!;
       if (line.op === "equal" || line.op === "remove") oldLine++;
       if (line.op === "equal" || line.op === "add") newLine++;
     }

@@ -162,8 +162,10 @@ export class HttpClient {
    * @returns { signal, cleanup } 调用方应在 finally 调用 cleanup 取消监听
    */
   #mergeSignals(
+    // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
     external: AbortSignal | undefined,
     timeoutMs: number,
+  // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
   ): { signal: AbortSignal | undefined; cleanup: () => void } {
     const useTimeout = timeoutMs > 0;
 

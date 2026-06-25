@@ -12,22 +12,19 @@ import type {
   ChatOptions,
   ChatChunk,
   Provider,
-  ProviderToolCall,
   UsageInfo,
   ModelId,
   ClientOptions,
+  BalanceResult,
 } from "./types.js";
-import { getModelMeta, estimateTokens } from "./models.js";
+import { estimateTokens } from "./models.js";
 import { HttpClient } from "./client.js";
-import { mapHttpError } from "./errors.js";
 import {
   type DeepSeekMessage,
   type DeepSeekRequest,
   type DeepSeekStreamChunk,
   type DeepSeekToolCallChunk,
-  type DeepSeekThinking,
   type DeepSeekReasoningEffort,
-  type DeepSeekResponseFormat,
   type DeepSeekToolChoice,
   streamCompletion as protocolStream,
   getBalance as protocolBalance,
@@ -236,7 +233,7 @@ export class DeepSeekProvider implements Provider {
   /**
    * 查询账户余额。
    */
-  async getBalance(): Promise<import("./types.js").BalanceResult> {
+  async getBalance(): Promise<BalanceResult> {
     return protocolBalance(this.#client, this.#baseUrl, this.#apiKey);
   }
 

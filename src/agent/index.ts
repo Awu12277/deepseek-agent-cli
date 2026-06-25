@@ -4,6 +4,7 @@
 
 import type {
   ChatMessage,
+  ChatOptions,
   Provider,
   ProviderToolCall,
   UsageInfo,
@@ -136,7 +137,7 @@ export class Session {
    *    d. 如果没有工具调用 → 退出循环
    * 3. yield done 事件
    */
-  async *chat(userInput: string, opts?: import("../provider/types.js").ChatOptions): AsyncGenerator<AgentEvent> {
+  async *chat(userInput: string, opts?: ChatOptions): AsyncGenerator<AgentEvent> {
     // 1. 追加用户消息
     this.#messages.push({ role: "user", content: userInput });
 
@@ -151,7 +152,8 @@ export class Session {
         const [trimmed] = trimMessages(
           [...this.#messages],
           {
-            model: this.#provider.model() as ModelId,
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+            model: this.#provider.model() as unknown as ModelId,
             reservedForOutput: this.#options.reservedForOutput,
             systemPrompt,
             preserveRecentRounds: this.#options.preserveRecentRounds,
@@ -175,7 +177,7 @@ export class Session {
         let accumulatedText = "";
         let lastUsage: UsageInfo | undefined;
         let lastToolCalls: ProviderToolCall[] | undefined;
-        let lastFinishReason: string | null = null;
+        let _lastFinishReason: string | null = null;
 
         for await (const chunk of stream) {
           if (chunk.content) {
@@ -192,13 +194,14 @@ export class Session {
           }
 
           if (chunk.finishReason) {
-            lastFinishReason = chunk.finishReason;
+            _lastFinishReason = chunk.finishReason;
           }
         }
 
         // d. 记录使用量与成本
         if (lastUsage) {
-          const modelId = this.#provider.model() as ModelId;
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+          const modelId = this.#provider.model() as unknown as ModelId;
           this.#costTracker.record(lastUsage, modelId);
           yield { type: "usage", usage: lastUsage, model: modelId };
         }
@@ -375,6 +378,7 @@ export class Session {
 
     // 4. 非只读工具有预览（可选）
     if (!isReadOnly(tool.kind)) {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
       const maybePreview = (tool as { preview?: (args: unknown, ctx: ToolContext) => Promise<unknown> }).preview;
       if (typeof maybePreview === "function") {
         try {
@@ -422,7 +426,7 @@ export class Session {
     if (recentErrors.length < 3) return false;
 
     // 检查最近 3 次是否同一工具同一错误
-    const first = recentErrors[0] as ToolCallRecord;
+    const first = recentErrors[0]!;
     const allSame = recentErrors.every(
       (r) => r.name === first.name && r.error === first.error && !r.success,
     );
@@ -459,6 +463,7 @@ export class Session {
     const toolDescs = enabledTools.map((t) => ({
       name: t.name,
       description: t.description,
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
       parameters: t.parameters as unknown as Record<string, unknown>,
     }));
 
@@ -490,6 +495,7 @@ export class Session {
       function: {
         name: t.name,
         description: t.description,
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
         parameters: t.parameters as unknown as Record<string, unknown>,
       },
     }));

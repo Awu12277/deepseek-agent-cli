@@ -155,8 +155,8 @@ export async function execCommand(
   /** 如果为 true，表示 command 已经是 shell 程序（如 cmd/sh），不需要再包装 */
   isShellCommand?: boolean,
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
-  return new Promise((resolve) => {
-    let spawnCmd: string;
+  return new Promise((_resolve) => {
+      let spawnCmd: string;
     let spawnArgs: string[];
     let useShell: boolean;
 
@@ -210,13 +210,13 @@ export async function execCommand(
 
     child.on("close", (code) => {
       clearTimeout(timeout);
-      resolve({ stdout, stderr, exitCode: code });
+      _resolve({ stdout, stderr, exitCode: code });
     });
 
     child.on("error", (err) => {
       clearTimeout(timeout);
       stderr += `\n进程启动失败：${err.message}`;
-      resolve({ stdout, stderr, exitCode: null });
+      _resolve({ stdout, stderr, exitCode: null });
     });
   });
 }

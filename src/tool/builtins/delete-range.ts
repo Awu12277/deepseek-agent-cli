@@ -27,7 +27,7 @@ export interface DeleteRangeArgs {
 function findUniqueLine(lines: string[], anchor: string, label: string): { line: number } | { error: string } {
   const matches: number[] = [];
   for (let i = 0; i < lines.length; i++) {
-    if ((lines[i] as string) === anchor) {
+    if (lines[i] === anchor) {
       matches.push(i);
     }
   }
@@ -39,7 +39,7 @@ function findUniqueLine(lines: string[], anchor: string, label: string): { line:
     return { error: `"${label}" 锚点行在文件中出现 ${matches.length} 次，请使用更唯一的行内容` };
   }
 
-  return { line: matches[0] as number };
+  return { line: matches[0]! };
 }
 
 /**

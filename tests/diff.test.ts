@@ -4,9 +4,6 @@
 
 import { describe, it, expect } from "vitest";
 import { computeFileDiff } from "../src/tool/diff.js";
-import { readFile, writeFile, mkdir, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 
 // ---------------------------------------------------------------------------
 // computeFileDiff 基础测试

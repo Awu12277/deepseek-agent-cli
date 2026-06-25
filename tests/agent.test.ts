@@ -2,7 +2,7 @@
 // Agent 主循环单元测试
 // ---------------------------------------------------------------------------
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import type { Provider, ChatChunk, ChatMessage } from "../src/provider/index.js";
 import type { AgentEvent } from "../src/agent/types.js";
 import { Session } from "../src/agent/index.js";
@@ -256,7 +256,9 @@ describe("Session", () => {
     // 应该有 done 事件
     const doneEvent = events.find((e) => e.type === "done");
     expect(doneEvent).toBeDefined();
-    expect((doneEvent as { type: "done"; elapsed: number }).elapsed).toBeGreaterThanOrEqual(0);
+    if (doneEvent && doneEvent.type === "done") {
+      expect(doneEvent.elapsed).toBeGreaterThanOrEqual(0);
+    }
 
     // 应该有 usage 事件
     const usageEvent = events.find((e) => e.type === "usage");
@@ -338,6 +340,7 @@ describe("Session", () => {
       name: "error",
       model: () => "deepseek-v4-flash",
       countTokens: () => 0,
+      // eslint-disable-next-line require-yield
       chat: async function* () {
         throw new Error("网络连接失败");
       },
@@ -352,7 +355,9 @@ describe("Session", () => {
 
     const errorEvent = events.find((e) => e.type === "error");
     expect(errorEvent).toBeDefined();
-    expect((errorEvent as { type: "error"; error: Error }).error.message).toBe("网络连接失败");
+    if (errorEvent && errorEvent.type === "error") {
+      expect(errorEvent.error.message).toBe("网络连接失败");
+    }
   });
 
   it("reset 清空消息历史", async () => {
@@ -412,9 +417,9 @@ describe("Session", () => {
 
     // 消息历史应包含 4 条消息：2 个 user + 2 个 assistant
     expect(session.messages).toHaveLength(4);
-    expect(session.messages[0]!.role).toBe("user");
-    expect(session.messages[1]!.role).toBe("assistant");
-    expect(session.messages[2]!.role).toBe("user");
-    expect(session.messages[3]!.role).toBe("assistant");
+    expect(session.messages[0].role).toBe("user");
+    expect(session.messages[1].role).toBe("assistant");
+    expect(session.messages[2].role).toBe("user");
+    expect(session.messages[3].role).toBe("assistant");
   });
 });

@@ -33,7 +33,7 @@ export function SkillSelector({ skills, input, selectedIndex }: SkillSelectorPro
         .slice(0, 3);
 
   // 精确匹配时表示已补全完成，不显示列表
-  if (query && matched.length > 0 && matched.some((s) => s.name.toLowerCase() === query)) return null;
+  if (query && matched.some((s) => s.name.toLowerCase() === query)) return null;
 
   if (matched.length === 0) return null;
 

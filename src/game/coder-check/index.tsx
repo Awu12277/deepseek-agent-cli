@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 const GAME_W = 66;
 const GAME_H = 20; // 6 行分数 + 14 行掉落单词
 const SCORE_H = 6;
-const WORD_H = 14;
+// const WORD_H = 14;
 const MAX_WORDS = 10;
 const CYBER_PALETTE = ["#00ffff", "#ff00ff", "#00ff41", "#ff1493", "#8b00ff"];
 
@@ -98,7 +98,7 @@ const WORDS_BANK = [
 
 function randomWord(used: Set<string>): string {
   let w: string;
-  do { w = WORDS_BANK[Math.floor(Math.random() * WORDS_BANK.length)] as string; }
+  do { w = WORDS_BANK[Math.floor(Math.random() * WORDS_BANK.length)]!; }
   while (used.has(w));
   return w;
 }
@@ -230,7 +230,7 @@ function buildGameView(s: GameState, scoreLines: string[], scoreColor: string, m
         if (s.combo >= 3) {
           const comboText = `${s.combo}连击!`;
           const pad = Math.floor((GAME_W - comboText.length) / 2);
-          const comboColor = CYBER_PALETTE[s.combo % CYBER_PALETTE.length] as string;
+          const comboColor = CYBER_PALETTE[s.combo % CYBER_PALETTE.length]!;
           const raw = " ".repeat(pad) + comboText + " ".repeat(GAME_W - pad - comboText.length);
           line = `\x1b[38;2;${hexToRgb(comboColor)}m${raw}\x1b[0m`;
         } else if (s.paused) {
@@ -248,7 +248,7 @@ function buildGameView(s: GameState, scoreLines: string[], scoreColor: string, m
       if (y === SCORE_H && message) {
         const pad = Math.floor((GAME_W - message.length) / 2);
         const raw = " ".repeat(pad) + message + " ".repeat(GAME_W - pad - message.length);
-        const msgColor = CYBER_PALETTE[Math.floor(Math.random() * CYBER_PALETTE.length)] as string;
+        const msgColor = CYBER_PALETTE[Math.floor(Math.random() * CYBER_PALETTE.length)]!;
         line = `\x1b[38;2;${hexToRgb(msgColor)}m${raw}\x1b[0m`;
       } else {
         for (let x = 0; x < GAME_W; x++) {
@@ -258,7 +258,7 @@ function buildGameView(s: GameState, scoreLines: string[], scoreColor: string, m
           });
           if (word) {
             const charIdx = x - Math.floor(word.col);
-            const ch = word.text[charIdx] as string;
+            const ch = word.text[charIdx]!;
             const isTarget = word.text === s.target;
             const typedIdx = s.target === word.text ? s.typed.length : 0;
             const isTyped = isTarget && charIdx < typedIdx;
@@ -380,7 +380,7 @@ function CoderCheck({ onExit: _onExit }: CoderCheckProps) {
   );
 
   const s = stateRef.current;
-  const scoreColor = CYBER_PALETTE[colorOffset] as string;
+  const scoreColor = CYBER_PALETTE[colorOffset]!;
   const scoreStr = String(s.score).padStart(5, "0");
   const scoreLines = buildScoreLines(scoreStr);
   const view = buildGameView(s, scoreLines, scoreColor, s.message);

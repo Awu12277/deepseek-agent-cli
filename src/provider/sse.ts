@@ -224,7 +224,8 @@ function readWithTimeout(
         settled = true;
         clearTimeout(timer);
         if (signal) signal.removeEventListener("abort", onAbort);
-        resolve(result as TimedReadResult);
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+        resolve(result as unknown as TimedReadResult);
       })
       .catch((err: unknown) => {
         if (settled) return;

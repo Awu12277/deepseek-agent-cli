@@ -1,7 +1,7 @@
 /**
  * 工具系统集成测试 — 验证工具注册、执行、Session 集成的完整链路
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { ToolRegistry } from "../src/tool/registry.js";
 import { builtinTools } from "../src/tool/builtins/index.js";
 import { readFileTool } from "../src/tool/builtins/read-file.js";
@@ -104,9 +104,9 @@ describe("工具系统集成测试", () => {
       cwd: process.cwd(),
     });
 
-    const events: Array<{ type: string; data?: unknown }> = [];
+    const events: AgentEvent[] = [];
     for await (const event of session.chat("看看我的项目")) {
-      events.push({ type: event.type, data: event });
+      events.push(event);
     }
 
     // 验证事件链路:
@@ -121,10 +121,9 @@ describe("工具系统集成测试", () => {
     const toolResultEvent = events.find((e) => e.type === "tool_result");
     expect(toolResultEvent).toBeDefined();
     if (toolResultEvent && toolResultEvent.type === "tool_result") {
-      const result = toolResultEvent.data as { name: string; result: { success: boolean; data: string } };
-      expect(result.name).toBe("read_file");
-      expect(result.result.success).toBe(true);
-      expect(result.result.data).toContain("dskcode");
+      expect(toolResultEvent.name).toBe("read_file");
+      expect(toolResultEvent.result.success).toBe(true);
+      expect(toolResultEvent.result.data).toContain("dskcode");
     }
 
     // 第二轮应该有文本回复

@@ -17,7 +17,8 @@ interface ToolCallBlockProps {
  */
 function formatArgsSummary(args: string): string {
   try {
-    const parsed = JSON.parse(args) as Record<string, unknown>;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+    const parsed = JSON.parse(args) as unknown as Record<string, unknown>;
     const lines = Object.entries(parsed).map(([key, value]) => {
       const val = String(value);
       const truncated = val.length > 80 ? val.slice(0, 77) + "..." : val;

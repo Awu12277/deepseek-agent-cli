@@ -1,7 +1,7 @@
 import { existsSync, watch } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { Config, ProviderConfig, ToolConfig, PluginConfig, StockConfig } from "./types.js";
+import type { Config, StockConfig } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // 出厂默认配置
@@ -48,7 +48,7 @@ export const defaultConfig: Config = {
  */
 function _isUrl(s: string): boolean {
   try {
-    new URL(s);
+    void new URL(s);
     return true;
   } catch {
     return false;
@@ -108,16 +108,16 @@ function mergeConfig(base: Config, overlay: Partial<Config>): Config {
     result.tokenBudgetLimit = overlay.tokenBudgetLimit;
   }
   if (overlay.providers !== undefined) {
-    result.providers = overlay.providers as ProviderConfig[];
+    result.providers = overlay.providers;
   }
   if (overlay.tools !== undefined) {
-    result.tools = overlay.tools as ToolConfig[];
+    result.tools = overlay.tools;
   }
   if (overlay.plugins !== undefined) {
-    result.plugins = overlay.plugins as PluginConfig[];
+    result.plugins = overlay.plugins;
   }
   if (overlay.stock !== undefined) {
-    result.stock = overlay.stock as StockConfig;
+    result.stock = overlay.stock;
   }
 
   return result;
@@ -158,6 +158,7 @@ function applyEnvVars(config: Config): Config {
     switch (configKey) {
       case "verbose":
       case "defaultProvider": {
+        // eslint-disable-next-line typescript/no-unsafe-type-assertion
         (result as unknown as Record<string, unknown>)[configKey] = raw;
         break;
       }
@@ -167,6 +168,7 @@ function applyEnvVars(config: Config): Config {
       case "tokenBudgetLimit": {
         const n = Number(raw);
         if (Number.isFinite(n) && n >= 0) {
+          // eslint-disable-next-line typescript/no-unsafe-type-assertion
           (result as unknown as Record<string, unknown>)[configKey] = n;
         }
         break;
@@ -174,6 +176,7 @@ function applyEnvVars(config: Config): Config {
       case "temperature": {
         const n = Number(raw);
         if (Number.isFinite(n) && n >= 0 && n <= 2) {
+          // eslint-disable-next-line typescript/no-unsafe-type-assertion
           (result as unknown as Record<string, unknown>)[configKey] = n;
         }
         break;
@@ -389,6 +392,7 @@ export async function loadConfig(configPath?: string): Promise<Config> {
   for (const filePath of filePaths) {
     try {
       const raw = await readFile(filePath, "utf-8");
+      // eslint-disable-next-line typescript/no-unsafe-type-assertion
       const parsed = JSON.parse(raw) as Partial<Config>;
       config = mergeConfig(config, parsed);
     } catch {
@@ -440,7 +444,7 @@ export function watchConfig(
   }
 
   const watchers: ReturnType<typeof watch>[] = [];
-  let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+  let debounceTimer: ReturnType<typeof setTimeout>;
 
   for (const filePath of filePaths) {
     try {
@@ -499,10 +503,12 @@ export async function saveApiKey(apiKey: string): Promise<string> {
     configData = JSON.parse(raw);
   } catch {
     // 文件不存在，用内置默认值填充（tools、plugins 等都会写入）
+    // eslint-disable-next-line typescript/no-unsafe-type-assertion
     configData = structuredClone(defaultConfig) as unknown as Record<string, unknown>;
   }
 
   // 更新或创建 deepseek provider
+  // eslint-disable-next-line typescript/no-unsafe-type-assertion
   const providers = (configData.providers as Record<string, unknown>[]) ?? [];
   const existing = providers.find((p) => p.name === "deepseek");
 
@@ -544,11 +550,14 @@ export async function saveModelConfig(model: string): Promise<string> {
     const raw = await readFile(configFile, "utf-8");
     configData = JSON.parse(raw);
   } catch {
+    // eslint-disable-next-line typescript/no-unsafe-type-assertion
     configData = structuredClone(defaultConfig) as unknown as Record<string, unknown>;
   }
 
   // 更新 defaultProvider 的 model
+  // eslint-disable-next-line typescript/no-unsafe-type-assertion
   const providers = (configData.providers as Record<string, unknown>[]) ?? [];
+  // eslint-disable-next-line typescript/no-unsafe-type-assertion
   const defaultProviderName = (configData.defaultProvider as string) ?? "deepseek";
   const existing = providers.find((p) => p.name === defaultProviderName);
 
@@ -590,6 +599,7 @@ export async function saveStockConfig(symbols: StockConfig["symbols"]): Promise<
     const raw = await readFile(configFile, "utf-8");
     configData = JSON.parse(raw);
   } catch {
+    // eslint-disable-next-line typescript/no-unsafe-type-assertion
     configData = structuredClone(defaultConfig) as unknown as Record<string, unknown>;
   }
 

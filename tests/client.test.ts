@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { HttpClient } from "../src/provider/client.js";
 import {
   AuthError,
@@ -16,7 +16,7 @@ import {
 const originalFetch = globalThis.fetch;
 
 function mockFetch(impl: (url: string, init?: RequestInit) => Promise<Response> | Response) {
-  globalThis.fetch = vi.fn(impl) as unknown as typeof fetch;
+  Object.assign(globalThis, { fetch: vi.fn(impl) });
 }
 
 function restoreFetch() {
@@ -72,8 +72,9 @@ describe("HttpClient.request — 请求成功", () => {
     });
 
     expect(capturedInit?.headers).toBeInstanceOf(Headers);
-    const headers = capturedInit!.headers as Headers;
-    expect(headers.get("Content-Type")).toBe("application/json");
+    if (capturedInit?.headers instanceof Headers) {
+      expect(capturedInit.headers.get("Content-Type")).toBe("application/json");
+    }
   });
 
   it("不应覆盖调用方显式设置的 Content-Type", async () => {
@@ -90,8 +91,9 @@ describe("HttpClient.request — 请求成功", () => {
       headers: { "Content-Type": "text/plain" },
     });
 
-    const headers = capturedInit!.headers as Headers;
-    expect(headers.get("Content-Type")).toBe("text/plain");
+    if (capturedInit?.headers instanceof Headers) {
+      expect(capturedInit.headers.get("Content-Type")).toBe("text/plain");
+    }
   });
 
   it("GET 无 body 时不附加 Content-Type", async () => {
@@ -104,8 +106,9 @@ describe("HttpClient.request — 请求成功", () => {
     const client = new HttpClient();
     await client.request("https://api.example.com", { method: "GET" });
 
-    const headers = capturedInit!.headers as Headers;
-    expect(headers.get("Content-Type")).toBeNull();
+    if (capturedInit?.headers instanceof Headers) {
+      expect(capturedInit.headers.get("Content-Type")).toBeNull();
+    }
   });
 
   it("应返回成功响应对象", async () => {

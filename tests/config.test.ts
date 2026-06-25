@@ -15,7 +15,7 @@ describe("defaultConfig", () => {
 
   it("should list all 8 built-in tools", () => {
     expect(defaultConfig.tools).toHaveLength(8);
-    const names = defaultConfig.tools.map((t) => t.name).sort();
+    const names = defaultConfig.tools.map((t) => t.name).toSorted();
     expect(names).toEqual([
       "bash",
       "edit_file",

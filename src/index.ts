@@ -12,7 +12,8 @@ import { ExitCode } from "./cli/exit-codes.js";
  * 此处只处理 ink 未运行时的 SIGINT（如启动阶段）。
  */
 let sigintCount = 0;
-let sigintTimer: ReturnType<typeof setTimeout> | null = null;
+// eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
+let sigintTimer: NodeJS.Timeout | null = null;
 
 /**
  * 全局兜底 SIGINT 处理：双击退出。
@@ -36,6 +37,7 @@ const program = createCli();
 try {
   await program.parseAsync(process.argv);
 } catch (err: unknown) {
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
   const error = err as { exitCode?: number; code?: string };
 
   if (error.code === "commander.helpDisplayed" || error.code === "commander.version") {

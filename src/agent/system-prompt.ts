@@ -20,7 +20,7 @@ function formatTools(tools: ToolDescription[]): ToolView[] {
   return tools.map((t) => {
     const params =
       t.parameters &&
-      Object.keys((t.parameters as Record<string, unknown>).properties ?? {})
+      Object.keys((t.parameters).properties ?? {})
         .join(", ");
     return {
       name: t.name,

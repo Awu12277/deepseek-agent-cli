@@ -43,7 +43,7 @@ const LEVELS: LevelDef[] = [
 ];
 
 function getLevel(level: number): LevelDef {
-  return LEVELS[(level - 1) % LEVELS.length] as LevelDef;
+  return LEVELS[(level - 1) % LEVELS.length]!;
 }
 
 function createBricks(level: number): Brick[] {
@@ -87,7 +87,7 @@ interface GameState {
 function createInitialState(level: number): GameState {
   const def = getLevel(level);
   const totalW = def.cols * def.bw + (def.cols - 1) * 2;
-  const startX = Math.floor((GAME_WIDTH - totalW) / 2);
+  const _startX = Math.floor((GAME_WIDTH - totalW) / 2);
   return {
     level,
     bricks: createBricks(level),
@@ -178,7 +178,7 @@ function buildBoard(state: GameState): string {
       } else if (isPaddle) {
         line += "\x1b[94m▄\x1b[0m";
       } else if (brickRow !== undefined) {
-        line += `\x1b[38;5;${BRICK_COLORS[brickRow] as number}m▀\x1b[0m`;
+        line += `\x1b[38;5;${BRICK_COLORS[brickRow]}m▀\x1b[0m`;
       } else {
         line += " ";
       }

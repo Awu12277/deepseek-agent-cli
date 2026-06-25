@@ -86,7 +86,8 @@ defaultRegistry.register("deepseek", (config) => {
   return new DeepSeekProvider({
     apiKey: config.apiKey,
     baseUrl: config.baseUrl,
-    model: config.model as ModelId,
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+    model: config.model as unknown as ModelId,
   });
 });
 

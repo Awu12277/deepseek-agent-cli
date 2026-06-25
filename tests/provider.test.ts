@@ -336,17 +336,19 @@ describe("mapHttpError", () => {
 // ProviderRegistry
 // ---------------------------------------------------------------------------
 
+const createMockFactory = (config: { apiKey: string; baseUrl: string; model: string }) => ({
+  name: "mock",
+  model: () => config.model,
+  countTokens: (text: string) => text.length,
+  chat: async function* () {
+    yield { content: "mock", finishReason: "stop" as const };
+  },
+});
+
 describe("ProviderRegistry", () => {
   it("应注册并获取 Provider 实例", () => {
     const registry = new ProviderRegistry();
-    const mockFactory = (config: { apiKey: string; baseUrl: string; model: string }) => ({
-      name: "mock",
-      model: () => config.model,
-      countTokens: (text: string) => text.length,
-      chat: async function* () {
-        yield { content: "mock", finishReason: "stop" as const };
-      },
-    });
+    const mockFactory = createMockFactory;
 
     registry.register("mock", mockFactory);
     const provider = registry.get("mock", {
@@ -392,14 +394,7 @@ describe("ProviderRegistry", () => {
 
   it("不同配置应创建不同实例", () => {
     const registry = new ProviderRegistry();
-    const mockFactory = (config: { apiKey: string; baseUrl: string; model: string }) => ({
-      name: "mock",
-      model: () => config.model,
-      countTokens: (text: string) => text.length,
-      chat: async function* () {
-        yield { content: "mock", finishReason: "stop" as const };
-      },
-    });
+    const mockFactory = createMockFactory;
 
     registry.register("mock", mockFactory);
     const flash = registry.get("mock", {
@@ -600,10 +595,10 @@ describe("DeepSeekProvider", () => {
 
       expect(result.isAvailable).toBe(true);
       expect(result.balances).toHaveLength(1);
-      expect(result.balances[0]!.currency).toBe("CNY");
-      expect(result.balances[0]!.totalBalance).toBe(100.50);
-      expect(result.balances[0]!.grantedBalance).toBe(10);
-      expect(result.balances[0]!.toppedUpBalance).toBe(90.50);
+      expect(result.balances[0].currency).toBe("CNY");
+      expect(result.balances[0].totalBalance).toBe(100.50);
+      expect(result.balances[0].grantedBalance).toBe(10);
+      expect(result.balances[0].toppedUpBalance).toBe(90.50);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -641,7 +636,6 @@ describe("配置校验 — 模型限制", () => {
   // 引入 loader 的 validateConfig 来测试
 
   it("应拒绝不支持的模型", async () => {
-    const { loadAndValidate } = await import("../src/config/index.js");
     // 手动构建一个非法配置
     const config = {
       defaultProvider: "deepseek",
@@ -657,7 +651,7 @@ describe("配置校验 — 模型限制", () => {
 
     // 通过 validateConfig 检查
     const { validateConfig } = await import("../src/config/loader.js");
-    const errors = validateConfig(config as any);
+    const errors = validateConfig(config);
     const modelError = errors.find((e) => e.field === "providers[0].model");
     expect(modelError).toBeDefined();
     expect(modelError?.message).toContain("gpt-4");

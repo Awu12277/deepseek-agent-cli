@@ -18,7 +18,7 @@ import type { ModelId, ProviderToolCall, UsageInfo } from "../provider/index.js"
 import type { FileDiff } from "../tool/types.js";
 import { createProvider } from "../provider/index.js";
 import { Session } from "../agent/index.js";
-import type { AgentEvent, SessionMode } from "../agent/types.js";
+import type { SessionMode } from "../agent/types.js";
 import { builtinTools } from "../tool/index.js";
 import { ToolRegistry } from "../tool/registry.js";
 import {
@@ -183,11 +183,12 @@ export function ChatSession({
   const streamingPhaseRef = useRef(0);
   const [currentContent, setCurrentContent] = useState("");
   const [currentToolCalls, setCurrentToolCalls] = useState<ProviderToolCall[]>([]);
-  const [currentUsage, setCurrentUsage] = useState<UsageInfo | undefined>(undefined);
-  const [currentElapsed, setCurrentElapsed] = useState<number | undefined>(undefined);
-  const [currentCost, setCurrentCost] = useState<number | undefined>(undefined);
-  const [activeModel, setActiveModel] = useState<ModelId>(model as ModelId);
-  const [streamingModel, setStreamingModel] = useState<string | undefined>(undefined);
+  const [_currentUsage, setCurrentUsage] = useState<UsageInfo | undefined>(undefined);
+  const [_currentElapsed, setCurrentElapsed] = useState<number | undefined>(undefined);
+  const [_currentCost, setCurrentCost] = useState<number | undefined>(undefined);
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+  const [activeModel, setActiveModel] = useState<ModelId>(model as unknown as ModelId);
+  const [_streamingModel, setStreamingModel] = useState<string | undefined>(undefined);
   const [streamError, setStreamError] = useState<string | undefined>(undefined);
 
   // 会话模式（code / plan）
@@ -196,7 +197,7 @@ export function ChatSession({
   // 高级设置
   const [thinkingEnabled, setThinkingEnabled] = useState(true);
   const [thinkingEffort, setThinkingEffort] = useState<"high" | "max">("high");
-  const [responseFormat, setResponseFormat] = useState<"text" | "json_object">("text");
+  const [responseFormat] = useState<"text" | "json_object">("text");
   const [toolChoice, setToolChoice] = useState<"auto" | "required" | "none" | undefined>(undefined);
 
   // 本次会话累计费用（从已完成的助手消息中汇总）
@@ -233,7 +234,7 @@ export function ChatSession({
 
   // Session 引用（保持跨渲染稳定）
   const sessionRef = useRef<Session | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
+  const abortRef = useRef<AbortController>(null);
 
   // 用 ref 跟踪流式内容的最新值，以便 finally 块能获取非闭包过期的值
   const currentContentRef = useRef("");
@@ -519,7 +520,7 @@ export function ChatSession({
   useEffect(() => {
     if (!externalCostTracker) return;
     let cancelled = false;
-    let timer: ReturnType<typeof setInterval> | undefined;
+    let timer: ReturnType<typeof setInterval>;
 
     const refresh = () => {
       setTodayCost(externalCostTracker.todayTotalCost);
@@ -782,7 +783,7 @@ export function ChatSession({
     abortRef.current = abortController;
 
     try {
-      for await (const event of session!.chat(trimmed, {
+      for await (const event of session.chat(trimmed, {
         thinkingAllowed: thinkingEnabled || undefined,
         thinkingEffort: thinkingEnabled ? thinkingEffort : undefined,
         responseFormat: responseFormat !== "text" ? responseFormat : undefined,
@@ -843,7 +844,8 @@ export function ChatSession({
             currentModelRef.current = event.model;
             // 同步计算费用
             {
-              const cost = calculateCost(event.usage, event.model as ModelId);
+              // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+              const cost = calculateCost(event.usage, event.model as unknown as ModelId);
               setCurrentCost(cost.totalCost);
               currentCostRef.current = cost.totalCost;
             }

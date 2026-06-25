@@ -68,7 +68,8 @@ async function fetchStockMinute(code: string): Promise<{
   const url = MINUTE_API.replace("{code}", normalizeApiCode(code));
   try {
     const resp = await fetch(url);
-    const json = (await resp.json()) as MinuteResponse;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+    const json = (await resp.json()) as unknown as MinuteResponse;
     if (json.code !== 0) return null;
 
     const stockKey = normalizeApiCode(code);
@@ -80,7 +81,7 @@ async function fetchStockMinute(code: string): Promise<{
     const prices: number[] = [];
     for (const line of rawMinutes) {
       // 格式: "HHMM price volume amount"
-      const parts = (line as string).split(" ");
+      const parts = (line).split(" ");
       if (parts.length >= 2) {
         const p = parseFloat(parts[1]!);
         if (!isNaN(p)) prices.push(p);
@@ -89,7 +90,8 @@ async function fetchStockMinute(code: string): Promise<{
 
     // 2. 实时行情快照 — 用于列表
     const qtKey = stockKey;
-    const qt = stockData.qt?.[qtKey] as string[] | undefined;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+    const qt = stockData.qt?.[qtKey] as unknown as string[] | undefined;
     let quote: StockRow | null = null;
     if (qt && qt.length >= 35) {
       quote = {
@@ -132,8 +134,8 @@ export function _clearMinuteCache(): void {
   minuteCache.clear();
 }
 
-function getCachedMinutes(code: string): number[] | undefined {
-  return minuteCache.get(code);
+function _getCachedMinutes(_code: string): number[] | undefined {
+  return minuteCache.get(_code);
 }
 
 // ---------------------------------------------------------------------------
@@ -181,9 +183,9 @@ function formatPrice(p: number): string {
   return p >= 100 ? p.toFixed(2) : p.toFixed(3);
 }
 
-function formatVolume(v: number): string {
-  if (v >= 10000) return (v / 10000).toFixed(1) + "万";
-  return v.toLocaleString();
+function _formatVolume(_v: number): string {
+  if (_v >= 10000) return (_v / 10000).toFixed(1) + "万";
+  return _v.toLocaleString();
 }
 
 /**
@@ -242,7 +244,7 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
 
   const sortedStocks = useMemo(() => {
     if (sortOrder === "default") return stocks;
-    return [...stocks].sort((a, b) =>
+    return [...stocks].toSorted((a, b) =>
       sortOrder === "desc"
         ? b.changePercent - a.changePercent
         : a.changePercent - b.changePercent,
@@ -274,7 +276,7 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
 
   // 首次加载
   useEffect(() => {
-    loadData();
+    void loadData();
   }, [loadData]);
 
   // 5 秒自动刷新 + 倒计时
@@ -282,7 +284,7 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
     const interval = setInterval(() => {
       setCountdown((prev) => {
         if (prev <= 1) {
-          loadData();
+          void loadData();
           return 5;
         }
         return prev - 1;
@@ -293,32 +295,31 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
 
   // ---------- 进入详情时加载分钟数据，每 30s 自动刷新 ----------
   useEffect(() => {
-    if (!detailView) {
-      setDetailPrices(null);
-      setDetailLoading(false);
-      return;
+    if (detailView) {
+      const loadDetail = () => {
+        // 清除缓存，强制走网络
+        minuteCache.delete(detailView.code);
+        void fetchStockMinute(detailView.code).then((data) => {
+          if (data && data.prices.length > 0) {
+            cacheMinute(detailView.code, data.prices);
+            setDetailPrices(data.prices);
+          }
+        });
+      };
+
+      // 立即加载
+      loadDetail();
+
+      // 重置倒计时
+      setDetailCountdown(10);
+
+      // 每 10 秒刷新
+      const timer = setInterval(loadDetail, 10000);
+      return () => clearInterval(timer);
     }
 
-    const loadDetail = () => {
-      // 清除缓存，强制走网络
-      minuteCache.delete(detailView.code);
-      fetchStockMinute(detailView.code).then((data) => {
-        if (data && data.prices.length > 0) {
-          cacheMinute(detailView.code, data.prices);
-          setDetailPrices(data.prices);
-        }
-      });
-    };
-
-    // 立即加载
-    loadDetail();
-
-    // 重置倒计时
-    setDetailCountdown(10);
-
-    // 每 10 秒刷新
-    const timer = setInterval(loadDetail, 10000);
-    return () => clearInterval(timer);
+    setDetailPrices(null);
+    setDetailLoading(false);
   }, [detailView]);
 
   // 详情页倒计时
@@ -362,7 +363,7 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
           else onExit();
         } else if (input === "r") {
           setCountdown(5);
-          loadData();
+          void loadData();
         } else if (input === "o") {
           setSortOrder((prev) => (prev === "default" ? "desc" : prev === "desc" ? "asc" : "default"));
         } else if (input === "h") {

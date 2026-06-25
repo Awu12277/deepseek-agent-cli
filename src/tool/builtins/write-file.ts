@@ -70,7 +70,7 @@ export const writeFileTool: AgentTool<WriteFileArgs> = {
 
       await mkdir(dirname(filePath), { recursive: true });
 
-      const content = String(args.content);
+      const content = args.content;
       await writeFileWithEol(filePath, oldContent, content);
 
       const diff = computeFileDiff(oldContent, content, filePath);

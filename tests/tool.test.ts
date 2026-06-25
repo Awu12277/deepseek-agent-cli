@@ -9,11 +9,8 @@ import { readFileTool } from "../src/tool/builtins/read-file.js";
 import { writeFileTool } from "../src/tool/builtins/write-file.js";
 import { editFileTool } from "../src/tool/builtins/edit-file.js";
 import { bashTool } from "../src/tool/builtins/bash.js";
-import { globTool } from "../src/tool/builtins/glob.js";
-import { grepTool } from "../src/tool/builtins/grep.js";
 import { lsTool } from "../src/tool/builtins/ls.js";
-import { fetchTool } from "../src/tool/builtins/fetch.js";
-import { ToolKind, type AnyAgentTool, type ToolContext, type ToolResult } from "../src/tool/types.js";
+import { ToolKind, type AnyAgentTool, type ToolContext } from "../src/tool/types.js";
 import { resolvePath, truncateOutput, createTimeoutSignal } from "../src/tool/sandbox.js";
 import { writeFile, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -533,7 +530,7 @@ describe("createTimeoutSignal", () => {
 
 describe("内置工具接口", () => {
   for (const tool of builtinTools) {
-    describe(`${tool.name}`, () => {
+    describe(tool.name, () => {
       it("有合法的 name", () => {
         expect(tool.name).toBeTruthy();
         expect(typeof tool.name).toBe("string");
