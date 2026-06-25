@@ -1,5 +1,5 @@
 import { Box, Text, useInput } from "ink";
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import asciichart from "asciichart";
 import os from "node:os";
 import { join } from "node:path";
@@ -236,6 +236,19 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
   // h 键一键置灰：所有高亮色替换为 dimColor
   const [dimMode, setDimMode] = useState(false);
 
+  // o 键排序：默认 → 降序 → 升序 → 默认
+  type SortOrder = "default" | "asc" | "desc";
+  const [sortOrder, setSortOrder] = useState<SortOrder>("default");
+
+  const sortedStocks = useMemo(() => {
+    if (sortOrder === "default") return stocks;
+    return [...stocks].sort((a, b) =>
+      sortOrder === "desc"
+        ? b.changePercent - a.changePercent
+        : a.changePercent - b.changePercent,
+    );
+  }, [stocks, sortOrder]);
+
   const { doubleCtrlC, handleCtrlC } = useDoubleCtrlC(onExit);
 
   // 实时时钟（每秒更新）
@@ -350,6 +363,8 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
         } else if (input === "r") {
           setCountdown(5);
           loadData();
+        } else if (input === "o") {
+          setSortOrder((prev) => (prev === "default" ? "desc" : prev === "desc" ? "asc" : "default"));
         } else if (input === "h") {
           setDimMode((v) => !v);
         }
@@ -401,7 +416,9 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
           <Text dimColor>最新价</Text>
         </Box>
         <Box width={12}>
-          <Text dimColor>涨跌幅</Text>
+          <Text dimColor>
+            涨跌幅{sortOrder === "desc" ? " ▼" : sortOrder === "asc" ? " ▲" : ""}
+          </Text>
         </Box>
         <Box width={12}>
           <Text dimColor>涨跌额</Text>
@@ -424,7 +441,7 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
 
       {/* 股票列表 */}
       <Box flexDirection="column">
-        {stocks.map((stock, index) => {
+        {sortedStocks.map((stock, index) => {
           const isSelected = index === selectedIndex;
           const isUp = stock.changePercent >= 0;
           const color = isUp ? "#ff1493" : "#00ff41";
@@ -488,7 +505,7 @@ export function StockList({ codes, onExit, onBackToChat }: StockListProps) {
       {/* 底栏 */}
       <Box marginTop={1}>
         <Text dimColor>
-          {`  ↑/↓ 选择  Enter 详情  r 手动刷新  h 置灰/恢复  q 返回`}
+          {`  ↑/↓ 选择  Enter 详情  r 手动刷新  o 排序  h 置灰/恢复  q 返回`}
         </Text>
       </Box>
       <Box>
