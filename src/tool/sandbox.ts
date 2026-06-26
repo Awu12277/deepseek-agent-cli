@@ -164,6 +164,18 @@ export async function execCommand(
       spawnCmd = command;
       spawnArgs = args;
       useShell = false;
+
+      // cmd.exe 默认用 GBK 输出中文错误，会在 UTF-8 终端里变成乱码。
+      // 所以在 cmd 这条路径下，把命令带上 `chcp 65001 >nul &&` 前缀
+      // 切到 UTF-8 代码页，stderr 才能被 LLM 读懂。
+      // 启动期探测出的 SHELL_INFO 已不允许这种耗时切换，能在 git bash 赏i
+      // 就不进 cmd 这条分支；这里作为“找不到 Git Bash 时的兒底”出现。
+      //
+      // 注意：chcp 切换只对 cmd.exe /c 调用里可见，不会污染外层进程。
+      if (isWindows && spawnCmd === "cmd" && spawnArgs[0] === "/c") {
+        const prefixed = `chcp 65001 >nul && ${spawnArgs[1] ?? ""}`;
+        spawnArgs = ["/c", prefixed];
+      }
     } else {
       useShell = !isWindows;
       spawnCmd = isWindows ? "cmd" : command;
@@ -183,11 +195,11 @@ export async function execCommand(
     let stderr = "";
 
     child.stdout.on("data", (data: Buffer) => {
-      stdout += data.toString();
+      stdout += data.toString("utf8");
     });
 
     child.stderr.on("data", (data: Buffer) => {
-      stderr += data.toString();
+      stderr += data.toString("utf8");
     });
 
     const timeout = setTimeout(() => {
