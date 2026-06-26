@@ -1104,7 +1104,7 @@ export function ChatSession({
         }, 2000);
       }
     }
-  }, [onLaunchGame, onLaunchStock, currentContent, currentToolCalls, skills, skillSelectIndex, getFilteredSkills, thinkingEnabled, thinkingEffort, responseFormat, toolChoice, activeModel, sessionMode]);
+  }, [onLaunchGame, onLaunchStock, currentContent, currentToolCalls, skills, skillSelectIndex, getFilteredSkills, thinkingEnabled, thinkingEffort, responseFormat, toolChoice, activeModel, sessionMode, isStreaming, rewinding]);
 
   // 从 costTracker 更新今日消耗（每次流式结束后刷新）
   useEffect(() => {
