@@ -39,6 +39,11 @@ const PHASE_CONFIG = {
   executing_tools: { icon: "⚡", label: "执行工具", color: "#00ffff" },
 } as const;
 
+/** 判断工具名是否属于会修改文件系统的类（用于决定 rewind 提示是否出现） */
+export function isFileMutatingTool(name: string): boolean {
+  return name === "edit_file" || name === "write_file" || name === "multi_edit" || name === "delete_range";
+}
+
 /** 命令处理结果的类型，支持文本响应和动作跳转 */
 export type CommandAction =
   | { kind: "text"; content: string }
@@ -234,6 +239,17 @@ export function ChatSession({
   const [rewindList, setRewindList] = useState<MessageCheckpointInfo[]>([]);
   const [rewinding, setRewinding] = useState(false);
 
+  // /rewind 提示：某轮对话修改了文件后，在原状态 loading 处显示「/rewind N 可撤回本次修改」。
+  // 三阶段：idle（不显示）→ pending（流式刚结束，等 2s）→ visible（展示提示）
+  // 提示一旦出现会一直保留到下次对话开始或用户输入，不会自动隐藏。
+  const [rewindHintPhase, setRewindHintPhase] = useState<"idle" | "pending" | "visible">("idle");
+  // 本轮 cp 在 listCheckpoints 列表中的 1-based 序号（用于给 /rewind <N> 使用）
+  const [rewindHintNumber, setRewindHintNumber] = useState<number | null>(null);
+  // 本轮是否触发了文件修改类工具调用（edit_file/write_file/multi_edit/delete_range）
+  const currentRoundModifiedRef = useRef(false);
+  // 提示计时器句柄
+  const rewindHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // 模型选择模式
   const [selectingModel, setSelectingModel] = useState(false);
   const [modelSelectIndex, setModelSelectIndex] = useState(0);
@@ -252,11 +268,29 @@ export function ChatSession({
   const currentModelRef = useRef<string | undefined>(undefined);
   const streamErrorRef = useRef<string | undefined>(undefined);
 
-  // 输入变更时重置选择索引
+  // 输入变更时重置选择索引，同时清掉 rewind 提示
   useEffect(() => {
     setSkillSelectIndex(0);
     setFileSelectIndex(0);
+    if (rewindHintPhase !== "idle") {
+      setRewindHintPhase("idle");
+      setRewindHintNumber(null);
+      if (rewindHintTimerRef.current) {
+        clearTimeout(rewindHintTimerRef.current);
+        rewindHintTimerRef.current = null;
+      }
+    }
   }, [input]);
+
+  // 组件卸载时清掉 rewind 提示计时器，避免内存泄露
+  useEffect(() => {
+    return () => {
+      if (rewindHintTimerRef.current) {
+        clearTimeout(rewindHintTimerRef.current);
+        rewindHintTimerRef.current = null;
+      }
+    };
+  }, []);
 
   // 获取当前输入匹配的 skill 列表
   const getFilteredSkills = useCallback(
@@ -927,6 +961,14 @@ export function ChatSession({
     currentCostRef.current = undefined;
     currentModelRef.current = undefined;
     streamErrorRef.current = undefined;
+    // 新一轮对话开始：清除上轮可能残留的 rewind 提示
+    currentRoundModifiedRef.current = false;
+    setRewindHintPhase("idle");
+    setRewindHintNumber(null);
+    if (rewindHintTimerRef.current) {
+      clearTimeout(rewindHintTimerRef.current);
+      rewindHintTimerRef.current = null;
+    }
 
     const session = sessionRef.current;
     const abortController = new AbortController();
@@ -959,6 +1001,13 @@ export function ChatSession({
               currentToolCallsRef.current = next;
               return next;
             });
+            // 标记本轮是否触发了文件修改类工具调用
+            for (const call of event.calls) {
+              if (isFileMutatingTool(call.name)) {
+                currentRoundModifiedRef.current = true;
+                break;
+              }
+            }
             break;
 
           case "tool_result":
@@ -1044,6 +1093,22 @@ export function ChatSession({
             assistantDetail: completed,
           },
         ]);
+      }
+
+      // 如果本轮触发了文件修改且无流错误 -> 2s 后展示 rewind 提示
+      // 提示会一直保留到下次对话开始（流式再次启动）或用户输入为止
+      if (currentRoundModifiedRef.current && !finStreamError) {
+        const cps = sessionRef.current?.listCheckpoints() ?? [];
+        if (cps.length > 0) {
+          // 1-based 序号（对应 /rewind <N>），本轮 cp 就是列表中最后一项
+          setRewindHintNumber(cps.length);
+          setRewindHintPhase("pending");
+          if (rewindHintTimerRef.current) clearTimeout(rewindHintTimerRef.current);
+          rewindHintTimerRef.current = setTimeout(() => {
+            setRewindHintPhase((prev) => (prev === "pending" ? "visible" : prev));
+            rewindHintTimerRef.current = null;
+          }, 2000);
+        }
       }
     }
   }, [onLaunchGame, onLaunchStock, currentContent, currentToolCalls, skills, skillSelectIndex, getFilteredSkills, thinkingEnabled, thinkingEffort, responseFormat, toolChoice, activeModel, sessionMode]);
@@ -1271,6 +1336,13 @@ export function ChatSession({
               <Text bold color={PHASE_CONFIG[streamingPhase].color}>
                 {PHASE_CONFIG[streamingPhase].icon} {PHASE_CONFIG[streamingPhase].label}{" "}
                 <InkSpinner type="dots" />
+              </Text>
+            </Box>
+          ) : rewindHintPhase === "visible" && rewindHintNumber !== null ? (
+            // 本轮修改了文件时，流式结束后 2s 在原位置展示 /rewind 提示
+            <Box marginTop={1} justifyContent="center">
+              <Text color="#808080">
+                {`↩ /rewind ${rewindHintNumber} 可撤回本次修改`}
               </Text>
             </Box>
           ) : null}
