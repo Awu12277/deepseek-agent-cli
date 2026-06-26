@@ -460,6 +460,9 @@ export class Session {
       }
     }
 
+    // restoreCheckpointForce 内部已 drop 了该 checkpoints 的 stash entry，
+    // 所以只需从 Map 中移除即可，无需再 discardCheckpoint。
+    this.#checkpoints.delete(targetIndex);
     for (const cp of toDiscard) { void discardCheckpoint(cp); }
     this.#persist();
     return { ok: true, fileRestored };

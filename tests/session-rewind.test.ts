@@ -160,6 +160,26 @@ describe("Session 持久化与 Rewind", () => {
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.fileRestored).toBe(true);
     expect(await readFile(join(projectDir, "a.txt"), "utf-8")).toBe("user-edit-1\n");
+    // rewind 成功后该检查点应从列表中移除
+    expect(s.listCheckpoints()).toHaveLength(0);
+    expect(s.hasCheckpoints()).toBe(false);
+  });
+
+  it("rewind 到中间检查点后，目标检查点及其后的检查点均从列表中移除", async () => {
+    const s = new Session(textProvider("ok"), [], undefined, { cwd: projectDir, store: false });
+    await runChat(s, "round-1");
+    await writeFile(join(projectDir, "a.txt"), "v2\n");
+    await runChat(s, "round-2");
+    await writeFile(join(projectDir, "a.txt"), "v3\n");
+    await runChat(s, "round-3");
+    expect(s.listCheckpoints()).toHaveLength(3);
+
+    const idx1 = s.messages.findIndex((m) => m.content === "round-2");
+    const r = await s.rewind(idx1);
+    expect(r.ok).toBe(true);
+    // 目标检查点（idx1）及其后的检查点（idx2）都应移除
+    expect(s.listCheckpoints()).toHaveLength(1);
+    expect(s.listCheckpoints()[0]!.preview).toBe("round-1");
   });
   it("无效索引返回错误", async () => {
     const s = new Session(textProvider("ok"), [], undefined, { cwd: projectDir, store: false });
