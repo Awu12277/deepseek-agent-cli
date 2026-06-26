@@ -702,10 +702,11 @@ export function ChatSession({
       // /rewind 命令：回退到历史检查点
       if (cmdLower === "/rewind" || cmdLower.startsWith("/rewind ")) {
         if (isStreaming || rewinding) {
+          const reason = rewinding ? "回退中" : "生成中";
           setDisplayMessages((prev) => [
             ...prev,
             { role: "user", content: trimmed },
-            { role: "assistant", content: "⚠ 正在生成或回退中，请稍后再试 /rewind。" },
+            { role: "assistant", content: `⚠ 正在${reason}，请稍后再试 /rewind。` },
           ]);
           setInput("");
           return;
