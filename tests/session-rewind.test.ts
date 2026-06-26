@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import type { Provider, ChatChunk, ChatMessage } from "../src/provider/index.js";
 import { Session } from "../src/agent/index.js";
 import { SessionStore } from "../src/session-store/index.js";
+import { builtinTools } from "../src/tool/index.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -192,6 +193,43 @@ describe("Session 持久化与 Rewind", () => {
     await runChat(s, "hi");
     expect((await s.rewind(1)).ok).toBe(false);
   });
+  it("rewind 到最早检查点（stashSha 为空）也能恢复工作区为 HEAD 干净状态", async () => {
+    // 模拟 "AI 改文件产生中间检查点、用户最后又改了一下"，最旧的检查点为干净状态的空 SHA
+    const editProvider: Provider = {
+      name: "mock",
+      model: () => "deepseek-v4-flash",
+      countTokens: (t) => Math.ceil(t.length / 3),
+      chat: async function* () {
+        const cur = await readFile(join(projectDir, "a.txt"), "utf-8");
+        const v = cur === "v0\n" ? "v1" : cur === "v1\n" ? "v2" : "v3";
+        yield {
+          content: "",
+          toolCalls: [{
+            id: `call-${v}`,
+            name: "edit_file",
+            arguments: JSON.stringify({ path: "a.txt", old_text: cur, new_text: `${v}\n` }),
+          }],
+          finishReason: "tool_calls",
+        };
+        yield { content: "done", finishReason: "stop" };
+      },
+    };
+    const s = new Session(editProvider, builtinTools, undefined, { cwd: projectDir, store: false });
+    await runChat(s, "first");
+    await runChat(s, "second");
+    await runChat(s, "third");
+    const cps = s.listCheckpoints();
+    expect(cps).toHaveLength(3);
+    // 最早检查点（cp1）stashSha 应为空（工作区是 HEAD 干净）
+    expect(cps[0]!.isGitRepo).toBe(true);
+
+    const r = await s.rewind(cps[0]!.index);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.fileRestored).toBe(true);
+    // 关键：文件应被重置为 HEAD 初始状态（original），而不是仍保留 v3
+    expect(await readFile(join(projectDir, "a.txt"), "utf-8")).toBe("original\n");
+  });
+
   it("rewind 后能继续 chat", async () => {
     const s = new Session(textProvider("ok"), [], undefined, { cwd: projectDir, store: false });
     await runChat(s, "first");

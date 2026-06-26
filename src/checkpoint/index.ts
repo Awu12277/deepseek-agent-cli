@@ -3,5 +3,6 @@ export {
   isGitRepo,
   createCheckpoint,
   restoreCheckpointForce,
+  restoreToClean,
   discardCheckpoint,
 } from "./git-checkpoint.js";

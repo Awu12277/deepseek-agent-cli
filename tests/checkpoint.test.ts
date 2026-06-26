@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { isGitRepo, createCheckpoint, restoreCheckpointForce } from "../src/checkpoint/index.js";
+import { isGitRepo, createCheckpoint, restoreCheckpointForce, restoreToClean } from "../src/checkpoint/index.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -168,5 +168,33 @@ describe("checkpoint", () => {
     await writeFile(join(tempDir, "src", "main.ts"), "v3\n");
     await restoreCheckpointForce(cp);
     expect(await readFile(join(tempDir, "src", "main.ts"), "utf-8")).toBe("v2\n");
+  });
+
+  describe("restoreToClean", () => {
+    it("丢弃已修改的已跟踪文件，恢复到 HEAD", async () => {
+      await initGitRepo(tempDir);
+      await writeFile(join(tempDir, "a.txt"), "original\n");
+      await execFileAsync("git", ["add", "."], { cwd: tempDir });
+      await execFileAsync("git", ["commit", "-q", "-m", "init"], { cwd: tempDir });
+      await writeFile(join(tempDir, "a.txt"), "modified\n");
+      await restoreToClean(tempDir);
+      expect(await readFile(join(tempDir, "a.txt"), "utf-8")).toBe("original\n");
+    });
+    it("删除未跟踪文件", async () => {
+      await initGitRepo(tempDir);
+      await writeFile(join(tempDir, "a.txt"), "original\n");
+      await execFileAsync("git", ["add", "."], { cwd: tempDir });
+      await execFileAsync("git", ["commit", "-q", "-m", "init"], { cwd: tempDir });
+      await writeFile(join(tempDir, "untracked.txt"), "data\n");
+      await restoreToClean(tempDir);
+      await expect(readFile(join(tempDir, "untracked.txt"), "utf-8")).rejects.toThrow();
+    });
+    it("非 git 仓库拋错", async () => {
+      await expect(restoreToClean(tempDir)).rejects.toThrow("非 git 仓库");
+    });
+    it("无 commit 的仓库拋错", async () => {
+      await initGitRepo(tempDir);
+      await expect(restoreToClean(tempDir)).rejects.toThrow("无 commit");
+    });
   });
 });

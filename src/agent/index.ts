@@ -23,6 +23,7 @@ import { AlwaysAllowGate } from "../tool/types.js";
 import {
   createCheckpoint,
   restoreCheckpointForce,
+  restoreToClean,
   discardCheckpoint,
   type Checkpoint,
 } from "../checkpoint/index.js";
@@ -450,9 +451,16 @@ export class Session {
     }
 
     let fileRestored = false;
-    if (checkpoint.isGitRepo && checkpoint.stashSha) {
+    if (checkpoint.isGitRepo) {
       try {
-        await restoreCheckpointForce(checkpoint);
+        if (checkpoint.stashSha) {
+          // 目标检查点有 stash 快照——恢复该快照
+          await restoreCheckpointForce(checkpoint);
+        } else {
+          // 目标检查点 stashSha 为空，代表「那一刻工作区就是 HEAD 干净状态」。
+          // 但后续对话产生的修改可能还积累在工作区，需要丢弃才能真正回退到那一刻。
+          await restoreToClean(this.#options.cwd);
+        }
         fileRestored = true;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

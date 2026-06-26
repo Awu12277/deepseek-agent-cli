@@ -81,6 +81,19 @@ export async function restoreCheckpointForce(checkpoint: Checkpoint): Promise<vo
   if (refIndex >= 0) await git(["stash", "drop", `stash@{${refIndex}}`], cwd);
 }
 
+/**
+ * 将工作区重置为 HEAD 干净状态（丢弃所有未提交修改与未跟踪文件）。
+ * 用于「目标检查点 stashSha 为空」的 rewind 场景——那时工作区本就干净，
+ * 但累积的后续对话修改需要被丢弃。
+ */
+export async function restoreToClean(cwd: string): Promise<void> {
+  const inRepo = await isGitRepo(cwd);
+  if (!inRepo) throw new Error("非 git 仓库，无法恢复文件状态");
+  if (!(await hasCommits(cwd))) throw new Error("仓库无 commit，无法恢复");
+  await git(["checkout", "--", "."], cwd);
+  await git(["clean", "-fd"], cwd);
+}
+
 export async function discardCheckpoint(checkpoint: Checkpoint): Promise<void> {
   if (!checkpoint.isGitRepo || !checkpoint.stashSha) return;
   const { cwd, stashSha } = checkpoint;
