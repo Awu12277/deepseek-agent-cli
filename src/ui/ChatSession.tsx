@@ -17,7 +17,7 @@ import { CostTracker } from "../provider/cost-tracker.js";
 import type { ModelId, ProviderToolCall, UsageInfo } from "../provider/index.js";
 import type { FileDiff } from "../tool/types.js";
 import { createProvider } from "../provider/index.js";
-import { Session } from "../agent/index.js";
+import { Session, type MessageCheckpointInfo, type RewindResult } from "../agent/index.js";
 import type { SessionMode } from "../agent/types.js";
 import { builtinTools } from "../tool/index.js";
 import { ToolRegistry } from "../tool/registry.js";
@@ -87,6 +87,7 @@ registerCommand("/game", { desc: "启动游戏", handler: () => ({ kind: "naviga
 registerCommand("/stock", { desc: "查看股票行情", handler: () => ({ kind: "navigate", target: "stock" }) });
 registerCommand("/plan", { desc: "切换为计划模式（Shift+Tab）", handler: () => ({ kind: "text", content: "输入 /plan 或按 Shift+Tab 切换为计划模式" }) });
 registerCommand("/code", { desc: "切换回代码模式（Shift+Tab）", handler: () => ({ kind: "text", content: "输入 /code 或按 Shift+Tab 切换回代码模式" }) });
+registerCommand("/rewind", { desc: "回退到历史检查点", handler: () => ({ kind: "text", content: "请直接输入 /rewind 查看可回退的检查点列表，或 /rewind <序号> 直接回退" }) });
 
 /** 流式输出时，输入框随机展示的占位符列表 */
 const STREAMING_PLACEHOLDERS = [
@@ -227,6 +228,12 @@ export function ChatSession({
   // 输入框 key（补全时递增，强制 TextInput 重挂载以重置光标到末尾）
   const [inputKey, setInputKey] = useState(0);
 
+  // /rewind 回退选择模式
+  const [rewindSelecting, setRewindSelecting] = useState(false);
+  const [rewindSelectIndex, setRewindSelectIndex] = useState(0);
+  const [rewindList, setRewindList] = useState<MessageCheckpointInfo[]>([]);
+  const [rewinding, setRewinding] = useState(false);
+
   // 模型选择模式
   const [selectingModel, setSelectingModel] = useState(false);
   const [modelSelectIndex, setModelSelectIndex] = useState(0);
@@ -288,6 +295,67 @@ export function ChatSession({
     [files],
   );
 
+  // 根据 session.messages 重建 displayMessages，绕开下标对齐问题
+  function rebuildDisplayFromSession(sess: Session): void {
+    const next: DisplayMessage[] = [];
+    for (const m of sess.messages) {
+      if (m.role === "user") {
+        next.push({ role: "user", content: m.content });
+      } else if (m.role === "assistant") {
+        next.push({
+          role: "assistant",
+          content: m.content,
+          assistantDetail: {
+            content: m.content,
+            toolCalls: m.toolCalls,
+          },
+        });
+      } else if (m.role === "tool") {
+        next.push({ role: "tool", content: m.content });
+      }
+      // system 消息不展示
+    }
+    setDisplayMessages(next);
+    setStaticKey((prev) => prev + 1);
+  }
+
+  const doRewind = useCallback(async (target: MessageCheckpointInfo) => {
+    const session = sessionRef.current;
+    if (!session) return;
+    setRewinding(true);
+    setIsStreaming(true);
+    setStreamingPhase("thinking");
+    setStreamingPlaceholder("⏪ 正在回退到检查点…");
+    setInput("");
+    try {
+      const r: RewindResult = await session.rewind(target.index);
+      if (r.ok) {
+        rebuildDisplayFromSession(session);
+        const tail = r.fileRestored ? "，工作区文件已恢复" : "（仅对话回退，未恢复文件）";
+        setDisplayMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: `⏪ 已回退到检查点 #${target.index}${tail}。` },
+        ]);
+      } else {
+        setDisplayMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: `⚠ 回退失败：${r.error}` },
+        ]);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setDisplayMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: `⚠ 回退异常：${msg}` },
+      ]);
+    } finally {
+      setRewinding(false);
+      setIsStreaming(false);
+      setStreamingPhase(null);
+      setStreamingPlaceholder("");
+    }
+  }, []);
+
   const { doubleCtrlC, handleCtrlC } = useDoubleCtrlC(() => {
     // 双击 Ctrl+C 退出进程
     process.exit(0);
@@ -297,6 +365,28 @@ export function ChatSession({
   useInput(
     useCallback(
       (_input, key) => {
+        // /rewind 选择模式
+        if (rewindSelecting) {
+          if (key.upArrow) {
+            setRewindSelectIndex((prev) => (prev - 1 + rewindList.length) % rewindList.length);
+          } else if (key.downArrow) {
+            setRewindSelectIndex((prev) => (prev + 1) % rewindList.length);
+          } else if (key.return) {
+            const target = rewindList[rewindSelectIndex];
+            setRewindSelecting(false);
+            if (target) {
+              void doRewind(target);
+            }
+          } else if (key.escape) {
+            setRewindSelecting(false);
+            setDisplayMessages((prev) => [
+              ...prev,
+              { role: "assistant", content: "已取消回退。" },
+            ]);
+          }
+          return;
+        }
+
         // 模型选择模式
         if (selectingModel) {
           if (key.upArrow) {
@@ -424,7 +514,7 @@ export function ChatSession({
           setInput(_input);
         }
       },
-      [selectingModel, modelSelectIndex, modelOptions, activeModel, isStreaming, handleCtrlC, input, skills, skillSelectIndex, fileSelectIndex, getFilteredSkills, getFilteredFiles, sessionMode, setSessionMode]
+      [selectingModel, modelSelectIndex, modelOptions, activeModel, isStreaming, handleCtrlC, input, skills, skillSelectIndex, fileSelectIndex, getFilteredSkills, getFilteredFiles, sessionMode, setSessionMode, rewindSelecting, rewindSelectIndex, rewindList, doRewind]
     ),
   );
 
@@ -584,6 +674,66 @@ export function ChatSession({
     // 处理斜杠命令
     if (trimmed.startsWith("/") && trimmed.length > 1) {
       const cmdLower = trimmed.toLowerCase();
+
+      // /rewind 命令：回退到历史检查点
+      if (cmdLower === "/rewind" || cmdLower.startsWith("/rewind ")) {
+        if (isStreaming || rewinding) {
+          setDisplayMessages((prev) => [
+            ...prev,
+            { role: "user", content: trimmed },
+            { role: "assistant", content: "⚠ 正在生成或回退中，请稍后再试 /rewind。" },
+          ]);
+          setInput("");
+          return;
+        }
+        if (!sessionRef.current) {
+          setDisplayMessages((prev) => [
+            ...prev,
+            { role: "user", content: trimmed },
+            { role: "assistant", content: "⚠ Session 未就绪，无法回退。" },
+          ]);
+          setInput("");
+          return;
+        }
+        const cps = sessionRef.current.listCheckpoints();
+        if (cps.length === 0) {
+          setDisplayMessages((prev) => [
+            ...prev,
+            { role: "user", content: trimmed },
+            { role: "assistant", content: "⚠ 没有可回退的检查点。\n只有在 git 仓库内且发生过对话后才会生成检查点。" },
+          ]);
+          setInput("");
+          return;
+        }
+        // /rewind <N>：直接按序号回退（1-based）
+        const parts = trimmed.split(/\s+/);
+        if (parts.length >= 2) {
+          const n = Number(parts[1]);
+          if (!Number.isInteger(n) || n < 1 || n > cps.length) {
+            setDisplayMessages((prev) => [
+              ...prev,
+              { role: "user", content: trimmed },
+              { role: "assistant", content: `⚠ 无效的序号「${parts[1]}」。可用范围 1~${cps.length}。` },
+            ]);
+            setInput("");
+            return;
+          }
+          setInput("");
+          await doRewind(cps[n - 1]!);
+          return;
+        }
+        // 无参数：进入选择模式
+        setRewindList(cps);
+        setRewindSelectIndex(Math.max(0, cps.length - 1));
+        setRewindSelecting(true);
+        setDisplayMessages((prev) => [
+          ...prev,
+          { role: "user", content: trimmed },
+          { role: "assistant", content: `⏷↑↓ 选择检查点，Enter 确认，Esc 取消（共 ${cps.length} 个可回退位置）` },
+        ]);
+        setInput("");
+        return;
+      }
 
       // /model 命令：进入模型选择模式
       if (cmdLower === "/model") {
@@ -1076,6 +1226,34 @@ export function ChatSession({
                     {marker}{meta.displayName}{suffix}
                   </Text>
                   {isSelected && <Text color="#808080"> — {id}</Text>}
+                </Box>
+              );
+            })}
+            <Box marginTop={1}>
+              <Text color="#808080" dimColor>↑↓ 选择 · Enter 确认 · Esc 取消</Text>
+            </Box>
+          </Box>
+          <Text color="#00ffff" dimColor>{"─".repeat(dividerWidth)}</Text>
+        </Box>
+      ) : rewindSelecting ? (
+        <Box marginTop={1} flexDirection="column">
+          <Text color="#00ffff" dimColor>{"─".repeat(dividerWidth)}</Text>
+          <Box flexDirection="column" marginTop={1}>
+            <Text bold color="#ff9800">选择要回退的检查点：</Text>
+            {rewindList.map((cp, i) => {
+              const isSelected = i === rewindSelectIndex;
+              const marker = isSelected ? " > " : "   ";
+              const time = new Date(cp.timestamp).toLocaleTimeString();
+              const preview = cp.preview || "(空)";
+              const tag = cp.isGitRepo ? "" : " [非 git，仅对话]";
+              return (
+                <Box key={cp.index}>
+                  <Text
+                    color={isSelected ? "#ff9800" : undefined}
+                    bold={isSelected}
+                  >
+                    {marker}#{i + 1} {time} `{preview}{tag}`
+                  </Text>
                 </Box>
               );
             })}

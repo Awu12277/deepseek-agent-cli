@@ -185,4 +185,15 @@ describe("Session 持久化与 Rewind", () => {
     await s.delete();
     expect(await store.exists(s.id)).toBe(false);
   });
+
+  it("reset 清空 checkpoint，listCheckpoints 返回空（/plan、/code 切换后的预期）", async () => {
+    const s = new Session(textProvider("ok"), [], undefined, { cwd: projectDir, store: false });
+    await runChat(s, "first");
+    await writeFile(join(projectDir, "a.txt"), "v2\n");
+    await runChat(s, "second");
+    expect(s.listCheckpoints()).toHaveLength(2);
+    s.reset();
+    expect(s.listCheckpoints()).toHaveLength(0);
+    expect(s.hasCheckpoints()).toBe(false);
+  });
 });
