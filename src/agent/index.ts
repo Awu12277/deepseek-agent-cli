@@ -28,6 +28,8 @@ import {
   type Checkpoint,
 } from "../checkpoint/index.js";
 import { SessionStore, type StoredSession } from "../session-store/index.js";
+import { ConversationLogger } from "../logger/index.js";
+import { calculateCost } from "../provider/index.js";
 
 /** Session 构造选项 */
 export interface SessionOptions {
@@ -50,6 +52,8 @@ export interface SessionOptions {
   store?: SessionStore | false;
   /** 是否启用 checkpoint（/rewind 需要），默认 true */
   enableCheckpoint?: boolean;
+  /** 是否启用对话日志记录（写入 .dskcode/logs/），默认 true */
+  enableLog?: boolean;
 }
 
 /** 消息检查点信息（对外暴露） */
@@ -72,7 +76,7 @@ export class Session {
   readonly #costTracker: CostTracker;
   readonly #options: Required<
     Pick<SessionOptions, "cwd" | "maxToolRounds" | "reservedForOutput" | "preserveRecentRounds">
-  > & { projectContext?: string; gate: Gate; writeRoots: string[]; enableCheckpoint: boolean };
+  > & { projectContext?: string; gate: Gate; writeRoots: string[]; enableCheckpoint: boolean; enableLog: boolean };
   readonly #abortController = new AbortController();
 
   readonly #sessionId: string;
@@ -83,6 +87,7 @@ export class Session {
   #checkpoints = new Map<number, Checkpoint>();
   #stormRecords: ToolCallRecord[] = [];
   #mode: SessionMode = "code";
+  readonly #logger: ConversationLogger;
 
   constructor(
     provider: Provider,
@@ -107,10 +112,15 @@ export class Session {
       gate: options?.gate ?? new AlwaysAllowGate(),
       writeRoots: options?.writeRoots ?? [options?.cwd ?? process.cwd()],
       enableCheckpoint: options?.enableCheckpoint ?? true,
+      enableLog: options?.enableLog ?? true,
     };
     this.#sessionId = options?.sessionId ?? SessionStore.newId();
     this.#store = options?.store === false ? null : (options?.store ?? new SessionStore());
     this.#createdAt = Date.now();
+    this.#logger = new ConversationLogger(this.#sessionId, this.#options.cwd, {
+      enabled: this.#options.enableLog,
+    });
+    this.#logger.logSessionStart(this.#sessionId, this.#options.cwd, this.#provider.model(), this.#mode);
   }
 
   get messages(): readonly ChatMessage[] { return this.#messages; }
@@ -127,6 +137,7 @@ export class Session {
 
   async *chat(userInput: string, opts?: ChatOptions): AsyncGenerator<AgentEvent> {
     this.#messages.push({ role: "user", content: userInput });
+    this.#logger.logUserMessage(userInput);
     const userMsgIndex = this.#messages.length - 1;
     if (this.#options.enableCheckpoint) {
       try {
@@ -180,15 +191,24 @@ export class Session {
         if (lastUsage) {
           const modelId = this.#provider.model() as unknown as ModelId;
           this.#costTracker.record(lastUsage, modelId);
+          const cost = calculateCost(lastUsage, modelId);
+          this.#logger.logUsage(
+            modelId, lastUsage.promptTokens, lastUsage.completionTokens,
+            lastUsage.cachedPromptTokens, cost.totalCost, toolRounds,
+          );
           yield { type: "usage", usage: lastUsage, model: modelId };
         }
 
         const assistantMsg: ChatMessage = { role: "assistant", content: accumulatedText };
         if (lastToolCalls && lastToolCalls.length > 0) assistantMsg.toolCalls = lastToolCalls;
         this.#messages.push(assistantMsg);
+        this.#logger.logAssistantText(accumulatedText, toolRounds);
 
         if (lastToolCalls && lastToolCalls.length > 0) {
           yield { type: "tool_calls", calls: lastToolCalls };
+          for (const tc of lastToolCalls) {
+            this.#logger.logToolCall(tc.name, tc.id, tc.arguments, toolRounds);
+          }
 
           const stormBroken = this.#checkStormBreak(lastToolCalls);
           if (stormBroken) {
@@ -206,6 +226,10 @@ export class Session {
 
           for (const item of results.items) {
             yield { type: "tool_result", name: item.name, result: item.result };
+            this.#logger.logToolResult(
+              item.name, item.callId, item.result.success,
+              item.result.data, item.result.error, undefined, toolRounds,
+            );
             let toolContent = item.result.data;
             if (item.result.diff && item.result.diff.patch) toolContent += `\n\n${item.result.diff.patch}`;
             this.#messages.push({
@@ -223,11 +247,16 @@ export class Session {
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       if (err instanceof Error && err.name === "AbortError") return;
+      this.#logger.logError(
+        err instanceof Error ? err.message : String(err),
+        err instanceof Error ? err.stack : undefined,
+      );
       yield { type: "error", error: err instanceof Error ? err : new Error(String(err)) };
       return;
     }
 
     const elapsed = Date.now() - startTime;
+    this.#logger.logTurnDone(elapsed, toolRounds);
     void this.#persist();
     // 持久化今日成本数据，确保进程退出后重开不会丢失
     await this.#costTracker.flush().catch(() => {});
@@ -335,6 +364,11 @@ export class Session {
   abort(): void {
     this.#abortController.abort();
     if (this.#persistTimer) { clearTimeout(this.#persistTimer); this.#persistTimer = null; }
+  }
+
+  /** 刷新日志缓冲，确保所有已记录的事件落盘 */
+  async flushLog(): Promise<void> {
+    await this.#logger.flush();
   }
 
   reset(): void {
@@ -484,6 +518,8 @@ export class Session {
     if (this.#store) await this.#store.delete(this.#sessionId);
     for (const cp of this.#checkpoints.values()) { void discardCheckpoint(cp); }
     this.#checkpoints.clear();
+    this.#logger.logSessionEnd(Date.now() - this.#createdAt);
+    await this.#logger.flush();
   }
 
   // -------------------------------------------------------------------------

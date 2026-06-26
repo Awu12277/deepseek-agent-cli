@@ -381,8 +381,13 @@ export function ChatSession({
   }, []);
 
   const { doubleCtrlC, handleCtrlC } = useDoubleCtrlC(() => {
-    // 双击 Ctrl+C 退出进程
-    process.exit(0);
+    // 双击 Ctrl+C 退出进程 — 先刷新日志再退出
+    const s = sessionRef.current;
+    if (s) {
+      void s.flushLog().finally(() => process.exit(0));
+    } else {
+      process.exit(0);
+    }
   });
 
   // 捕获 Ctrl+C 和渐变占位符状态下的字符输入
@@ -874,6 +879,7 @@ export function ChatSession({
 
         switch (result.kind) {
           case "exit":
+            await sessionRef.current?.flushLog();
             process.exit(0);
             return;
           case "clear":

@@ -3,6 +3,7 @@
 import { createCli } from "./cli/index.js";
 import { ExitCode } from "./cli/exit-codes.js";
 import { CostTracker } from "./provider/cost-tracker.js";
+import { ConversationLogger } from "./logger/index.js";
 
 /**
  * 双击 Ctrl+C 退出：
@@ -26,7 +27,10 @@ let sigintTimer: NodeJS.Timeout | null = null;
  */
 async function gracefulExit(code: number): Promise<never> {
   try {
-    await CostTracker.flushAll();
+    await Promise.all([
+      CostTracker.flushAll(),
+      ConversationLogger.flushAll(),
+    ]);
   } catch {
     // 兜底路径，flush 失败不影响退出码
   }
@@ -56,22 +60,22 @@ try {
   await program.parseAsync(process.argv);
   // 正常执行完毕后也兜底 flush（一般 record() 内部已 fire-and-forget，
   // 这里保证若本次没有任何 record 调用也不漏盘）
-  await CostTracker.flushAll();
+  await Promise.all([CostTracker.flushAll(), ConversationLogger.flushAll()]);
 } catch (err: unknown) {
   // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
   const error = err as { exitCode?: number; code?: string };
 
   if (error.code === "commander.helpDisplayed" || error.code === "commander.version") {
-    await CostTracker.flushAll();
+    await Promise.all([CostTracker.flushAll(), ConversationLogger.flushAll()]);
     process.exit(error.exitCode ?? ExitCode.SUCCESS);
   }
 
   if (typeof error.exitCode === "number") {
-    await CostTracker.flushAll();
+    await Promise.all([CostTracker.flushAll(), ConversationLogger.flushAll()]);
     process.exit(error.exitCode);
   }
 
   console.error(String(err));
-  await CostTracker.flushAll();
+  await Promise.all([CostTracker.flushAll(), ConversationLogger.flushAll()]);
   process.exit(ExitCode.GENERAL_ERROR);
 }
