@@ -229,6 +229,8 @@ export class Session {
 
     const elapsed = Date.now() - startTime;
     void this.#persist();
+    // 持久化今日成本数据，确保进程退出后重开不会丢失
+    await this.#costTracker.flush().catch(() => {});
     yield { type: "done", elapsed };
   }
 

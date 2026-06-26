@@ -117,6 +117,16 @@ export interface CostTrackerOptions {
  * ```
  */
 export class CostTracker {
+  /** 全局活跃实例表，用于进程退出时统一 flush。 */
+  static readonly #instances = new Set<CostTracker>();
+
+  /** 进程退出兜底：统一 flush 所有活跃 CostTracker。 */
+  static async flushAll(): Promise<void> {
+    await Promise.allSettled(
+      [...CostTracker.#instances].map((t) => t.flush()),
+    );
+  }
+
   readonly #costDir: string;
   readonly #budgetLimit: number;
   readonly #tokenBudgetLimit: number;
@@ -150,6 +160,9 @@ export class CostTracker {
     const today = getTodayStr();
     this.#todayDate = today;
     this.#todaySummary = createEmptyDailySummary(today);
+
+    // 注册到全局实例表（用于进程退出时统一 flush）
+    CostTracker.#instances.add(this);
   }
 
   // -----------------------------------------------------------------------
@@ -159,6 +172,7 @@ export class CostTracker {
   /**
    * 记录一次 API 调用的 Token 使用量和成本。
    * 自动计算费用，累加到会话级和日级统计。
+   * 标记脏数据（dirty），由上层在合适的时机调用 flush() 持久化到磁盘。
    */
   record(usage: UsageInfo, model: ModelId): CostInfo {
     const cost = calculateCost(usage, model);
@@ -176,7 +190,7 @@ export class CostTracker {
     this.#ensureTodayBucket();
     this.#addToDaily(record);
 
-    // 3. 标记需要持久化
+    // 3. 标记需要持久化（上层在对话周期结束时调用 flush() 落盘）
     this.#dirty = true;
 
     // 4. 预算检查
@@ -297,8 +311,10 @@ export class CostTracker {
   /**
    * 从磁盘加载历史成本数据。
    * 启动时调用，用于恢复今日和历史数据。
+   * 副作用：确保成本目录存在（首次运行时创建 ~/.dskcode/costs）。
    */
   async load(): Promise<void> {
+    await this.#ensureCostDir();
     const store = await this.#loadStore();
     const today = getTodayStr();
 
@@ -310,7 +326,8 @@ export class CostTracker {
 
   /**
    * 将脏数据持久化到磁盘。
-   * 通常在每次 record() 后异步调用，或在会话结束时主动调用。
+   * 会话结束/进程退出时主动调用一次即可。需要每日数据精确时也可在每次
+   * record() 后调用。并发安全：靠 #flushInProgress 互斥。
    */
   async flush(): Promise<void> {
     if (!this.#dirty || this.#flushInProgress) return;
@@ -318,7 +335,12 @@ export class CostTracker {
     this.#dirty = false;
 
     try {
+      await this.#ensureCostDir();
       await this.#saveStore();
+    } catch (err) {
+      // 落盘失败：把 dirty 标记还回去，等下次重试
+      this.#dirty = true;
+      console.error("[CostTracker] flush 失败:", err);
     } finally {
       this.#flushInProgress = false;
     }
@@ -352,6 +374,15 @@ export class CostTracker {
     this.#sessionId = generateSessionId();
     this.#sessionStartedAt = new Date().toISOString();
     this.#sessionRecords.length = 0;
+  }
+
+  /**
+   * 销毁实例：从全局实例表移除并 flush。
+   * 一般用不到，仅在测试或显式生命周期管理时使用。
+   */
+  async dispose(): Promise<void> {
+    CostTracker.#instances.delete(this);
+    await this.flush();
   }
 
   // -----------------------------------------------------------------------
@@ -416,6 +447,11 @@ export class CostTracker {
     }
   }
 
+  /** 确保成本目录存在（首次运行时创建 ~/.dskcode/costs） */
+  async #ensureCostDir(): Promise<void> {
+    await mkdir(this.#costDir, { recursive: true });
+  }
+
   /** 保存成本存储到磁盘 */
   async #saveStore(): Promise<void> {
     const store = await this.#loadStore();
@@ -432,9 +468,6 @@ export class CostTracker {
       // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
       delete store.daily[date];
     }
-
-    // 确保目录存在
-    await mkdir(this.#costDir, { recursive: true });
 
     const filePath = join(this.#costDir, "history.json");
     await writeFile(filePath, JSON.stringify(store, null, 2), "utf-8");

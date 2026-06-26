@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdtemp, rm, readFile, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   CostTracker,
   formatMoney,
@@ -24,22 +27,24 @@ function makeUsage(opts: Partial<UsageInfo> = {}): UsageInfo {
   };
 }
 
+
+
 // ---------------------------------------------------------------------------
 // CostTracker 核心功能
 // ---------------------------------------------------------------------------
 
 describe("CostTracker", () => {
   let tracker: CostTracker;
-  const tmpDir = `/tmp/dskcode-test-costs-${Date.now()}`;
+  let tmpDir: string;
 
-  beforeEach(() => {
-    tracker = new CostTracker({
-      costDir: tmpDir,
-    });
+  beforeEach(async () => {
+    // 用 os.tmpdir() + 随机后缀，避免硬编码 /tmp（Windows 兼容）也避免跨测试污染
+    tmpDir = await mkdtemp(join(tmpdir(), "dskcode-costs-"));
+    tracker = new CostTracker({ costDir: tmpDir });
   });
 
-  afterEach(() => {
-    // 不需要手动清理 tmp 目录，每个测试用唯一路径
+  afterEach(async () => {
+    try { await rm(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
   });
 
   describe("record — 记录单次调用成本", () => {
@@ -210,14 +215,13 @@ describe("CostTracker", () => {
 
   describe("持久化", () => {
     it("flush 后应能通过 load 恢复数据", async () => {
-      const dir = `/tmp/dskcode-test-persist-${Date.now()}`;
-      const t1 = new CostTracker({ costDir: dir });
+      const t1 = new CostTracker({ costDir: tmpDir });
       t1.record(makeUsage({ promptTokens: 1000, completionTokens: 500 }), "deepseek-v4-flash");
       t1.record(makeUsage({ promptTokens: 2000, completionTokens: 1000 }), "deepseek-v4-pro");
       await t1.flush();
 
       // 创建新的 tracker 并加载
-      const t2 = new CostTracker({ costDir: dir });
+      const t2 = new CostTracker({ costDir: tmpDir });
       await t2.load();
 
       // 今日数据应该从磁盘恢复
@@ -226,8 +230,7 @@ describe("CostTracker", () => {
     });
 
     it("queryRange 应返回指定日期范围的数据", async () => {
-      const dir = `/tmp/dskcode-test-range-${Date.now()}`;
-      const t = new CostTracker({ costDir: dir });
+      const t = new CostTracker({ costDir: tmpDir });
       t.record(makeUsage({ promptTokens: 1000, completionTokens: 500 }), "deepseek-v4-flash");
       await t.flush();
 
@@ -235,6 +238,154 @@ describe("CostTracker", () => {
       const results = await t.queryRange(today);
       expect(results.length).toBeGreaterThanOrEqual(1);
       expect(results[0].totalCalls).toBe(1);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // 自动落盘（最小可用方案核心）— 验证 record() 后目录与文件被自动创建
+  // -------------------------------------------------------------------------
+  describe("持久化与目录创建（最小可用方案）", () => {
+    it("load() 会在成本目录不存在时自动 mkdir", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "dskcode-load-mkdir-"));
+      const costDir = join(dir, "nested", "costs");
+      // 子目录还不存在
+      await expect(stat(costDir)).rejects.toThrow();
+
+      const t = new CostTracker({ costDir });
+      await t.load();
+
+      // 目录应被创建
+      const st = await stat(costDir);
+      expect(st.isDirectory()).toBe(true);
+
+      await rm(dir, { recursive: true, force: true });
+    });
+
+    it("flush() 会在目录不存在时自动创建目录与 history.json", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "dskcode-flush-dir-"));
+      const t = new CostTracker({ costDir: dir });
+
+      t.record(makeUsage({ promptTokens: 1000, completionTokens: 500 }), "deepseek-v4-flash");
+      await t.flush();
+
+      // 目录与文件应已存在
+      const dirStat = await stat(dir);
+      expect(dirStat.isDirectory()).toBe(true);
+      const fileStat = await stat(join(dir, "history.json"));
+      expect(fileStat.isFile()).toBe(true);
+
+      await rm(dir, { recursive: true, force: true });
+    });
+
+    it("flush 后的 history.json 内容应可被新实例 load 还原", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "dskcode-restore-"));
+      const t1 = new CostTracker({ costDir: dir });
+      t1.record(makeUsage({ promptTokens: 1000, completionTokens: 500 }), "deepseek-v4-flash");
+      t1.record(makeUsage({ promptTokens: 2000, completionTokens: 1000 }), "deepseek-v4-pro");
+      await t1.flush();
+
+      // 验证历史文件内容
+      const raw = await readFile(join(dir, "history.json"), "utf-8");
+      const parsed = JSON.parse(raw) as { version: number; daily: Record<string, DailyCostSummary> };
+      expect(parsed.version).toBe(1);
+      const today = new Date().toISOString().slice(0, 10);
+      const todaySummary = parsed.daily[today];
+      expect(todaySummary).toBeDefined();
+      expect(todaySummary.totalCalls).toBe(2);
+      expect(todaySummary.totalPromptTokens).toBe(3000);
+      expect(todaySummary.totalCompletionTokens).toBe(1500);
+
+      // 新 tracker load 出来，今日累计应一致
+      const t2 = new CostTracker({ costDir: dir });
+      await t2.load();
+      expect(t2.todayTotalCost).toBeCloseTo(t1.todayTotalCost, 6);
+      expect(t2.todayCallCount).toBe(2);
+
+      await rm(dir, { recursive: true, force: true });
+    });
+
+    it("连续多次 record 后只产生 1 个 history.json，且数据是合并后的最新值", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "dskcode-multi-record-"));
+      const t = new CostTracker({ costDir: dir });
+
+      for (let i = 0; i < 5; i++) {
+        t.record(makeUsage({ promptTokens: 100, completionTokens: 50 }), "deepseek-v4-flash");
+      }
+      await t.flush();
+
+      const raw = await readFile(join(dir, "history.json"), "utf-8");
+      const parsed = JSON.parse(raw) as { daily: Record<string, DailyCostSummary> };
+      const today = new Date().toISOString().slice(0, 10);
+      expect(parsed.daily[today].totalCalls).toBe(5);
+      expect(parsed.daily[today].totalPromptTokens).toBe(500);
+      expect(parsed.daily[today].totalCompletionTokens).toBe(250);
+
+      await rm(dir, { recursive: true, force: true });
+    });
+
+    it("flush 失败时不应抛错，错误应被 console.error 记录", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "dskcode-flush-fail-"));
+      const fakeDir = join(dir, "blocked");
+      // 把路径变成普通文件，让 mkdir 抛 ENOENT/EEXIST 之外的错误
+      const { writeFile } = await import("node:fs/promises");
+      await writeFile(fakeDir, "not a directory", "utf-8");
+
+      const t = new CostTracker({ costDir: fakeDir });
+
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      t.record(makeUsage({ promptTokens: 200, completionTokens: 100 }), "deepseek-v4-flash");
+      await t.flush();
+
+      // flush 失败应被记录，但不应抛
+      expect(errSpy).toHaveBeenCalled();
+      errSpy.mockRestore();
+
+      await rm(dir, { recursive: true, force: true });
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // 进程退出兜底：CostTracker.flushAll() 应统一 flush 所有活跃实例
+  // -------------------------------------------------------------------------
+  describe("CostTracker.flushAll — 进程退出兜底", () => {
+    it("flushAll 应统一 flush 所有活跃实例到各自的 costDir", async () => {
+      const dirA = await mkdtemp(join(tmpdir(), "dskcode-flushall-a-"));
+      const dirB = await mkdtemp(join(tmpdir(), "dskcode-flushall-b-"));
+
+      const tA = new CostTracker({ costDir: dirA });
+      const tB = new CostTracker({ costDir: dirB });
+      tA.record(makeUsage({ promptTokens: 100, completionTokens: 50 }), "deepseek-v4-flash");
+      tB.record(makeUsage({ promptTokens: 200, completionTokens: 100 }), "deepseek-v4-pro");
+      // 不显式 await record 内部触发的 flush，直接调 flushAll
+      await CostTracker.flushAll();
+
+      // 两个目录都应产生 history.json
+      const statA = await stat(join(dirA, "history.json"));
+      const statB = await stat(join(dirB, "history.json"));
+      expect(statA.isFile()).toBe(true);
+      expect(statB.isFile()).toBe(true);
+
+      await rm(dirA, { recursive: true, force: true });
+      await rm(dirB, { recursive: true, force: true });
+    });
+
+    it("flushAll 在无活跃实例时不应抛错", async () => {
+      // 没有 new 任何 CostTracker，直接调
+      await expect(CostTracker.flushAll()).resolves.toBeUndefined();
+    });
+
+    it("dispose() 应从实例表移除并 flush", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "dskcode-dispose-"));
+      const t = new CostTracker({ costDir: dir });
+      t.record(makeUsage({ promptTokens: 100, completionTokens: 50 }), "deepseek-v4-flash");
+      await t.dispose();
+
+      // 文件应存在
+      const st = await stat(join(dir, "history.json"));
+      expect(st.isFile()).toBe(true);
+
+      await rm(dir, { recursive: true, force: true });
     });
   });
 });
