@@ -46,12 +46,22 @@ export async function createCheckpoint(cwd: string): Promise<Checkpoint> {
   if (!(await hasCommits(cwd))) return { stashSha: "", timestamp, cwd, isGitRepo: true };
   if (!(await hasWorkingChanges(cwd))) return { stashSha: "", timestamp, cwd, isGitRepo: true };
 
+  // 为了既登记检查点供 rewind 恢复、又**不**让工作区被 stash "挪走"
+  // （`stash push` 默认会把工作区清空，导致后续对话看不到前面对话产生的修改 —— 这就是 bug），
+  // 这里使用 `stash push -u` 暂存 + 立即 `stash apply` 还原到工作区。
+  // stash entry 仍保留在 list 中，rewind 时按 SHA 仍可被精准 drop / apply。
   const beforeShas = await listStashShas(cwd);
   await git(["stash", "push", "-m", `dskcode-cp-${timestamp}`, "-u"], cwd);
 
   const newShas = await listStashShas(cwd);
   if (newShas.length === 0) throw new Error("git stash push 未能创建 stash entry");
   const newSha = newShas.find((s) => !beforeShas.includes(s)) ?? newShas[0]!;
+
+  // 立即把 stash 还原到工作区：这样前面对话产生的修改不会因为本次 chat 开始
+  // 而被"隐藏"到 stash 里。stash entry 不会被 `apply` 消耗（仅 `pop`/`drop` 才会），
+  // 所以后续 rewind 仍能基于 newSha 找回这个快照。
+  await git(["stash", "apply", newSha], cwd);
+
   return { stashSha: newSha, timestamp, cwd, isGitRepo: true };
 }
 

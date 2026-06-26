@@ -144,12 +144,17 @@ describe("Session 持久化与 Rewind", () => {
   });
   it("rewind 同时恢复文件", async () => {
     const s = new Session(textProvider("ok"), [], undefined, { cwd: projectDir, store: false });
+    // 用户手动改 a.txt
     await writeFile(join(projectDir, "a.txt"), "user-edit-1\n");
+    // 第一轮 chat — 修复后：工作区修改应保留，不被 checkpoint 拿走到 stash
     await runChat(s, "first");
-    expect(await readFile(join(projectDir, "a.txt"), "utf-8")).toBe("original\n");
+    expect(await readFile(join(projectDir, "a.txt"), "utf-8")).toBe("user-edit-1\n");
+    // 用户继续改 a.txt
     await writeFile(join(projectDir, "a.txt"), "user-edit-2\n");
+    // 第二轮 chat — 同样，修改必须保留
     await runChat(s, "second");
-    expect(await readFile(join(projectDir, "a.txt"), "utf-8")).toBe("original\n");
+    expect(await readFile(join(projectDir, "a.txt"), "utf-8")).toBe("user-edit-2\n");
+    // rewind 到第一轮 user 消息 — checkpoint 快照是 "user-edit-1"，应恢复到此
     const firstIdx = s.messages.findIndex((m) => m.content === "first");
     const r = await s.rewind(firstIdx);
     expect(r.ok).toBe(true);
