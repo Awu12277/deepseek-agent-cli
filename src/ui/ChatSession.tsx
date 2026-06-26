@@ -92,7 +92,7 @@ registerCommand("/game", { desc: "启动游戏", handler: () => ({ kind: "naviga
 registerCommand("/stock", { desc: "查看股票行情", handler: () => ({ kind: "navigate", target: "stock" }) });
 registerCommand("/plan", { desc: "切换为计划模式（Shift+Tab）", handler: () => ({ kind: "text", content: "输入 /plan 或按 Shift+Tab 切换为计划模式" }) });
 registerCommand("/code", { desc: "切换回代码模式（Shift+Tab）", handler: () => ({ kind: "text", content: "输入 /code 或按 Shift+Tab 切换回代码模式" }) });
-registerCommand("/rewind", { desc: "回退到历史检查点", handler: () => ({ kind: "text", content: "请直接输入 /rewind 查看可回退的检查点列表，或 /rewind <序号> 直接回退" }) });
+registerCommand("/rewind", { desc: "回退到历史检查点（1 = 最新）", handler: () => ({ kind: "text", content: "请直接输入 /rewind 查看可回退的检查点列表，或 /rewind <序号> 直接回退（1 = 最新，2 = 上一次，依此类推）" }) });
 
 /** 流式输出时，输入框随机展示的占位符列表 */
 const STREAMING_PLACEHOLDERS = [
@@ -239,12 +239,10 @@ export function ChatSession({
   const [rewindList, setRewindList] = useState<MessageCheckpointInfo[]>([]);
   const [rewinding, setRewinding] = useState(false);
 
-  // /rewind 提示：某轮对话修改了文件后，在原状态 loading 处显示「/rewind N 可撤回本次修改」。
+  // /rewind 提示：某轮对话修改了文件后，在原状态 loading 处显示「/rewind 1 可撤回本次修改」。
   // 三阶段：idle（不显示）→ pending（流式刚结束，等 2s）→ visible（展示提示）
-  // 提示一旦出现会一直保留到下次对话开始或用户输入，不会自动隐藏。
+  // 提示一旦出现会一直保留到下次对话开始，不会被用户输入打断。
   const [rewindHintPhase, setRewindHintPhase] = useState<"idle" | "pending" | "visible">("idle");
-  // 本轮 cp 在 listCheckpoints 列表中的 1-based 序号（用于给 /rewind <N> 使用）
-  const [rewindHintNumber, setRewindHintNumber] = useState<number | null>(null);
   // 本轮是否触发了文件修改类工具调用（edit_file/write_file/multi_edit/delete_range）
   const currentRoundModifiedRef = useRef(false);
   // 提示计时器句柄
@@ -268,18 +266,10 @@ export function ChatSession({
   const currentModelRef = useRef<string | undefined>(undefined);
   const streamErrorRef = useRef<string | undefined>(undefined);
 
-  // 输入变更时重置选择索引，同时清掉 rewind 提示
+  // 输入变更时仅重置选择索引；rewind 提示由下一轮对话开始时清掉
   useEffect(() => {
     setSkillSelectIndex(0);
     setFileSelectIndex(0);
-    if (rewindHintPhase !== "idle") {
-      setRewindHintPhase("idle");
-      setRewindHintNumber(null);
-      if (rewindHintTimerRef.current) {
-        clearTimeout(rewindHintTimerRef.current);
-        rewindHintTimerRef.current = null;
-      }
-    }
   }, [input]);
 
   // 组件卸载时清掉 rewind 提示计时器，避免内存泄露
@@ -353,7 +343,7 @@ export function ChatSession({
     setStaticKey((prev) => prev + 1);
   }
 
-  const doRewind = useCallback(async (target: MessageCheckpointInfo) => {
+  const doRewind = useCallback(async (target: MessageCheckpointInfo, displayNumber: number) => {
     const session = sessionRef.current;
     if (!session) return;
     setRewinding(true);
@@ -368,7 +358,7 @@ export function ChatSession({
         const tail = r.fileRestored ? "，工作区文件已恢复" : "（仅对话回退，未恢复文件）";
         setDisplayMessages((prev) => [
           ...prev,
-          { role: "assistant", content: `⏪ 已回退到检查点 #${target.index}${tail}。` },
+          { role: "assistant", content: `⏪ 已回退到检查点 #${displayNumber}${tail}。` },
         ]);
       } else {
         setDisplayMessages((prev) => [
@@ -409,7 +399,7 @@ export function ChatSession({
             const target = rewindList[rewindSelectIndex];
             setRewindSelecting(false);
             if (target) {
-              void doRewind(target);
+              void doRewind(target, rewindSelectIndex + 1);
             }
           } else if (key.escape) {
             setRewindSelecting(false);
@@ -739,7 +729,7 @@ export function ChatSession({
           setInput("");
           return;
         }
-        // /rewind <N>：直接按序号回退（1-based）
+        // /rewind <N>：1 表示最新（与 git reset HEAD~ 习惯一致），2 表示上一个，依次类推
         const parts = trimmed.split(/\s+/);
         if (parts.length >= 2) {
           const n = Number(parts[1]);
@@ -747,18 +737,20 @@ export function ChatSession({
             setDisplayMessages((prev) => [
               ...prev,
               { role: "user", content: trimmed },
-              { role: "assistant", content: `⚠ 无效的序号「${parts[1]}」。可用范围 1~${cps.length}。` },
+              { role: "assistant", content: `⚠ 无效的序号「${parts[1]}」。可用范围 1~${cps.length}（1 表示最新）。` },
             ]);
             setInput("");
             return;
           }
+          // 将用户输入的 1-based "最新优先"序号转换为 cps 列表里的索引
+          const target = cps[cps.length - n]!;
           setInput("");
-          await doRewind(cps[n - 1]!);
+          await doRewind(target, n);
           return;
         }
-        // 无参数：进入选择模式
-        setRewindList(cps);
-        setRewindSelectIndex(Math.max(0, cps.length - 1));
+        // 无参数：进入选择模式。逆序展示（最新在第 1 位），默认选中最新
+        setRewindList([...cps].reverse());
+        setRewindSelectIndex(0);
         setRewindSelecting(true);
         setDisplayMessages((prev) => [
           ...prev,
@@ -964,7 +956,6 @@ export function ChatSession({
     // 新一轮对话开始：清除上轮可能残留的 rewind 提示
     currentRoundModifiedRef.current = false;
     setRewindHintPhase("idle");
-    setRewindHintNumber(null);
     if (rewindHintTimerRef.current) {
       clearTimeout(rewindHintTimerRef.current);
       rewindHintTimerRef.current = null;
@@ -1096,19 +1087,14 @@ export function ChatSession({
       }
 
       // 如果本轮触发了文件修改且无流错误 -> 2s 后展示 rewind 提示
-      // 提示会一直保留到下次对话开始（流式再次启动）或用户输入为止
+      // 提示会一直保留到下次对话开始（流式再次启动）为止
       if (currentRoundModifiedRef.current && !finStreamError) {
-        const cps = sessionRef.current?.listCheckpoints() ?? [];
-        if (cps.length > 0) {
-          // 1-based 序号（对应 /rewind <N>），本轮 cp 就是列表中最后一项
-          setRewindHintNumber(cps.length);
-          setRewindHintPhase("pending");
-          if (rewindHintTimerRef.current) clearTimeout(rewindHintTimerRef.current);
-          rewindHintTimerRef.current = setTimeout(() => {
-            setRewindHintPhase((prev) => (prev === "pending" ? "visible" : prev));
-            rewindHintTimerRef.current = null;
-          }, 2000);
-        }
+        setRewindHintPhase("pending");
+        if (rewindHintTimerRef.current) clearTimeout(rewindHintTimerRef.current);
+        rewindHintTimerRef.current = setTimeout(() => {
+          setRewindHintPhase((prev) => (prev === "pending" ? "visible" : prev));
+          rewindHintTimerRef.current = null;
+        }, 2000);
       }
     }
   }, [onLaunchGame, onLaunchStock, currentContent, currentToolCalls, skills, skillSelectIndex, getFilteredSkills, thinkingEnabled, thinkingEffort, responseFormat, toolChoice, activeModel, sessionMode]);
@@ -1338,12 +1324,11 @@ export function ChatSession({
                 <InkSpinner type="dots" />
               </Text>
             </Box>
-          ) : rewindHintPhase === "visible" && rewindHintNumber !== null ? (
+          ) : rewindHintPhase === "visible" ? (
             // 本轮修改了文件时，流式结束后 2s 在原位置展示 /rewind 提示
+            // 一直保留到下次对话开始，与 /rewind 1（最新检查点）配套
             <Box marginTop={1} justifyContent="center">
-              <Text color="#808080">
-                {`↩ /rewind ${rewindHintNumber} 可撤回本次修改`}
-              </Text>
+              <Text color="#808080">{"↩ /rewind 1 可撤回本次修改"}</Text>
             </Box>
           ) : null}
           <Box marginTop={1}>
