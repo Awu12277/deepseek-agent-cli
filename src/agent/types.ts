@@ -10,7 +10,7 @@ export type AgentEvent =
   | { type: "text_delta"; content: string }
   | { type: "tool_calls"; calls: ProviderToolCall[] }
   | { type: "tool_result"; name: string; result: ToolResult }
-  | { type: "usage"; usage: UsageInfo; model: string }
+  | { type: "usage"; usage: UsageInfo; model: string; cost?: number; estimated?: boolean }
   | { type: "done"; elapsed: number }
   | { type: "error"; error: Error };
 

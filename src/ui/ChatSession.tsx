@@ -33,7 +33,7 @@ import { saveModelConfig } from "../config/loader.js";
 
 /** 流式阶段配置：图标、标签、颜色 */
 const PHASE_CONFIG = {
-  thinking: { icon: "🧠", label: "思考中", color: "#ff9800" },
+  thinking: { icon: "🧠", label: "深度思考中", color: "#ff9800" },
   generating: { icon: "✨", label: "生成中", color: "#00ff41" },
   calling_tools: { icon: "🛠", label: "调用工具", color: "#f59e0b" },
   executing_tools: { icon: "⚡", label: "执行工具", color: "#00ffff" },
@@ -1252,6 +1252,9 @@ export function ChatSession({
             content={currentContent}
             toolCalls={currentToolCalls.length > 0 ? currentToolCalls : undefined}
             isStreaming={true}
+            usage={_currentUsage}
+            cost={_currentCost}
+            model={_streamingModel}
           />
         )}
 

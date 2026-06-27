@@ -173,23 +173,80 @@ export class Session {
           toolChoice: opts?.toolChoice,
         });
 
+        const modelId = this.#provider.model() as unknown as ModelId;
+
         let accumulatedText = "";
         let lastUsage: UsageInfo | undefined;
         let lastToolCalls: ProviderToolCall[] | undefined;
         let _lastFinishReason: string | null = null;
 
+        // 本轮输入 token 估算（在流式开始前一次计算；DeepSeek 流式只在最后一个
+        // chunk 才返回 usage，中间过程中 UI 无法得知当前消耗，因此客户端本地估算）
+        let estimatedInputTokens = 0;
+        for (const m of apiMessages) {
+          estimatedInputTokens += this.#provider.countTokens(m.content) + 10;
+        }
+        let lastEmitMs = 0;
+        const EST_EMIT_INTERVAL_MS = 300;
+
         for await (const chunk of stream) {
           if (chunk.content) {
             accumulatedText += chunk.content;
             yield { type: "text_delta", content: chunk.content };
+
+            // 节流推送估算 usage，让 UI 能实时显示"已消耗 X tokens / ¥Y"
+            const now = Date.now();
+            if (now - lastEmitMs >= EST_EMIT_INTERVAL_MS) {
+              lastEmitMs = now;
+              const estOutput = this.#provider.countTokens(accumulatedText);
+              const estUsage: UsageInfo = {
+                promptTokens: estimatedInputTokens,
+                completionTokens: estOutput,
+              };
+              const estCost = calculateCost(estUsage, modelId);
+              yield {
+                type: "usage",
+                usage: estUsage,
+                model: modelId,
+                cost: estCost.totalCost,
+                estimated: true,
+              };
+            }
           }
           if (chunk.toolCalls && chunk.toolCalls.length > 0) lastToolCalls = chunk.toolCalls;
-          if (chunk.usage) lastUsage = chunk.usage;
+          if (chunk.usage) {
+            lastUsage = chunk.usage;
+            // 真实 usage 覆盖估算值
+            const realCost = calculateCost(chunk.usage, modelId);
+            yield {
+              type: "usage",
+              usage: chunk.usage,
+              model: modelId,
+              cost: realCost.totalCost,
+              estimated: false,
+            };
+          }
           if (chunk.finishReason) _lastFinishReason = chunk.finishReason;
         }
 
+        // 流式末尾再发一次最终 usage，作为权威值（此时 setCurrentUsage 会覆盖估算值）
+        if (accumulatedText && !lastUsage) {
+          const estOutput = this.#provider.countTokens(accumulatedText);
+          const estUsage: UsageInfo = {
+            promptTokens: estimatedInputTokens,
+            completionTokens: estOutput,
+          };
+          const estCost = calculateCost(estUsage, modelId);
+          yield {
+            type: "usage",
+            usage: estUsage,
+            model: modelId,
+            cost: estCost.totalCost,
+            estimated: true,
+          };
+        }
+
         if (lastUsage) {
-          const modelId = this.#provider.model() as unknown as ModelId;
           this.#costTracker.record(lastUsage, modelId);
           const cost = calculateCost(lastUsage, modelId);
           this.#logger.logUsage(
