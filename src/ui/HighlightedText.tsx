@@ -11,6 +11,7 @@
 
 import { Box, Text } from "ink";
 import type { ReactNode } from "react";
+import { detectTermWidth, layoutTable } from "./table-layout.js";
 
 /** 解析后的文本段类型 */
 type SegmentType = "plain" | "code" | "bold" | "code_block" | "table";
@@ -343,172 +344,46 @@ function CodeBlockRenderer({ code }: { code: string }): ReactNode {
 }
 
 // ---------------------------------------------------------------------------
-// 表格渲染
+// 表格渲染（计算逻辑已抽到 table-layout.ts，本文件仅负责把结果印到 Ink）
 // ---------------------------------------------------------------------------
-
-/** 表格最大总宽度 */
-const TABLE_MAX_WIDTH = 90;
-/** 表格列最小宽度 */
-const TABLE_MIN_COL_WIDTH = 3;
-
-/**
- * 计算单个字符在终端中的显示宽度。
- * CJK 文字、全角符号、emoji 占 2 格；其余占 1 格。
- */
-function charWidth(ch: string): number {
-  const cp = ch.codePointAt(0);
-  if (cp === undefined) return 0;
-
-  // CJK 相关范围
-  if (
-    (cp >= 0x1100 && cp <= 0x115F) || // Hangul Jamo
-    cp === 0x2329 || cp === 0x232A ||
-    (cp >= 0x2E80 && cp <= 0xA4CF) || // CJK Radicals ~ Yi
-    (cp >= 0xA960 && cp <= 0xA97F) || // Hangul Extended
-    (cp >= 0xAC00 && cp <= 0xD7AF) || // Hangul Syllables
-    (cp >= 0xF900 && cp <= 0xFAFF) || // CJK Compat
-    (cp >= 0xFE10 && cp <= 0xFE1F) || // Vertical forms
-    (cp >= 0xFF01 && cp <= 0xFF60) || // Fullwidth
-    (cp >= 0xFFE0 && cp <= 0xFFE6) ||
-    (cp >= 0x1F000 && cp <= 0x1FFFF)   // Emoji / Symbols
-  ) {
-    return 2;
-  }
-  return 1;
-}
-
-/** 计算字符串在终端中的视觉宽度 */
-function visualWidth(text: string): number {
-  let w = 0;
-  for (const ch of text) {
-    w += charWidth(ch);
-  }
-  return w;
-}
-
-/** 用空格将字符串填充到目标视觉宽度 */
-function padToWidth(text: string, targetWidth: number, align: "left" | "center" | "right"): string {
-  const vw = visualWidth(text);
-  const delta = targetWidth - vw;
-  if (delta <= 0) return text;
-
-  const leftPad = align === "right" ? delta : align === "center" ? Math.floor(delta / 2) : 0;
-  const rightPad = delta - leftPad;
-
-  return " ".repeat(leftPad) + text + " ".repeat(rightPad);
-}
-
-/** 解析表格一行为单元格数组 */
-function parseTableCells(line: string): string[] {
-  const t = line.trim();
-  // 去掉首尾的 |，再按 | 切割
-  const inner = t.slice(1, t.length - 1);
-  return inner.split("|").map((c) => c.trim());
-}
-
-/** 从分隔行解析每列对齐方式 */
-function parseAlignments(sepLine: string): Array<"left" | "center" | "right"> {
-  const cells = parseTableCells(sepLine);
-  return cells.map((c) => {
-    const l = c.startsWith(":");
-    const r = c.endsWith(":");
-    if (l && r) return "center";
-    if (r) return "right";
-    return "left";
-  });
-}
 
 /**
  * 渲染 Markdown 表格为终端框线表格。
  *
- * 输出示例：
+ * 输出示例（终端宽度足够时）：
  * ┌──────────┬──────────────────────────┬──────────────────────────┐
  * │ 位置     │ 原内容                   │ 新内容                   │
  * ├──────────┼──────────────────────────┼──────────────────────────┤
  * │ 第 12 行 │ interface FileDiffs {    │ interface Diffs {        │
  * └──────────┴──────────────────────────┴──────────────────────────┘
+ *
+ * 行为：
+ * - 列宽跟随终端宽度自适应（不再硬编码 90）
+ * - 单 cell 超长时按视觉宽度自动换行；表格行高 = 该行最大 wrap 行数
+ * - 内容不会被截断丢失（不像之前的 cell.slice）
+ * - 终端宽度未知时使用 80 列兜底
  */
 function TableRenderer({ text }: { text: string }): ReactNode {
-  const rawLines = text.split("\n").filter((l) => l.trim().length > 0);
-  if (rawLines.length < 2) return <Text>{text}</Text>;
+  const termWidth = detectTermWidth();
+  const layout = layoutTable(text, { termWidth });
 
-  // 找到分隔行
-  let sepIdx = -1;
-  for (let k = 0; k < rawLines.length; k++) {
-    if (isTableSepRow(rawLines[k]!)) {
-      sepIdx = k;
-      break;
-    }
+  // 无效输入（无分隔行）→ 降级为纯文本
+  if (layout.colWidths.length === 0) {
+    return <Text>{text}</Text>;
   }
-  if (sepIdx === -1) return <Text>{text}</Text>;
-
-  // 表头（分隔行之前的所有行合并为一行，防止多行表头）
-  const headerText = rawLines.slice(0, sepIdx).join("");
-  const headerCells = parseTableCells(headerText);
-  const alignments = parseAlignments(rawLines[sepIdx]!);
-  const dataRows = rawLines.slice(sepIdx + 1).map(parseTableCells);
-
-  const colCount = headerCells.length;
-
-  // 计算每列最大视觉宽度
-  const colMaxWidths = headerCells.map((_, ci) => {
-    let max = visualWidth(headerCells[ci] ?? "");
-    for (const row of dataRows) {
-      const w = visualWidth(row[ci] ?? "");
-      if (w > max) max = w;
-    }
-    return Math.max(max, TABLE_MIN_COL_WIDTH);
-  });
-
-  // 计算每列最终宽度（留 2 格边距 = 左右各 1 空格）
-  const margin = 2;
-  const totalMinWidth = colMaxWidths.reduce((s, w) => s + w + margin, 1); // +1 for leading │
-  let colWidths: number[];
-  if (totalMinWidth <= TABLE_MAX_WIDTH) {
-    colWidths = colMaxWidths;
-  } else {
-    // 超出总宽 → 等比例缩减
-    const available = TABLE_MAX_WIDTH - 1 - margin * colCount;
-    const sum = colMaxWidths.reduce((s, w) => s + w, 0);
-    colWidths = colMaxWidths.map((w) => Math.max(TABLE_MIN_COL_WIDTH, Math.floor((w / sum) * available)));
-  }
-
-  // 框线字符
-  const H = "─";
-  const makeSep = (l: string, m: string, r: string) =>
-    l + colWidths.map((w) => H.repeat(w + margin)).join(m) + r;
-
-  const topBorder = makeSep("┌", "┬", "┐");
-  const midBorder = makeSep("├", "┼", "┤");
-  const botBorder = makeSep("└", "┴", "┘");
-
-  // 渲染一行单元格
-  function rowLine(cells: string[], keyBase: string): ReactNode {
-    return (
-      <Text key={keyBase}>
-        {"│"}
-        {cells.map((cell, ci) => (
-          <Text key={ci}>
-            {" "}
-            {padToWidth(cell.slice(0, colWidths[ci] ?? TABLE_MIN_COL_WIDTH), colWidths[ci] ?? TABLE_MIN_COL_WIDTH, alignments[ci] ?? "left")}
-            {" "}│
-          </Text>
-        ))}
-      </Text>
-    );
-  }
-
-  const rows: ReactNode[] = [
-    <Text key="top" color="#888888">{topBorder}</Text>,
-    rowLine(headerCells, "hdr"),
-    <Text key="mid" color="#888888">{midBorder}</Text>,
-    ...dataRows.map((cells, ri) => rowLine(cells, `d${ri}`)),
-    <Text key="bot" color="#888888">{botBorder}</Text>,
-  ];
 
   return (
     <Box flexDirection="column" marginTop={1}>
-      {rows}
+      {layout.lines.map((line, i) => {
+        // 框线（top / mid / bot）用灰色；数据行用默认色
+        const isFirst = i === 0;
+        const isLast = i === layout.lines.length - 1;
+        const isMid = !isFirst && !isLast && line.startsWith("├");
+        const color = isFirst || isLast || isMid ? "#888888" : undefined;
+        return (
+          <Text key={i} color={color}>{line}</Text>
+        );
+      })}
     </Box>
   );
 }
