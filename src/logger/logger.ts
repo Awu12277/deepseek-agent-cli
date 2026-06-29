@@ -1,17 +1,23 @@
 // ---------------------------------------------------------------------------
-// 对话日志记录器 — 将用户与 AI 的完整交互过程写入 JSONL 日志文件
+// 对话日志记录器 — 将用户与 AI 的完整交互过程写入人类可读的日志文件
 //
 // 设计要点：
-// 1. JSONL 格式（每行一个 JSON 对象），便于机器解析和流式追加
+// 1. 每条事件输出为"分隔线 + 标题行 + pretty JSON + 空行"的多行块，
+//    方便人眼直接阅读；同时 pretty JSON 仍可被机器按段解析。
 // 2. 异步写入，错误静默处理，绝不影响主对话流程
 // 3. 按会话 ID 分文件，一个会话一个日志文件
 // 4. 工具结果数据截断到 MAX_DATA_LEN，避免日志文件膨胀
 // 5. 写入操作串行化（队列），保证事件顺序与实际发生顺序一致
+// 6. 自动从 V8 栈中提取调用方文件:行号，并写入人类可读的本地时间字符串
 // ---------------------------------------------------------------------------
 
 import { mkdir, appendFile } from "node:fs/promises";
-import { join, basename } from "node:path";
-import type { LogEvent } from "./types.js";
+import { fileURLToPath } from "node:url";
+import { join, basename, relative, sep } from "node:path";
+import type { LogEvent, LogEventInput } from "./types.js";
+
+/** logger 源文件所在的目录名，用于从栈中过滤掉 logger 内部帧 */
+const LOGGER_DIR = "logger";
 
 /** 工具结果数据的最大记录长度（超出截断并标记） */
 const MAX_DATA_LEN = 2000;
@@ -99,18 +105,25 @@ export class ConversationLogger {
   /**
    * 记录一个事件。
    *
-   * 内部将事件序列化为 JSON 并追加到日志文件。
+   * 内部将事件序列化为 pretty JSON 并以多行块的形式追加到日志文件。
    * 写入操作串行排队，保证事件顺序。调用方无需 await。
    */
-  log(event: LogEvent): void {
+  log(event: LogEventInput): void {
     if (!this.#enabled || this.#closed) return;
 
     // 队列过长时丢弃最旧事件，防止内存无限增长
     if (this.#queueLen >= MAX_QUEUE) return;
 
+    // 自动注入可读时间与调用方位置（栈捕获）
+    const enriched: LogEvent = {
+      ...event,
+      time: event.time ?? formatTime(event.ts),
+      loc: event.loc ?? captureCallerLocation(),
+    };
+
     this.#queueLen++;
     this.#queue = this.#queue
-      .then(() => this.#writeLine(event))
+      .then(() => this.#writeBlock(enriched))
       .catch(() => { /* 日志写入失败静默忽略 */ })
       .finally(() => this.#queueLen--);
   }
@@ -127,12 +140,12 @@ export class ConversationLogger {
     ConversationLogger.#instances.delete(this);
   }
 
-  /** 将一行 JSON 写入日志文件 */
-  async #writeLine(event: LogEvent): Promise<void> {
+  /** 将一条事件以多行块的形式写入日志文件 */
+  async #writeBlock(event: LogEvent): Promise<void> {
     const dir = join(this.#logPath, "..");
     await mkdir(dir, { recursive: true });
-    const line = JSON.stringify(event) + "\n";
-    await appendFile(this.#logPath, line, "utf-8");
+    const block = formatBlock(event);
+    await appendFile(this.#logPath, block, "utf-8");
   }
 
   // -----------------------------------------------------------------------
@@ -230,4 +243,120 @@ export class ConversationLogger {
 function truncate(text: string): string {
   if (text.length <= MAX_DATA_LEN) return text;
   return text.slice(0, MAX_DATA_LEN) + `...[已截断，原始长度 ${text.length}]`;
+}
+
+// ---------------------------------------------------------------------------
+// 时间格式化
+// ---------------------------------------------------------------------------
+
+/** 把毫秒时间戳格式化为 `YYYY-MM-DD HH:mm:ss.SSS`（本地时区） */
+function formatTime(ts: number): string {
+  const d = new Date(ts);
+  const pad = (n: number, w = 2) => String(n).padStart(w, "0");
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.` +
+    `${pad(d.getMilliseconds(), 3)}`
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 调用方位置捕获（V8 栈解析）
+// ---------------------------------------------------------------------------
+
+/**
+ * 缓存项目根目录：用于将栈中绝对路径转换为项目相对路径。
+ * 第一次调用时基于 import.meta.url 推断。
+ */
+let projectRootCache: string | null = null;
+function getProjectRoot(): string {
+  if (projectRootCache !== null) return projectRootCache;
+  try {
+    // 当前 logger.ts 的 URL，形如 file:///D:/projects/.../ts-version/src/logger/logger.ts
+    const here = fileURLToPath(import.meta.url);
+    // 向上找 src/ 的父目录作为项目根
+    const segments = here.split(sep);
+    const srcIdx = segments.lastIndexOf("src");
+    projectRootCache = srcIdx > 0 ? segments.slice(0, srcIdx).join(sep) : here;
+  } catch {
+    projectRootCache = "";
+  }
+  return projectRootCache;
+}
+
+/**
+ * 匹配 V8 栈帧的 `at ... (file:line:col)` 或 `at file:line:col`。
+ * 捕获组：1=文件路径（可能为 file:// URL），2=行号。
+ */
+const STACK_FRAME_RE = /\s+at\s+.+?\((.+):(\d+):\d+\)|\s+at\s+(.+):(\d+):\d+/;
+
+/**
+ * 从 V8 栈中查找第一个不在 logger 目录下的栈帧，返回其文件:行号。
+ * 如果解析失败，返回 `{ file: "<unknown>", line: 0 }`。
+ */
+function captureCallerLocation(): { file: string; line: number } {
+  let stack: string | undefined;
+  try {
+    const err = new Error();
+    Error.captureStackTrace?.(err, captureCallerLocation);
+    stack = err.stack;
+  } catch {
+    return { file: "<unknown>", line: 0 };
+  }
+  if (!stack) return { file: "<unknown>", line: 0 };
+
+  const root = getProjectRoot();
+  const lines = stack.split("\n");
+
+  for (const raw of lines) {
+    const m = STACK_FRAME_RE.exec(raw);
+    if (!m) continue;
+    const filePath = m[1] ?? m[3] ?? "";
+    const lineNo = Number(m[2] ?? m[4] ?? "0");
+    if (!filePath) continue;
+
+    // 跳过 logger 目录内部的帧
+    const normalized = filePath.replace(/^file:\/\/\//, "").replace(/^file:\/\//, "");
+    if (normalized.includes(`${sep}${LOGGER_DIR}${sep}`) || normalized.endsWith(`${sep}${LOGGER_DIR}`)) {
+      continue;
+    }
+    // 跳过 node_modules
+    if (normalized.includes(`${sep}node_modules${sep}`)) continue;
+
+    let rel = normalized;
+    if (root && normalized.startsWith(root)) {
+      rel = normalized.slice(root.length).replace(/^[/\\]/, "") || basename(normalized);
+    }
+    return { file: rel || basename(normalized), line: lineNo };
+  }
+  return { file: "<unknown>", line: 0 };
+}
+
+// ---------------------------------------------------------------------------
+// 多行块格式化
+// ---------------------------------------------------------------------------
+
+/** 分隔线宽度 */
+const SEPARATOR_WIDTH = 80;
+const SEPARATOR = "─".repeat(SEPARATOR_WIDTH);
+
+/**
+ * 将事件渲染为多行文本块：
+ *
+ * ────────...
+ * [2026-06-29 14:30:45.123] [user_message] @ src/agent/index.ts:253
+ * {
+ *   "ts": 1782702446439,
+ *   "time": "2026-06-29 14:30:45.123",
+ *   "loc": { "file": "src/agent/index.ts", "line": 253 },
+ *   "type": "user_message",
+ *   "content": "你好"
+ * }
+ *
+ * （末尾保留一个空行）
+ */
+function formatBlock(event: LogEvent): string {
+  const header = `[${event.time}] [${event.type}] @ ${event.loc.file}:${event.loc.line}`;
+  const body = JSON.stringify(event, null, 2);
+  return `${SEPARATOR}\n${header}\n${body}\n\n`;
 }

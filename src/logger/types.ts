@@ -9,6 +9,16 @@
 interface LogEventBase {
   /** 事件发生时间（Date.now()，毫秒） */
   ts: number;
+  /**
+   * 事件发生时间的可读字符串（本地时区），格式 `YYYY-MM-DD HH:mm:ss.SSS`。
+   * 由 logger 在写入时自动填充，方便人眼直接查看日志文件。
+   */
+  time: string;
+  /**
+   * 调用日志时的源代码位置（文件相对路径 + 行号），由 logger 通过
+   * V8 栈自动捕获，调用方无需手动传入。
+   */
+  loc: { file: string; line: number };
 }
 
 /** 会话开始 — 记录会话元信息 */
@@ -140,3 +150,17 @@ export type LogEvent =
   | TurnDoneEvent
   | SessionEndEvent
   | ReflectionEvent;
+
+/**
+ * `logger.log()` 接受的入参：任何事件类型均可，time / loc 可选（由 logger 自动填充）。
+ * 用映射类型 + 联合的 distributive 方式拼装，避免手写十个分支。
+ */
+export type LogEventInput = DistributiveOmit<LogEvent, "time" | "loc"> & {
+  time?: string;
+  loc?: LogEventBase["loc"];
+};
+
+type DistributiveOmit<T, K extends keyof any> = T extends unknown ? Omit<T, K> : never;
+
+/** 用于在测试或工具中构造事件时复用的"位置"类型 */
+export type EventLocation = LogEventBase["loc"];

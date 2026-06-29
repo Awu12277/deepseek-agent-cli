@@ -9,6 +9,19 @@ import { join } from "node:path";
 import { ConversationLogger, defaultLogsDir } from "../src/logger/index.js";
 import type { LogEvent } from "../src/logger/index.js";
 
+/**
+ * 从一个多行块文本中解析出事件。
+ * 块的第 1 行是标题（`[time] [type] @ file:line`），其后是 pretty JSON。
+ */
+function parseBlock(block: string): LogEvent {
+  const lines = block.split("\n");
+  // 找到第一个以 `{` 开头的行作为 JSON 起点
+  const jsonStart = lines.findIndex((l) => l.trimStart().startsWith("{"));
+  if (jsonStart < 0) throw new Error("无法在日志块中找到 JSON 起始行: " + block);
+  const jsonText = lines.slice(jsonStart).join("\n");
+  return JSON.parse(jsonText) as LogEvent;
+}
+
 /** 测试用的模拟项目路径 */
 const FAKE_CWD = join(tmpdir(), "my-test-project");
 
@@ -38,7 +51,7 @@ describe("ConversationLogger", () => {
     expect(entries).toHaveLength(0);
   });
 
-  it("写入 JSONL 格式日志，每行一个事件", async () => {
+  it("以多行块格式写入日志，每块包含分隔线、标题与 pretty JSON", async () => {
     const logger = new ConversationLogger("test-basic", FAKE_CWD, { logsDir: tempDir });
     logger.logSessionStart("test-basic", FAKE_CWD, "deepseek-v4-flash", "code");
     logger.logUserMessage("你好");
@@ -47,10 +60,14 @@ describe("ConversationLogger", () => {
     await logger.flush();
 
     const content = await readFile(logger.logPath, "utf-8");
-    const lines = content.trim().split("\n");
-    expect(lines).toHaveLength(4);
 
-    const events = lines.map((l) => JSON.parse(l) as LogEvent);
+    // 以分隔线切分事件块
+    const SEPARATOR = "─".repeat(80);
+    const blocks = content.split(SEPARATOR).map((b) => b.trim()).filter(Boolean);
+    expect(blocks).toHaveLength(4);
+
+    // 块结构：第 1 行 = 标题 `[time] [type] @ file:line`，其后是 pretty JSON
+    const events = blocks.map(parseBlock);
     expect(events[0]?.type).toBe("session_start");
     expect(events[1]?.type).toBe("user_message");
     expect(events[2]?.type).toBe("assistant_text");
@@ -60,6 +77,10 @@ describe("ConversationLogger", () => {
     if (userMsg.type === "user_message") {
       expect(userMsg.content).toBe("你好");
       expect(userMsg.ts).toBeGreaterThan(0);
+      // 公共字段：time / loc 被自动填充
+      expect(userMsg.time).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$/);
+      expect(userMsg.loc.file).toBeTruthy();
+      expect(userMsg.loc.line).toBeGreaterThan(0);
     }
   });
 
@@ -70,8 +91,9 @@ describe("ConversationLogger", () => {
     await logger.flush();
 
     const content = await readFile(logger.logPath, "utf-8");
-    const lines = content.trim().split("\n");
-    const events = lines.map((l) => JSON.parse(l) as LogEvent);
+    const SEPARATOR = "─".repeat(80);
+    const blocks = content.split(SEPARATOR).map((b) => b.trim()).filter(Boolean);
+    const events = blocks.map(parseBlock);
 
     expect(events[0]?.type).toBe("tool_call");
     expect(events[1]?.type).toBe("tool_result");
@@ -98,7 +120,7 @@ describe("ConversationLogger", () => {
     await logger.flush();
 
     const content = await readFile(logger.logPath, "utf-8");
-    const event = JSON.parse(content.trim()) as LogEvent;
+    const event = parseBlock(content);
     expect(event.type).toBe("usage");
     if (event.type === "usage") {
       expect(event.promptTokens).toBe(100);
@@ -116,7 +138,7 @@ describe("ConversationLogger", () => {
     await logger.flush();
 
     const content = await readFile(logger.logPath, "utf-8");
-    const event = JSON.parse(content.trim()) as LogEvent;
+    const event = parseBlock(content);
     expect(event.type).toBe("error");
     if (event.type === "error") {
       expect(event.message).toBe("测试错误");
@@ -131,7 +153,7 @@ describe("ConversationLogger", () => {
     await logger.flush();
 
     const content = await readFile(logger.logPath, "utf-8");
-    const event = JSON.parse(content.trim()) as LogEvent;
+    const event = parseBlock(content);
     if (event.type === "tool_result") {
       expect(event.data.length).toBeLessThan(3000);
       expect(event.data).toContain("已截断");
@@ -146,13 +168,25 @@ describe("ConversationLogger", () => {
     logger.logUserMessage("after flush");
 
     const content = await readFile(logger.logPath, "utf-8");
-    const lines = content.trim().split("\n");
-    expect(lines).toHaveLength(1);
-    const event = JSON.parse(lines[0]) as LogEvent;
+    const SEPARATOR = "─".repeat(80);
+    const blocks = content.split(SEPARATOR).map((b) => b.trim()).filter(Boolean);
+    expect(blocks).toHaveLength(1);
+    const event = parseBlock(blocks[0]);
     expect(event.type).toBe("user_message");
     if (event.type === "user_message") {
       expect(event.content).toBe("before flush");
     }
+  });
+
+  it("每个事件块包含可读的时间标题行", async () => {
+    const logger = new ConversationLogger("test-header", FAKE_CWD, { logsDir: tempDir });
+    logger.logUserMessage("hi");
+    await logger.flush();
+
+    const content = await readFile(logger.logPath, "utf-8");
+    // 标题行格式：`[YYYY-MM-DD HH:mm:ss.SSS] [type] @ file:line`
+    const headerRe = /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\] \[user_message\] @ .+:\d+$/m;
+    expect(content).toMatch(headerRe);
   });
 
   it("日志路径包含项目名分组目录", async () => {
@@ -181,8 +215,9 @@ describe("ConversationLogger", () => {
     const content1 = await readFile(logger1.logPath, "utf-8");
     const content2 = await readFile(logger2.logPath, "utf-8");
 
-    expect(content1).toContain("from alpha");
-    expect(content2).toContain("from beta");
+    // 文本内容以 JSON 字符串形式写入，直接搜索（pretty 模式下引号不会被转义为 \"）
+    expect(content1).toContain('"from alpha"');
+    expect(content2).toContain('"from beta"');
   });
 
   it("同一项目的多个会话写入同一个项目分组目录", async () => {
@@ -203,10 +238,11 @@ describe("ConversationLogger", () => {
     const content1 = await readFile(logger1.logPath, "utf-8");
     const content2 = await readFile(logger2.logPath, "utf-8");
 
-    expect(content1).toContain("from session 1");
-    expect(content2).toContain("from session 2");
-    expect(content1).not.toContain("from session 2");
-    expect(content2).not.toContain("from session 1");
+    // 内容以 JSON 字符串形式存在（pretty 模式下引号不会被转义）
+    expect(content1).toContain('"from session 1"');
+    expect(content2).toContain('"from session 2"');
+    expect(content1).not.toContain('"from session 2"');
+    expect(content2).not.toContain('"from session 1"');
   });
 
   it("flushAll 刷新所有活跃实例", async () => {
@@ -220,8 +256,9 @@ describe("ConversationLogger", () => {
 
     const content1 = await readFile(logger1.logPath, "utf-8");
     const content2 = await readFile(logger2.logPath, "utf-8");
-    expect(content1).toContain("msg1");
-    expect(content2).toContain("msg2");
+    // 文本以 JSON 字符串写入（pretty 模式下引号不会被转义）
+    expect(content1).toContain('"msg1"');
+    expect(content2).toContain('"msg2"');
   });
 
   it("defaultLogsDir 返回用户目录下的 .dskcode/logs", () => {
