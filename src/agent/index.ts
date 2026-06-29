@@ -514,7 +514,17 @@ export class Session {
           });
 
           for (const item of results.items) {
-            yield { type: "tool_result", name: item.name, result: item.result };
+            // todo_* 工具执行后，附带当前 todo 列表快照，供 UI 渲染任务进度面板
+            const todoSnapshot =
+              item.name.startsWith("todo_") && this.#todoList
+                ? this.#todoList.items
+                : undefined;
+            yield {
+              type: "tool_result",
+              name: item.name,
+              result: item.result,
+              todoSnapshot,
+            };
             this.#logger.logToolResult(
               item.name,
               item.callId,

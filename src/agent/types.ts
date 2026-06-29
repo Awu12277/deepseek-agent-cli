@@ -4,13 +4,14 @@
 
 import type { ProviderToolCall, UsageInfo } from "../provider/index.js";
 import type { ToolResult } from "../tool/types.js";
+import type { TodoItem } from "../harness/todo-list.js";
 
 /** Agent 事件 — Session.chat() 流式输出的每一步 */
 export type AgentEvent =
   | { type: "text_delta"; content: string }
   | { type: "reasoning_delta"; content: string }
   | { type: "tool_calls"; calls: ProviderToolCall[] }
-  | { type: "tool_result"; name: string; result: ToolResult }
+  | { type: "tool_result"; name: string; result: ToolResult; todoSnapshot?: ReadonlyArray<TodoItem> }
   | { type: "usage"; usage: UsageInfo; model: string; cost?: number; estimated?: boolean }
   | { type: "done"; elapsed: number }
   | { type: "error"; error: Error };

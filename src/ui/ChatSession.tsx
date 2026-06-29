@@ -16,6 +16,8 @@ import type { SkillInfo } from "../cli/skill-import.js";
 import { CostTracker } from "../provider/cost-tracker.js";
 import type { ModelId, ProviderToolCall, UsageInfo } from "../provider/index.js";
 import type { FileDiff } from "../tool/types.js";
+import type { TodoItem } from "../harness/todo-list.js";
+import { TodoListPanel } from "./TodoListPanel.js";
 import { createProvider } from "../provider/index.js";
 import {
   Session,
@@ -181,6 +183,8 @@ interface DisplayMessage {
   assistantDetail?: CompletedAssistant;
   /** 文件变更 diff（仅在 role=tool 且有 diff 时） */
   diff?: FileDiff;
+  /** todo_* 工具结果附带的任务列表快照（仅在 role=tool 时） */
+  todoSnapshot?: ReadonlyArray<TodoItem>;
 }
 
 interface ChatSessionProps {
@@ -1210,20 +1214,33 @@ export function ChatSession({
               setCurrentToolCalls([]);
               currentToolCallsRef.current = [];
               // 将工具结果追加为一条用户可见的消息
-              // 优先使用工具提供的 summary（一行简短摘要），避免在 UI 中撑出大段文件内容
+              // todo_* 工具走"任务进度面板"渲染，其余工具走单行 summary
               const r = event.result;
-              const line = r.success
-                ? (r.summary ??
-                  `✅ ${event.name}: ${r.data.slice(0, 500)}${r.data.length > 500 ? "..." : ""}`)
-                : `❌ ${event.name}: ${r.error ?? "执行失败"}`;
-              setDisplayMessages((prev) => [
-                ...prev,
-                {
-                  role: "tool" as const,
-                  content: line,
-                  diff: r.diff,
-                },
-              ]);
+              const isTodoTool = event.name.startsWith("todo_");
+              if (isTodoTool && event.todoSnapshot) {
+                setDisplayMessages((prev) => [
+                  ...prev,
+                  {
+                    role: "tool" as const,
+                    content: "",
+                    todoSnapshot: event.todoSnapshot,
+                  },
+                ]);
+              } else {
+                // 优先使用工具提供的 summary（一行简短摘要），避免在 UI 中撑出大段文件内容
+                const line = r.success
+                  ? (r.summary ??
+                    `✅ ${event.name}: ${r.data.slice(0, 500)}${r.data.length > 500 ? "..." : ""}`)
+                  : `❌ ${event.name}: ${r.error ?? "执行失败"}`;
+                setDisplayMessages((prev) => [
+                  ...prev,
+                  {
+                    role: "tool" as const,
+                    content: line,
+                    diff: r.diff,
+                  },
+                ]);
+              }
               break;
 
             case "usage":
@@ -1468,6 +1485,10 @@ export function ChatSession({
             // 工具消息 — 显示文本内容 + Diff 预览
             // 工具调用属于“过程信息”，使用 dimColor 让主内容（助手回复）的视觉权重更高
             if (msg.role === "tool") {
+              // todo_* 工具结果：以"任务进度"面板形式呈现整个 todo 列表
+              if (msg.todoSnapshot) {
+                return <TodoListPanel key={i} items={msg.todoSnapshot} />;
+              }
               return (
                 <Box key={i} marginTop={1} flexDirection="column">
                   <Box flexDirection="row">

@@ -11,4 +11,5 @@ export { GamePicker } from "./GamePicker.js";
 export { SkillSelector } from "./SkillSelector.js";
 export { FileSelector } from "./FileSelector.js";
 export { DiffPreview } from "./DiffPreview.js";
+export { TodoListPanel } from "./TodoListPanel.js";
 export { useDoubleCtrlC } from "./useDoubleCtrlC.js";
