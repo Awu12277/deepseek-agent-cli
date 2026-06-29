@@ -56,8 +56,15 @@ export class TodoList {
    * @param content — 步骤描述（中文）
    * @param deps — 依赖的 todo id 列表；为空表示无依赖，立即可 running
    * @returns 新 todo 的 id
+   * @throws 当 deps 引用了不存在的 id 时抛出，避免 LLM 错把不存在的依赖塞进计划
    */
   add(content: string, deps: number[] = []): number {
+    // 校验 deps：所有 id 必须已存在（避免引用未来 / 不存在的 id）
+    for (const d of deps) {
+      if (!this.#items.find((it) => it.id === d)) {
+        throw new Error(`todo 依赖 #${d} 不存在（已分配的 id: ${this.#items.map((it) => it.id).join(", ") || "(空)"}）`);
+      }
+    }
     const id = this.#nextId++;
     this.#items.push({
       id,
@@ -67,6 +74,25 @@ export class TodoList {
       updatedAt: Date.now(),
     });
     return id;
+  }
+
+  /**
+   * 把失败的 todo 重置回 pending（用于"重试"工作流）。
+   *
+   * 不允许把 done / skipped 重置（一旦完成不应反悔）。
+   * 不允许把 running 重置（应该先 markFailed 再重试）。
+   *
+   * @param id — todo id
+   * @returns 是否成功
+   */
+  resetForRetry(id: number): boolean {
+    const item = this.#find(id);
+    if (!item) return false;
+    if (item.status !== "failed") return false;
+    item.status = "pending";
+    item.evidence = undefined;
+    item.updatedAt = Date.now();
+    return true;
   }
 
   /**
@@ -173,20 +199,45 @@ export class TodoList {
     return this.#items;
   }
 
-  /** 把 todo 列表拼成 markdown，用于注入 system prompt */
-  toMarkdown(): string {
+  /**
+   * 把 todo 列表拼成 markdown，用于注入 system prompt。
+   *
+   * @param maxItems — 最多展示多少条；超出时保留"最近 N 条 + 进行中"，折叠已完成
+   * @returns markdown 字符串
+   */
+  toMarkdown(maxItems = 20): string {
     if (this.#items.length === 0) return "";
-    const lines = this.#items.map((it) => {
+
+    // 截断策略：保留所有 running/pending/failed（活跃项），剩下的按时间倒序补到 maxItems
+    const active = this.#items.filter(
+      (it) => it.status === "pending" || it.status === "running" || it.status === "failed",
+    );
+    const finished = this.#items.filter(
+      (it) => it.status === "done" || it.status === "skipped",
+    );
+    const finishedSorted = [...finished].sort((a, b) => b.updatedAt - a.updatedAt);
+
+    const truncated = finishedSorted.length > maxItems;
+    const finishedToShow = truncated
+      ? finishedSorted.slice(0, Math.max(0, maxItems - active.length))
+      : finishedSorted;
+
+    const lines = [...active, ...finishedToShow].map((it) => {
       const box = this.#statusBox(it.status);
       const depStr = it.deps.length > 0 ? ` (依赖: #${it.deps.join(", #")})` : "";
       const eviStr = it.evidence ? ` — ${it.evidence}` : "";
       return `- ${box} #${it.id} ${it.content}${depStr}${eviStr}`;
     });
+    if (truncated) {
+      const hidden = finishedSorted.length - finishedToShow.length;
+      lines.push(`- ...（另有 ${hidden} 条已完成已折叠）`);
+    }
+
     return [
       "## 📋 当前任务进度",
       ...lines,
       "",
-      "规则：按顺序推进；未完成依赖时不要跳步；完成请调用 markDone，失败请调用 markFailed。",
+      "规则：按顺序推进；未完成依赖时不要跳步；完成请调用 todo_mark_done，失败请调用 todo_mark_failed；重试失败项先调 todo_retry 再重跑。",
     ].join("\n");
   }
 

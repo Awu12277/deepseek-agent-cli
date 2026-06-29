@@ -189,3 +189,74 @@ describe("toMarkdown", () => {
     expect(md).toContain("(依赖: #0)");
   });
 });
+
+describe("add 依赖校验", () => {
+  it("deps 引用不存在的 id 抛错", () => {
+    const t = new TodoList();
+    expect(() => t.add("A")).not.toThrow();
+    expect(() => t.add("B", [0])).not.toThrow();
+    // 引用未来 / 不存在的 id
+    expect(() => t.add("C", [99])).toThrow(/依赖 #99 不存在/);
+  });
+
+  it("deps 为空数组允许", () => {
+    const t = new TodoList();
+    expect(() => t.add("A", [])).not.toThrow();
+  });
+});
+
+describe("resetForRetry 重试", () => {
+  it("failed → pending，清空 evidence", () => {
+    const t = new TodoList();
+    const id = t.add("A");
+    t.markRunning(id);
+    t.markFailed(id, "原错误");
+    expect(t.resetForRetry(id)).toBe(true);
+    const item = t.items.find((x) => x.id === id)!;
+    expect(item.status).toBe("pending");
+    expect(item.evidence).toBeUndefined();
+  });
+
+  it("running / done / skipped 不允许重试", () => {
+    const t = new TodoList();
+    const a = t.add("A");
+    t.markRunning(a);
+    expect(t.resetForRetry(a)).toBe(false);
+    t.markDone(a, "ok");
+    expect(t.resetForRetry(a)).toBe(false);
+    const b = t.add("B");
+    t.markSkipped(b, "n/a");
+    expect(t.resetForRetry(b)).toBe(false);
+  });
+
+  it("不存在的 id 返回 false", () => {
+    expect(new TodoList().resetForRetry(99)).toBe(false);
+  });
+});
+
+describe("toMarkdown 截断", () => {
+  it("活跃项（pending/running/failed）始终保留", () => {
+    const t = new TodoList();
+    // 20 个 done
+    for (let i = 0; i < 20; i++) {
+      const id = t.add(`done-${i}`);
+      t.markRunning(id);
+      t.markDone(id, "ok");
+    }
+    // 1 个 pending
+    t.add("active-pending");
+    const md = t.toMarkdown(5);
+    expect(md).toContain("active-pending");
+  });
+
+  it("已完成项超出 maxItems 时折叠", () => {
+    const t = new TodoList();
+    for (let i = 0; i < 10; i++) {
+      const id = t.add(`done-${i}`);
+      t.markRunning(id);
+      t.markDone(id, "ok");
+    }
+    const md = t.toMarkdown(3);
+    expect(md).toMatch(/另有 \d+ 条已完成已折叠/);
+  });
+});

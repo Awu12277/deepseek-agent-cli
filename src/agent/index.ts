@@ -166,6 +166,8 @@ export class Session {
   readonly #verifier: Verifier | null;
   /** 本轮是否已跑过 Verifier（避免重复跑） */
   #verificationRunThisTurn = false;
+  /** 本会话内是否已发出过「未拆 todo」护栏提示（避免每轮骚扰） */
+  #harnessHintEmitted = false;
 
   /**
    * 构造一个 Session。
@@ -288,6 +290,10 @@ export class Session {
     let toolRounds = 0;
     // 工具执行器：本轮内共享同一 signal，避免每次调用都重新构建
     const toolExecutor = this.#buildToolExecutor();
+    // 本轮内 Verifier 只跑一次；chat() 开头重置，避免上轮的标志卡住新输入
+    this.#verificationRunThisTurn = false;
+    // Harness 护栏提示也重置：每个新用户输入重新评估一次「未拆 todo」问题
+    this.#harnessHintEmitted = false;
 
     try {
       while (toolRounds < this.#options.maxToolRounds) {
@@ -435,7 +441,6 @@ export class Session {
 
           const results = await toolExecutor.executeBatch(lastToolCalls);
           this.#stormRecords = results.records;
-          console.log('results',results)
           // 保存本轮结果，供下一轮循环开始时 Reflector 分析
           this.#lastRoundResults = results.items.map((it) => {
             const tool = this.#toolRegistry.get(it.name);
@@ -462,6 +467,10 @@ export class Session {
               toolCallId: item.callId, name: item.name,
             });
           }
+
+          // Harness 护栏：检测到模型在完全未拆 todo 的情况下直接调了非 todo 工具，
+          // 主动发一条提示让模型重新评估（每会话只发一次，避免啰喌）
+          this.#maybeEmitHarnessHint(results.items);
 
           toolRounds++;
           continue;
@@ -845,5 +854,36 @@ export class Session {
       base = base + "\n\n" + this.#todoList.toMarkdown();
     }
     return base;
+  }
+
+  /**
+   * Harness 护栏：模型跳过 todo_add 直接动手时，主动发一条提示让其重评。
+   *
+   * 触发条件（全部需满足）：
+   * 1. Harness 开启（#todoList 非空）
+   * 2. todoList 仍为空（未拆 todo）
+   * 3. 本会话内未提示过（#harnessHintEmitted 为 false）
+   * 4. 本轮调了 ≥1 个**非 todo_* 的工具**（说明模型跳过了 todo_add 直接干活）
+   *
+   * 动作：push 一条 user role 消息到 #messages，让下一轮 LLM 看到；设 #harnessHintEmitted = true。
+   *
+   * @sideEffect 写 #messages / #harnessHintEmitted
+   */
+  #maybeEmitHarnessHint(items: ReadonlyArray<{ name: string }>): void {
+    if (!this.#todoList) return;
+    if (this.#todoList.items.length > 0) return;
+    if (this.#harnessHintEmitted) return;
+    const hasNonTodo = items.some((it) => !it.name.startsWith("todo_"));
+    if (!hasNonTodo) return;
+    this.#harnessHintEmitted = true;
+    this.#messages.push({
+      role: "user",
+      content:
+        "[系统提示] 你还没有 todo 过，但已经调了具体工具。\n" +
+        "请回顾你刚做的事：这是「简单」任务（1 轮 1 工具能完成）还是「复杂」任务？\n" +
+        "如果是复杂（改了/创建了/要读后改/跨多种工具），请停下，先调 todo_add 拆解 3-7 步再继续。\n" +
+        "如果是简单，忽略本提示。\n" +
+        "（本提示本会话仅发一次，后续不再提醒。）",
+    });
   }
 }
