@@ -9,6 +9,11 @@ import { formatMoney } from "../provider/cost-tracker.js";
 import { ToolCallBlock } from "./ToolCallBlock.js";
 import { formatUsageSummary } from "../agent/message-builder.js";
 import { HighlightedText } from "./HighlightedText.js";
+import {
+  DEFAULT_REASONING_MAX_LINES,
+  joinReasoningSegments,
+  truncateReasoningLines,
+} from "./reasoning-utils.js";
 
 interface AssistantMessageProps {
   /** 助手回复的文本内容 */
@@ -184,28 +189,46 @@ export function AssistantMessage({
 
   return (
     <Box flexDirection="column" marginTop={1}>
-      {/* 思考链：每个独立段都以暗色小字块展示，区分“内心独白”和“最终答案” */}
+      {/* 思考链：所有段拼接为单文本（段间空行分隔），统一截断到 8 行。
+          多 sub-turn 的短段不再各自画框，避免空块堆点屏幕。 */}
       {reasoning &&
         reasoning.length > 0 &&
-        reasoning.map((seg, idx) => (
-          <Box key={idx} flexDirection="row" marginBottom={1}>
-            <Box width={4} flexShrink={0}>
-              <Text dimColor>{"🧠"}</Text>
+        (() => {
+          const merged = joinReasoningSegments(reasoning);
+          if (!merged) return null;
+          const { visible, hiddenLines } = truncateReasoningLines(
+            merged,
+            DEFAULT_REASONING_MAX_LINES,
+          );
+          return (
+            <Box flexDirection="row" marginBottom={1}>
+              <Box width={4} flexShrink={0}>
+                <Text dimColor>{"🧠"}</Text>
+              </Box>
+              <Box
+                flexGrow={1}
+                flexDirection="column"
+                borderStyle="single"
+                borderColor="#444444"
+                paddingLeft={1}
+                paddingRight={1}
+              >
+                <Text dimColor wrap="wrap">
+                  {visible}
+                </Text>
+                {hiddenLines > 0 && (
+                  <Text dimColor>
+                    {"\n… (共 "}
+                    {hiddenLines + DEFAULT_REASONING_MAX_LINES}
+                    {" 行，已省略 "}
+                    {hiddenLines}
+                    {" 行)"}
+                  </Text>
+                )}
+              </Box>
             </Box>
-            <Box
-              flexGrow={1}
-              flexDirection="column"
-              borderStyle="single"
-              borderColor="#444444"
-              paddingLeft={1}
-              paddingRight={1}
-            >
-              <Text dimColor wrap="wrap">
-                {seg}
-              </Text>
-            </Box>
-          </Box>
-        ))}
+          );
+        })()}
 
       {/* 助手标识 + 内容 */}
       <Box flexDirection="row">
