@@ -196,7 +196,8 @@ export function AssistantMessage({
         (() => {
           const merged = joinReasoningSegments(reasoning);
           if (!merged) return null;
-          const { visible, hiddenLines } = truncateReasoningLines(
+          // 滚动窗口：保留最后 N 行（最新思考），丢弃开头的旧行，与终端自动滚屏一致
+          const { visible } = truncateReasoningLines(
             merged,
             DEFAULT_REASONING_MAX_LINES,
           );
@@ -216,15 +217,6 @@ export function AssistantMessage({
                 <Text dimColor wrap="wrap">
                   {visible}
                 </Text>
-                {hiddenLines > 0 && (
-                  <Text dimColor>
-                    {"\n… (共 "}
-                    {hiddenLines + DEFAULT_REASONING_MAX_LINES}
-                    {" 行，已省略 "}
-                    {hiddenLines}
-                    {" 行)"}
-                  </Text>
-                )}
               </Box>
             </Box>
           );

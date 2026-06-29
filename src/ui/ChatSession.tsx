@@ -16,8 +16,8 @@ import type { SkillInfo } from "../cli/skill-import.js";
 import { CostTracker } from "../provider/cost-tracker.js";
 import type { ModelId, ProviderToolCall, UsageInfo } from "../provider/index.js";
 import type { FileDiff } from "../tool/types.js";
-import type { TodoItem } from "../harness/todo-list.js";
 import { TodoListPanel } from "./TodoListPanel.js";
+import type { TodoItem } from "../harness/todo-list.js";
 import { createProvider } from "../provider/index.js";
 import {
   Session,
@@ -183,8 +183,6 @@ interface DisplayMessage {
   assistantDetail?: CompletedAssistant;
   /** 文件变更 diff（仅在 role=tool 且有 diff 时） */
   diff?: FileDiff;
-  /** todo_* 工具结果附带的任务列表快照（仅在 role=tool 时） */
-  todoSnapshot?: ReadonlyArray<TodoItem>;
 }
 
 interface ChatSessionProps {
@@ -255,6 +253,8 @@ export function ChatSession({
   const [activeModel, setActiveModel] = useState<ModelId>(model as unknown as ModelId);
   const [_streamingModel, setStreamingModel] = useState<string | undefined>(undefined);
   const [streamError, setStreamError] = useState<string | undefined>(undefined);
+  // todo 任务进度面板 state — todo_* 工具结果更新此状态，<TodoListPanel> 独立渲染
+  const [todoSnapshot, setTodoSnapshot] = useState<ReadonlyArray<TodoItem>>([]);
 
   // 会话模式（code / plan）
   const [sessionMode, setSessionMode] = useState<SessionMode>("code");
@@ -1214,20 +1214,12 @@ export function ChatSession({
               setCurrentToolCalls([]);
               currentToolCallsRef.current = [];
               // 将工具结果追加为一条用户可见的消息
-              // todo_* 工具走"任务进度面板"渲染，其余工具走单行 summary
               const r = event.result;
-              const isTodoTool = event.name.startsWith("todo_");
-              if (isTodoTool && event.todoSnapshot) {
-                setDisplayMessages((prev) => [
-                  ...prev,
-                  {
-                    role: "tool" as const,
-                    content: "",
-                    todoSnapshot: event.todoSnapshot,
-                  },
-                ]);
+              if (event.name.startsWith("todo_") && event.todoSnapshot) {
+                // todo_* 工具：更新独立的任务进度 state（覆盖而非追加），不产生消息条目
+                setTodoSnapshot(event.todoSnapshot);
               } else {
-                // 优先使用工具提供的 summary（一行简短摘要），避免在 UI 中撑出大段文件内容
+                // 非 todo 工具：优先使用 summary（一行简短摘要），避免在 UI 中撑出大段文件内容
                 const line = r.success
                   ? (r.summary ??
                     `✅ ${event.name}: ${r.data.slice(0, 500)}${r.data.length > 500 ? "..." : ""}`)
@@ -1485,10 +1477,6 @@ export function ChatSession({
             // 工具消息 — 显示文本内容 + Diff 预览
             // 工具调用属于“过程信息”，使用 dimColor 让主内容（助手回复）的视觉权重更高
             if (msg.role === "tool") {
-              // todo_* 工具结果：以"任务进度"面板形式呈现整个 todo 列表
-              if (msg.todoSnapshot) {
-                return <TodoListPanel key={i} items={msg.todoSnapshot} />;
-              }
               return (
                 <Box key={i} marginTop={1} flexDirection="column">
                   <Box flexDirection="row">
@@ -1544,6 +1532,9 @@ export function ChatSession({
           </Box>
         )}
       </Box>
+
+      {/* 独立的任务进度面板 — 不混入消息列表，每次 todo_* 刷新原地更新 */}
+      {todoSnapshot.length > 0 && <TodoListPanel items={todoSnapshot} />}
 
       {/* 输入区 */}
       {selectingModel ? (
