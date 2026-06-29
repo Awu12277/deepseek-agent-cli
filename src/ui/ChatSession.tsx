@@ -255,6 +255,10 @@ export function ChatSession({
   const [streamError, setStreamError] = useState<string | undefined>(undefined);
   // todo 任务进度面板 state — todo_* 工具结果更新此状态，<TodoListPanel> 独立渲染
   const [todoSnapshot, setTodoSnapshot] = useState<ReadonlyArray<TodoItem>>([]);
+  // 任务全部结束后延迟隐藏的面板可见性（默认 true：有 snapshot 就显示）
+  const [todoPanelVisible, setTodoPanelVisible] = useState(true);
+  // “全部结束后 2s 隐藏”的定时器句柄
+  const todoHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 会话模式（code / plan）
   const [sessionMode, setSessionMode] = useState<SessionMode>("code");
@@ -345,6 +349,49 @@ export function ChatSession({
       }
     };
   }, []);
+
+  // todo 面板可见性：
+  // - 有未完成项（pending / running）→ 一直显示，同时清掉隐藏计时器
+  // - 全部结束（done / failed / skipped）→ 保持显示 2s 后隐藏
+  // - snapshot 为空 → 立即隐藏（下一轮可重新出现）
+  // - 组件卸载时清理计时器
+  useEffect(() => {
+    // 先清掉上一次的“全结束后隐藏”计时器
+    if (todoHideTimerRef.current) {
+      clearTimeout(todoHideTimerRef.current);
+      todoHideTimerRef.current = null;
+    }
+
+    if (todoSnapshot.length === 0) {
+      setTodoPanelVisible(false);
+      return;
+    }
+
+    // 是否有未完成项（pending / running / failed 都算"还在动"）
+    const hasUnfinished = todoSnapshot.some(
+      (it) => it.status === "pending" || it.status === "running" || it.status === "failed",
+    );
+
+    if (hasUnfinished) {
+      setTodoPanelVisible(true);
+      return;
+    }
+
+    // 全部是 done / skipped：保持显示 2s 后隐藏
+    setTodoPanelVisible(true);
+    todoHideTimerRef.current = setTimeout(() => {
+      setTodoPanelVisible(false);
+      todoHideTimerRef.current = null;
+    }, 2000);
+
+    return () => {
+      // 依赖变化或卸载时清理计时器
+      if (todoHideTimerRef.current) {
+        clearTimeout(todoHideTimerRef.current);
+        todoHideTimerRef.current = null;
+      }
+    };
+  }, [todoSnapshot]);
 
   // 获取当前输入匹配的 skill 列表
   const getFilteredSkills = useCallback(
@@ -1533,8 +1580,11 @@ export function ChatSession({
         )}
       </Box>
 
-      {/* 独立的任务进度面板 — 不混入消息列表，每次 todo_* 刷新原地更新 */}
-      {todoSnapshot.length > 0 && <TodoListPanel items={todoSnapshot} />}
+      {/* 独立的任务进度面板 — 不混入消息列表，每次 todo_* 刷新原地更新。
+          任务全部结束后 2s 自动隐藏；新任务开启时重新显示。 */}
+      {todoPanelVisible && todoSnapshot.length > 0 && (
+        <TodoListPanel items={todoSnapshot} />
+      )}
 
       {/* 输入区 */}
       {selectingModel ? (
