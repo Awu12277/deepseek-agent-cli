@@ -132,8 +132,19 @@ export class Session {
   readonly #costTracker: CostTracker;
   /** 归一化后的构造选项（带默认值） */
   readonly #options: Required<
-    Pick<SessionOptions, "cwd" | "maxToolRounds" | "reservedForOutput" | "preserveRecentRounds">
-  > & { projectContext?: string; gate: Gate; writeRoots: string[]; enableCheckpoint: boolean; enableLog: boolean; enableReflection: boolean; enableHarness: boolean };
+    Pick<
+      SessionOptions,
+      "cwd" | "maxToolRounds" | "reservedForOutput" | "preserveRecentRounds"
+    >
+  > & {
+    projectContext?: string;
+    gate: Gate;
+    writeRoots: string[];
+    enableCheckpoint: boolean;
+    enableLog: boolean;
+    enableReflection: boolean;
+    enableHarness: boolean;
+  };
   /** 中止信号控制器（abort() 时触发，传递给 LLM 和工具） */
   readonly #abortController = new AbortController();
 
@@ -207,12 +218,18 @@ export class Session {
       enableHarness: options?.enableHarness !== false,
     };
     this.#sessionId = options?.sessionId ?? SessionStore.newId();
-    this.#store = options?.store === false ? null : (options?.store ?? new SessionStore());
+    this.#store =
+      options?.store === false ? null : (options?.store ?? new SessionStore());
     this.#createdAt = Date.now();
     this.#logger = new ConversationLogger(this.#sessionId, this.#options.cwd, {
       enabled: this.#options.enableLog,
     });
-    this.#logger.logSessionStart(this.#sessionId, this.#options.cwd, this.#provider.model(), this.#mode);
+    this.#logger.logSessionStart(
+      this.#sessionId,
+      this.#options.cwd,
+      this.#provider.model(),
+      this.#mode,
+    );
     this.#stormDetector = new StormDetector({ threshold: 3 });
     this.#reflector = this.#options.enableReflection ? new Reflector() : null;
 
@@ -231,23 +248,41 @@ export class Session {
   }
 
   /** 当前会话的完整消息历史（只读视图） */
-  get messages(): readonly ChatMessage[] { return this.#messages; }
+  get messages(): readonly ChatMessage[] {
+    return this.#messages;
+  }
   /** 本次会话累计成本（人民币元） */
-  get accumulatedCost(): number { return this.#costTracker.sessionTotalCost; }
+  get accumulatedCost(): number {
+    return this.#costTracker.sessionTotalCost;
+  }
   /** 成本追踪器（含今日总成本、会话成本、模型维度统计） */
-  get costTracker(): CostTracker { return this.#costTracker; }
+  get costTracker(): CostTracker {
+    return this.#costTracker;
+  }
   /** 当前模型标识（如 "deepseek-v4-flash"） */
-  get model(): string { return this.#provider.model(); }
+  get model(): string {
+    return this.#provider.model();
+  }
   /** 工具注册表（可外部读 / 运行时 register） */
-  get toolRegistry(): ToolRegistry { return this.#toolRegistry; }
+  get toolRegistry(): ToolRegistry {
+    return this.#toolRegistry;
+  }
   /** 当前模式："code" | "plan" */
-  get mode(): SessionMode { return this.#mode; }
+  get mode(): SessionMode {
+    return this.#mode;
+  }
   /** 会话 ID（UUID） */
-  get id(): string { return this.#sessionId; }
+  get id(): string {
+    return this.#sessionId;
+  }
   /** 持久化存储实例（禁用持久化时为 null） */
-  get store(): SessionStore | null { return this.#store; }
+  get store(): SessionStore | null {
+    return this.#store;
+  }
   /** 会话创建时间戳（毫秒） */
-  get createdAt(): number { return this.#createdAt; }
+  get createdAt(): number {
+    return this.#createdAt;
+  }
 
   /**
    * 切换会话模式。
@@ -255,7 +290,10 @@ export class Session {
    * @param mode — "code"：全部工具；"plan"：只暴露只读工具
    * @returns 设置后的模式（便于链式调用）
    */
-  setMode(mode: SessionMode): SessionMode { this.#mode = mode; return this.#mode; }
+  setMode(mode: SessionMode): SessionMode {
+    this.#mode = mode;
+    return this.#mode;
+  }
 
   /**
    * chat() — 接收一轮用户输入，串起 LLM 调用 / 工具执行 / 风暴中断 / 持久化。
@@ -283,7 +321,9 @@ export class Session {
       try {
         const checkpoint = await createCheckpoint(this.#options.cwd);
         this.#checkpoints.set(userMsgIndex, checkpoint);
-      } catch { /* swallow — checkpoint 失败不应阻塞对话 */ }
+      } catch {
+        /* swallow — checkpoint 失败不应阻塞对话 */
+      }
     }
 
     const startTime = Date.now();
@@ -308,20 +348,21 @@ export class Session {
           if (reflections.length > 0) {
             systemPrompt = this.#reflector.injectIntoPrompt(systemPrompt, reflections);
             this.#logger.logReflections(
-              reflections.map((r) => ({ category: r.category, toolName: r.toolName, hint: r.hint })),
+              reflections.map((r) => ({
+                category: r.category,
+                toolName: r.toolName,
+                hint: r.hint,
+              })),
             );
           }
           this.#lastRoundResults = null;
         }
-        const [trimmed] = trimMessages(
-          [...this.#messages],
-          {
-            model: this.#provider.model() as unknown as ModelId,
-            reservedForOutput: this.#options.reservedForOutput,
-            systemPrompt,
-            preserveRecentRounds: this.#options.preserveRecentRounds,
-          },
-        );
+        const [trimmed] = trimMessages([...this.#messages], {
+          model: this.#provider.model() as unknown as ModelId,
+          reservedForOutput: this.#options.reservedForOutput,
+          systemPrompt,
+          preserveRecentRounds: this.#options.preserveRecentRounds,
+        });
         const apiMessages = buildApiMessages(systemPrompt, trimmed);
 
         const toolDefs = buildToolDefinitions(this.#toolRegistry, this.#mode);
@@ -337,6 +378,7 @@ export class Session {
         const modelId = this.#provider.model() as unknown as ModelId;
 
         let accumulatedText = "";
+        let accumulatedReasoning = "";
         let lastUsage: UsageInfo | undefined;
         let lastToolCalls: ProviderToolCall[] | undefined;
         let _lastFinishReason: string | null = null;
@@ -351,6 +393,10 @@ export class Session {
         const EST_EMIT_INTERVAL_MS = 300;
 
         for await (const chunk of stream) {
+          if (chunk.reasoningContent) {
+            accumulatedReasoning += chunk.reasoningContent;
+            yield { type: "reasoning_delta", content: chunk.reasoningContent };
+          }
           if (chunk.content) {
             accumulatedText += chunk.content;
             yield { type: "text_delta", content: chunk.content };
@@ -374,7 +420,8 @@ export class Session {
               };
             }
           }
-          if (chunk.toolCalls && chunk.toolCalls.length > 0) lastToolCalls = chunk.toolCalls;
+          if (chunk.toolCalls && chunk.toolCalls.length > 0)
+            lastToolCalls = chunk.toolCalls;
           if (chunk.usage) {
             lastUsage = chunk.usage;
             // 真实 usage 覆盖估算值
@@ -411,16 +458,25 @@ export class Session {
           this.#costTracker.record(lastUsage, modelId);
           const cost = calculateCost(lastUsage, modelId);
           this.#logger.logUsage(
-            modelId, lastUsage.promptTokens, lastUsage.completionTokens,
-            lastUsage.cachedPromptTokens, cost.totalCost, toolRounds,
+            modelId,
+            lastUsage.promptTokens,
+            lastUsage.completionTokens,
+            lastUsage.cachedPromptTokens,
+            cost.totalCost,
+            toolRounds,
           );
           yield { type: "usage", usage: lastUsage, model: modelId };
         }
 
         const assistantMsg: ChatMessage = { role: "assistant", content: accumulatedText };
-        if (lastToolCalls && lastToolCalls.length > 0) assistantMsg.toolCalls = lastToolCalls;
+        if (lastToolCalls && lastToolCalls.length > 0)
+          assistantMsg.toolCalls = lastToolCalls;
         this.#messages.push(assistantMsg);
         this.#logger.logAssistantText(accumulatedText, toolRounds);
+        // 思考链只入日志、不进 messages（多轮时不回传 API 也不会出错）
+        if (accumulatedReasoning) {
+          this.#logger.logReasoning(accumulatedReasoning, toolRounds);
+        }
 
         if (lastToolCalls && lastToolCalls.length > 0) {
           yield { type: "tool_calls", calls: lastToolCalls };
@@ -428,7 +484,10 @@ export class Session {
             this.#logger.logToolCall(tc.name, tc.id, tc.arguments, toolRounds);
           }
 
-          const stormBroken = this.#stormDetector.shouldBreak(this.#stormRecords, lastToolCalls);
+          const stormBroken = this.#stormDetector.shouldBreak(
+            this.#stormRecords,
+            lastToolCalls,
+          );
           if (stormBroken) {
             const stormMsg = "\n⚠️ 同一工具重复出错，已强制切换策略\n";
             yield { type: "text_delta", content: stormMsg };
@@ -457,14 +516,22 @@ export class Session {
           for (const item of results.items) {
             yield { type: "tool_result", name: item.name, result: item.result };
             this.#logger.logToolResult(
-              item.name, item.callId, item.result.success,
-              item.result.data, item.result.error, undefined, toolRounds,
+              item.name,
+              item.callId,
+              item.result.success,
+              item.result.data,
+              item.result.error,
+              undefined,
+              toolRounds,
             );
             let toolContent = item.result.data;
-            if (item.result.diff && item.result.diff.patch) toolContent += `\n\n${item.result.diff.patch}`;
+            if (item.result.diff && item.result.diff.patch)
+              toolContent += `\n\n${item.result.diff.patch}`;
             this.#messages.push({
-              role: "tool", content: toolContent,
-              toolCallId: item.callId, name: item.name,
+              role: "tool",
+              content: toolContent,
+              toolCallId: item.callId,
+              name: item.name,
             });
           }
 
@@ -488,7 +555,8 @@ export class Session {
           // 以 system role 提示模型“马上跑验证”，同时护发事件让 UI 看到状态
           this.#messages.push({
             role: "user",
-            content: "[系统] 全部 todo 已完成，Harness 正在自动跑验证（type-check / test / lint）。验证结果会随下一轮返回。",
+            content:
+              "[系统] 全部 todo 已完成，Harness 正在自动跑验证（type-check / test / lint）。验证结果会随下一轮返回。",
           });
           yield { type: "text_delta", content: "\n[系统] 正在跑自动验证...\n" };
           let result;
@@ -500,7 +568,14 @@ export class Session {
           } catch (err) {
             result = {
               ok: false,
-              signals: [{ kind: "type-check", outcome: "fail", summary: "verifier 异常", detail: String(err) }],
+              signals: [
+                {
+                  kind: "type-check",
+                  outcome: "fail",
+                  summary: "verifier 异常",
+                  detail: String(err),
+                },
+              ],
               elapsedMs: 0,
             };
           }
@@ -514,7 +589,8 @@ export class Session {
           yield { type: "text_delta", content: verifierMsg };
           this.#messages.push({
             role: "user",
-            content: `[系统] Harness 自动验证结果：\n${lines.join("\n")}\n\n` +
+            content:
+              `[系统] Harness 自动验证结果：\n${lines.join("\n")}\n\n` +
               (result.ok
                 ? "全部通过。请输出最终总结。"
                 : "有失败项。请按失败原因修复后重试，或重规划。"),
@@ -555,7 +631,10 @@ export class Session {
    */
   abort(): void {
     this.#abortController.abort();
-    if (this.#persistTimer) { clearTimeout(this.#persistTimer); this.#persistTimer = null; }
+    if (this.#persistTimer) {
+      clearTimeout(this.#persistTimer);
+      this.#persistTimer = null;
+    }
   }
 
   /**
@@ -590,7 +669,10 @@ export class Session {
    * @sideEffect 调用 #doPersist()，写入磁盘
    */
   async persistNow(): Promise<void> {
-    if (this.#persistTimer) { clearTimeout(this.#persistTimer); this.#persistTimer = null; }
+    if (this.#persistTimer) {
+      clearTimeout(this.#persistTimer);
+      this.#persistTimer = null;
+    }
     await this.#doPersist();
   }
 
@@ -602,7 +684,10 @@ export class Session {
    */
   #persist(): void {
     if (!this.#store) return;
-    if (this.#persistTimer) { this.#persistTimer.refresh(); return; }
+    if (this.#persistTimer) {
+      this.#persistTimer.refresh();
+      return;
+    }
     this.#persistTimer = setTimeout(() => {
       this.#persistTimer = null;
       void this.#doPersist();
@@ -628,8 +713,11 @@ export class Session {
       messages: this.#serializeMessages(),
       totalCost: this.#costTracker.sessionTotalCost,
     };
-    try { await this.#store.save(stored); }
-    catch (err) { console.error("[Session] 持久化失败:", err); }
+    try {
+      await this.#store.save(stored);
+    } catch (err) {
+      console.error("[Session] 持久化失败:", err);
+    }
   }
 
   /**
@@ -679,16 +767,24 @@ export class Session {
     costTracker?: CostTracker,
     options?: SessionOptions,
   ): Promise<Session> {
-    const store = options?.store === false ? null : (options?.store ?? new SessionStore());
+    const store =
+      options?.store === false ? null : (options?.store ?? new SessionStore());
     if (!store) throw new Error("resume 需要启用持久化（options.store 不能为 false）");
     const stored = await store.load(id);
     if (!stored) throw new Error(`会话 ${id} 不存在`);
 
-    const session = new Session(provider, tools, costTracker, { ...options, sessionId: id, store });
+    const session = new Session(provider, tools, costTracker, {
+      ...options,
+      sessionId: id,
+      store,
+    });
     for (const m of stored.messages) {
       session.#messages.push({
-        role: m.role, content: m.content,
-        toolCallId: m.toolCallId, name: m.name, toolCalls: m.toolCalls,
+        role: m.role,
+        content: m.content,
+        toolCallId: m.toolCallId,
+        name: m.name,
+        toolCalls: m.toolCalls,
       });
     }
     for (let i = 0; i < stored.messages.length; i++) {
@@ -715,7 +811,12 @@ export class Session {
     for (const [index, checkpoint] of this.#checkpoints) {
       const msg = this.#messages[index];
       if (!msg || msg.role !== "user") continue;
-      result.push({ index, preview: msg.content.slice(0, 80), timestamp: checkpoint.timestamp, isGitRepo: checkpoint.isGitRepo });
+      result.push({
+        index,
+        preview: msg.content.slice(0, 80),
+        timestamp: checkpoint.timestamp,
+        isGitRepo: checkpoint.isGitRepo,
+      });
     }
     return result.sort((a, b) => a.index - b.index);
   }
@@ -753,7 +854,10 @@ export class Session {
     this.#messages.length = targetIndex + 1;
     const toDiscard: Checkpoint[] = [];
     for (const [idx, cp] of this.#checkpoints) {
-      if (idx > targetIndex) { toDiscard.push(cp); this.#checkpoints.delete(idx); }
+      if (idx > targetIndex) {
+        toDiscard.push(cp);
+        this.#checkpoints.delete(idx);
+      }
     }
 
     let fileRestored = false;
@@ -777,7 +881,9 @@ export class Session {
     // restoreCheckpointForce 内部已 drop 了该 checkpoints 的 stash entry，
     // 所以只需从 Map 中移除即可，无需再 discardCheckpoint。
     this.#checkpoints.delete(targetIndex);
-    for (const cp of toDiscard) { void discardCheckpoint(cp); }
+    for (const cp of toDiscard) {
+      void discardCheckpoint(cp);
+    }
     this.#persist();
     return { ok: true, fileRestored };
   }
@@ -787,7 +893,9 @@ export class Session {
    *
    * @pure 不修改任何状态
    */
-  hasCheckpoints(): boolean { return this.listCheckpoints().length > 0; }
+  hasCheckpoints(): boolean {
+    return this.listCheckpoints().length > 0;
+  }
 
   /**
    * 彻底删除会话：从磁盘移除 SessionStore 条目、丢弃所有 checkpoint、关闭日志。
@@ -797,7 +905,9 @@ export class Session {
    */
   async delete(): Promise<void> {
     if (this.#store) await this.#store.delete(this.#sessionId);
-    for (const cp of this.#checkpoints.values()) { void discardCheckpoint(cp); }
+    for (const cp of this.#checkpoints.values()) {
+      void discardCheckpoint(cp);
+    }
     this.#checkpoints.clear();
     this.#logger.logSessionEnd(Date.now() - this.#createdAt);
     await this.#logger.flush();
@@ -837,11 +947,13 @@ export class Session {
   #buildSystemPrompt(): string {
     const enabledTools = this.#toolRegistry.list();
     const toolDescs = enabledTools.map((t) => ({
-      name: t.name, description: t.description,
+      name: t.name,
+      description: t.description,
       parameters: t.parameters as unknown as Record<string, unknown>,
     }));
     const opts: SystemPromptOptions = {
-      model: this.#provider.model(), maxToolRounds: this.#options.maxToolRounds,
+      model: this.#provider.model(),
+      maxToolRounds: this.#options.maxToolRounds,
       tools: toolDescs.length > 0 ? toolDescs : undefined,
       projectContext: this.#options.projectContext ?? undefined,
       cwd: this.#options.cwd,

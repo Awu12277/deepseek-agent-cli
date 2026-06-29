@@ -19,6 +19,8 @@ import {
   ModelNotSupportedError,
   mapHttpError,
 } from "../src/provider/index.js";
+import { DeepSeekEventMapper } from "../src/provider/deepseek.js";
+import type { DeepSeekStreamChunk } from "../src/provider/deepseek-protocol.js";
 
 // ---------------------------------------------------------------------------
 // 模型定义与校验
@@ -336,7 +338,11 @@ describe("mapHttpError", () => {
 // ProviderRegistry
 // ---------------------------------------------------------------------------
 
-const createMockFactory = (config: { apiKey: string; baseUrl: string; model: string }) => ({
+const createMockFactory = (config: {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+}) => ({
   name: "mock",
   model: () => config.model,
   countTokens: (text: string) => text.length,
@@ -450,13 +456,17 @@ describe("ProviderRegistry", () => {
       name: "a",
       model: () => "deepseek-v4-flash",
       countTokens: (t: string) => t.length,
-      chat: async function* () { yield { content: "", finishReason: null as const }; },
+      chat: async function* () {
+        yield { content: "", finishReason: null as const };
+      },
     }));
     registry.register("b", () => ({
       name: "b",
       model: () => "deepseek-v4-pro",
       countTokens: (t: string) => t.length,
-      chat: async function* () { yield { content: "", finishReason: null as const }; },
+      chat: async function* () {
+        yield { content: "", finishReason: null as const };
+      },
     }));
     expect(registry.list()).toEqual(["a", "b"]);
   });
@@ -596,9 +606,9 @@ describe("DeepSeekProvider", () => {
       expect(result.isAvailable).toBe(true);
       expect(result.balances).toHaveLength(1);
       expect(result.balances[0].currency).toBe("CNY");
-      expect(result.balances[0].totalBalance).toBe(100.50);
+      expect(result.balances[0].totalBalance).toBe(100.5);
       expect(result.balances[0].grantedBalance).toBe(10);
-      expect(result.balances[0].toppedUpBalance).toBe(90.50);
+      expect(result.balances[0].toppedUpBalance).toBe(90.5);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -642,9 +652,7 @@ describe("配置校验 — 模型限制", () => {
       maxTokens: 8192,
       temperature: 0.7,
       maxToolRounds: 20,
-      providers: [
-        { name: "deepseek", model: "gpt-4", apiKey: "test" },
-      ],
+      providers: [{ name: "deepseek", model: "gpt-4", apiKey: "test" }],
       tools: [],
       plugins: [],
     };
@@ -657,5 +665,69 @@ describe("配置校验 — 模型限制", () => {
     expect(modelError?.message).toContain("gpt-4");
     expect(modelError?.message).toContain("deepseek-v4-flash");
     expect(modelError?.message).toContain("deepseek-v4-pro");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DeepSeekEventMapper
+// ---------------------------------------------------------------------------
+
+describe("DeepSeekEventMapper", () => {
+  /** 构造一个最小可用的流块；调用者只填关心的字段 */
+  function makeChunk(delta: {
+    content?: string;
+    reasoning_content?: string;
+    finish_reason?: string | null;
+    tool_calls?: Array<{
+      index: number;
+      id?: string;
+      function?: { name?: string; arguments?: string };
+    }>;
+  }): DeepSeekStreamChunk {
+    return {
+      id: "test",
+      object: "chat.completion.chunk",
+      created: 0,
+      model: "deepseek-v4-flash",
+      choices: [
+        {
+          index: 0,
+          delta,
+          finish_reason: delta.finish_reason ?? null,
+        },
+      ],
+    };
+  }
+
+  it("应将 reasoning_content 转译为 ChatChunk.reasoningContent", () => {
+    const mapper = new DeepSeekEventMapper();
+    const events = mapper.mapEvent(makeChunk({ reasoning_content: "让我先想一想" }));
+    expect(events).toHaveLength(1);
+    expect(events[0]!.reasoningContent).toBe("让我先想一想");
+    expect(events[0]!.content).toBe("");
+  });
+
+  it("应区分 reasoning 和 content（两者可同时出现在一个块里）", () => {
+    const mapper = new DeepSeekEventMapper();
+    const events = mapper.mapEvent(
+      makeChunk({ content: "答案是 42", reasoning_content: "思考过程" }),
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0]!.content).toBe("答案是 42");
+    expect(events[0]!.reasoningContent).toBe("思考过程");
+  });
+
+  it("连续两个 reasoning_content 块会各自产生独立事件", () => {
+    const mapper = new DeepSeekEventMapper();
+    const e1 = mapper.mapEvent(makeChunk({ reasoning_content: "第一段" }));
+    const e2 = mapper.mapEvent(makeChunk({ reasoning_content: "第二段" }));
+    expect(e1[0]!.reasoningContent).toBe("第一段");
+    expect(e2[0]!.reasoningContent).toBe("第二段");
+  });
+
+  it("全空块（无 content / 无 reasoning / 无 finish）应被丢弃", () => {
+    const mapper = new DeepSeekEventMapper();
+    const events = mapper.mapEvent(makeChunk({}));
+    expect(events).toHaveLength(0);
   });
 });

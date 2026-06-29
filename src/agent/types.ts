@@ -8,6 +8,7 @@ import type { ToolResult } from "../tool/types.js";
 /** Agent 事件 — Session.chat() 流式输出的每一步 */
 export type AgentEvent =
   | { type: "text_delta"; content: string }
+  | { type: "reasoning_delta"; content: string }
   | { type: "tool_calls"; calls: ProviderToolCall[] }
   | { type: "tool_result"; name: string; result: ToolResult }
   | { type: "usage"; usage: UsageInfo; model: string; cost?: number; estimated?: boolean }
@@ -21,12 +22,7 @@ export type MessageRole = "system" | "user" | "assistant" | "tool";
 export type SessionMode = "code" | "plan";
 
 /** 会话状态：空闲 / 思考中 / 流式输出中 / 工具调用中 / 出错 */
-export type SessionPhase =
-  | "idle"
-  | "thinking"
-  | "streaming"
-  | "tool_calling"
-  | "error";
+export type SessionPhase = "idle" | "thinking" | "streaming" | "tool_calling" | "error";
 
 /** 单个工具的描述（用于注入 system prompt） */
 export interface ToolDescription {

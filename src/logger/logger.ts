@@ -124,7 +124,9 @@ export class ConversationLogger {
     this.#queueLen++;
     this.#queue = this.#queue
       .then(() => this.#writeBlock(enriched))
-      .catch(() => { /* 日志写入失败静默忽略 */ })
+      .catch(() => {
+        /* 日志写入失败静默忽略 */
+      })
       .finally(() => this.#queueLen--);
   }
 
@@ -165,6 +167,11 @@ export class ConversationLogger {
   /** 记录助手文本（一轮中模型输出的完整文本） */
   logAssistantText(content: string, round: number): void {
     this.log({ ts: Date.now(), type: "assistant_text", content, round });
+  }
+
+  /** 记录思考链（thinking 模式下模型的 CoT） */
+  logReasoning(content: string, round: number): void {
+    this.log({ ts: Date.now(), type: "reasoning", content, round });
   }
 
   /** 记录工具调用 */
@@ -232,7 +239,9 @@ export class ConversationLogger {
   }
 
   /** 记录反射（工具失败归因注入到下一轮 prompt 时） */
-  logReflections(items: Array<{ category: string; toolName: string; hint: string }>): void {
+  logReflections(
+    items: Array<{ category: string; toolName: string; hint: string }>,
+  ): void {
     this.log({ ts: Date.now(), type: "reflection", items });
   }
 }
@@ -317,7 +326,10 @@ function captureCallerLocation(): { file: string; line: number } {
 
     // 跳过 logger 目录内部的帧
     const normalized = filePath.replace(/^file:\/\/\//, "").replace(/^file:\/\//, "");
-    if (normalized.includes(`${sep}${LOGGER_DIR}${sep}`) || normalized.endsWith(`${sep}${LOGGER_DIR}`)) {
+    if (
+      normalized.includes(`${sep}${LOGGER_DIR}${sep}`) ||
+      normalized.endsWith(`${sep}${LOGGER_DIR}`)
+    ) {
       continue;
     }
     // 跳过 node_modules

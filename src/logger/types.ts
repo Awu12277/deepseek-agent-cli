@@ -50,6 +50,15 @@ export interface AssistantTextEvent extends LogEventBase {
   round: number;
 }
 
+/** 思考链 — thinking 模式下一轮中模型输出的完整 CoT（与 assistant_text 互斥） */
+export interface ReasoningEvent extends LogEventBase {
+  type: "reasoning";
+  /** 思考链文本 */
+  content: string;
+  /** 当前工具调用轮次（0 起始） */
+  round: number;
+}
+
 /** 工具调用 — 模型请求执行的工具 */
 export interface ToolCallEvent extends LogEventBase {
   type: "tool_call";
@@ -143,6 +152,7 @@ export type LogEvent =
   | SessionStartEvent
   | UserMessageEvent
   | AssistantTextEvent
+  | ReasoningEvent
   | ToolCallEvent
   | ToolResultEvent
   | UsageEvent

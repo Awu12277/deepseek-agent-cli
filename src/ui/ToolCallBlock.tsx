@@ -46,15 +46,15 @@ export function ToolCallBlock({ call, showPendingHint = true }: ToolCallBlockPro
   return (
     <Box flexDirection="column" marginLeft={3} marginTop={1}>
       <Box>
-        <Text color="#00ffff" bold>📦 {call.name}</Text>
-        <Text color="#555555"> {"─".repeat(Math.max(1, 30 - call.name.length))}</Text>
+        <Text dimColor>📦 {call.name}</Text>
+        <Text dimColor> {"─".repeat(Math.max(1, 30 - call.name.length))}</Text>
       </Box>
       <Box flexDirection="column">
-        <Text color="#888888">{argsDisplay}</Text>
+        <Text dimColor>{argsDisplay}</Text>
       </Box>
       {showPendingHint && (
         <Box>
-          <Text color="yellow">⏳ 等待执行</Text>
+          <Text dimColor>⏳ 等待执行</Text>
         </Box>
       )}
     </Box>

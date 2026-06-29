@@ -7,7 +7,11 @@ import type { Provider, ChatChunk, ChatMessage } from "../src/provider/index.js"
 import type { AgentEvent } from "../src/agent/types.js";
 import { Session } from "../src/agent/index.js";
 import { buildSystemPrompt } from "../src/agent/system-prompt.js";
-import { trimMessages, buildApiMessages, formatUsageSummary } from "../src/agent/message-builder.js";
+import {
+  trimMessages,
+  buildApiMessages,
+  formatUsageSummary,
+} from "../src/agent/message-builder.js";
 import { CostTracker } from "../src/provider/cost-tracker.js";
 
 // ---------------------------------------------------------------------------
@@ -15,12 +19,18 @@ import { CostTracker } from "../src/provider/cost-tracker.js";
 // ---------------------------------------------------------------------------
 
 /** 创建一个 mock Provider，返回预设的流式 chunks */
-function createMockProvider(chunks: ChatChunk[], modelId = "deepseek-v4-flash"): Provider {
+function createMockProvider(
+  chunks: ChatChunk[],
+  modelId = "deepseek-v4-flash",
+): Provider {
   return {
     name: "mock",
     model: () => modelId,
     countTokens: (text: string) => Math.ceil(text.length / 3),
-    chat: async function* (_messages: ChatMessage[], _opts?: unknown): AsyncIterable<ChatChunk> {
+    chat: async function* (
+      _messages: ChatMessage[],
+      _opts?: unknown,
+    ): AsyncIterable<ChatChunk> {
       for (const chunk of chunks) {
         yield chunk;
       }
@@ -172,9 +182,7 @@ describe("trimMessages", () => {
   });
 
   it("保留 system prompt 空间", () => {
-    const messages: ChatMessage[] = [
-      { role: "user", content: "short" },
-    ];
+    const messages: ChatMessage[] = [{ role: "user", content: "short" }];
 
     const prompt = "sys";
     const [trimmed] = trimMessages(messages, {
@@ -278,7 +286,10 @@ describe("Session", () => {
       name: "mock",
       model: () => "deepseek-v4-flash",
       countTokens: (text: string) => Math.ceil(text.length / 3),
-      chat: async function* (_messages: ChatMessage[], _opts?: unknown): AsyncIterable<ChatChunk> {
+      chat: async function* (
+        _messages: ChatMessage[],
+        _opts?: unknown,
+      ): AsyncIterable<ChatChunk> {
         callCount++;
         if (callCount === 1) {
           // 第一轮：返回工具调用
@@ -361,9 +372,7 @@ describe("Session", () => {
   });
 
   it("reset 清空消息历史", async () => {
-    const chunks: ChatChunk[] = [
-      { content: "好的", finishReason: "stop" },
-    ];
+    const chunks: ChatChunk[] = [{ content: "好的", finishReason: "stop" }];
 
     const provider = createMockProvider(chunks);
     const session = new Session(provider, [], costTracker);
@@ -381,13 +390,9 @@ describe("Session", () => {
 
   it("多轮对话保持上下文", async () => {
     // 第一轮
-    const chunks1: ChatChunk[] = [
-      { content: "你好", finishReason: "stop" },
-    ];
+    const chunks1: ChatChunk[] = [{ content: "你好", finishReason: "stop" }];
     // 第二轮
-    const chunks2: ChatChunk[] = [
-      { content: "当然可以", finishReason: "stop" },
-    ];
+    const chunks2: ChatChunk[] = [{ content: "当然可以", finishReason: "stop" }];
 
     let callCount = 0;
     const multiProvider: Provider = {
@@ -421,5 +426,109 @@ describe("Session", () => {
     expect(session.messages[1].role).toBe("assistant");
     expect(session.messages[2].role).toBe("user");
     expect(session.messages[3].role).toBe("assistant");
+  });
+
+  it("应将 reasoning_content 转译为 reasoning_delta 事件", async () => {
+    // thinking 模式下模型会同时返回 reasoning_content 和 content。
+    // 验证 Session 不会把 reasoning 和 content 混在同一个 text_delta 里。
+    const chunks: ChatChunk[] = [
+      { content: "", reasoningContent: "让我先思考", finishReason: null },
+      { content: "", reasoningContent: "一下这个问题", finishReason: null },
+      { content: "答案是 42", finishReason: "stop" },
+      {
+        content: "",
+        finishReason: null,
+        usage: { promptTokens: 10, completionTokens: 20 },
+      },
+    ];
+
+    const provider = createMockProvider(chunks);
+    const session = new Session(provider, [], costTracker);
+
+    const events: AgentEvent[] = [];
+    for await (const event of session.chat("9.11 和 9.8 哪个大？")) {
+      events.push(event);
+    }
+
+    const reasoningDeltas = events.filter((e) => e.type === "reasoning_delta");
+    expect(reasoningDeltas).toHaveLength(2);
+    if (reasoningDeltas[0] && reasoningDeltas[0].type === "reasoning_delta") {
+      expect(reasoningDeltas[0].content).toBe("让我先思考");
+    }
+    if (reasoningDeltas[1] && reasoningDeltas[1].type === "reasoning_delta") {
+      expect(reasoningDeltas[1].content).toBe("一下这个问题");
+    }
+
+    const textDeltas = events.filter((e) => e.type === "text_delta");
+    expect(textDeltas).toHaveLength(1);
+    if (textDeltas[0] && textDeltas[0].type === "text_delta") {
+      expect(textDeltas[0].content).toBe("答案是 42");
+    }
+
+    // 消息历史只存最终答案，不污染 CoT
+    expect(session.messages).toHaveLength(2);
+    const assistant = session.messages[1]!;
+    expect(assistant.role).toBe("assistant");
+    expect(assistant.content).toBe("答案是 42");
+  });
+
+  it("多轮思考：reasoning → tool_call → reasoning 都能被转译为独立 reasoning_delta 事件", async () => {
+    // 验证多轮推理 + 调工具场景下，每一段 CoT 都独立发出（不合并、不丢失）。
+    // 第一轮：reasoning1 + 调工具
+    // 第二轮：reasoning2 + 最终答案
+    let callCount = 0;
+    const provider: Provider = {
+      name: "mock",
+      model: () => "deepseek-v4-flash",
+      countTokens: (text: string) => Math.ceil(text.length / 3),
+      chat: async function* (_messages: ChatMessage[]) {
+        callCount++;
+        if (callCount === 1) {
+          yield { content: "", reasoningContent: "先调查项目结构", finishReason: null };
+          yield { content: "", reasoningContent: "，看看有哪些文件", finishReason: null };
+          yield {
+            content: "",
+            finishReason: "tool_calls",
+            toolCalls: [{ id: "call_1", name: "ls", arguments: '{"path":"."}' }],
+          };
+          yield {
+            content: "",
+            finishReason: null,
+            usage: { promptTokens: 10, completionTokens: 5 },
+          };
+        } else {
+          yield { content: "", reasoningContent: "看完结果后总结：", finishReason: null };
+          yield { content: "项目共 5 个源文件", finishReason: "stop" };
+          yield {
+            content: "",
+            finishReason: null,
+            usage: { promptTokens: 30, completionTokens: 10 },
+          };
+        }
+      },
+    };
+
+    const session = new Session(provider, [], costTracker);
+    const events: AgentEvent[] = [];
+    for await (const event of session.chat("看看项目结构")) {
+      events.push(event);
+    }
+
+    // 3 个 reasoning_delta 独立发出
+    const reasoningDeltas = events
+      .filter(
+        (e): e is { type: "reasoning_delta"; content: string } =>
+          e.type === "reasoning_delta",
+      )
+      .map((e) => e.content);
+    expect(reasoningDeltas).toEqual([
+      "先调查项目结构",
+      "，看看有哪些文件",
+      "看完结果后总结：",
+    ]);
+
+    // 调了 1 次工具
+    expect(events.filter((e) => e.type === "tool_calls")).toHaveLength(1);
+    expect(events.filter((e) => e.type === "tool_result")).toHaveLength(1);
   });
 });

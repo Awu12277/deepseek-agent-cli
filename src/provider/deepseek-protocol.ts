@@ -123,6 +123,11 @@ export interface DeepSeekStreamChoice {
 
 export interface DeepSeekStreamDelta {
   content?: string;
+  /**
+   * 思考链（CoT）增量，仅在 thinking 模式启用时返回。
+   * 与 content 处于同一层级，但语义上是模型的"内心独白"，最终答案在 content 中。
+   */
+  reasoning_content?: string;
   tool_calls?: DeepSeekToolCallChunk[];
 }
 

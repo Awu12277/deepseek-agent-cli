@@ -66,6 +66,11 @@ export interface ProviderToolCall {
 export interface ChatChunk {
   /** 文本内容增量（可能为空字符串） */
   content: string;
+  /**
+   * 思考链（CoT）增量，仅在 thinking 模式启用时返回。
+   * 与 content 平级，用于在 UI 上展示模型的推理过程。
+   */
+  reasoningContent?: string;
   /** 完成原因：stop=正常结束，tool_calls=需要调用工具，length=达到最大长度 */
   finishReason: "stop" | "tool_calls" | "length" | null;
   /** 工具调用列表（finishReason 为 tool_calls 时包含完整调用信息） */

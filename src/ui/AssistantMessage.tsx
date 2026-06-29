@@ -13,6 +13,11 @@ import { HighlightedText } from "./HighlightedText.js";
 interface AssistantMessageProps {
   /** 助手回复的文本内容 */
   content: string;
+  /**
+   * 思考链段列表（thinking 模式的 CoT），可选。
+   * 一个回合可能包含多段 CoT（多轮“思考→调工具”），每段独立成块展示。
+   */
+  reasoning?: string[];
   /** 工具调用列表 */
   toolCalls?: ProviderToolCall[];
   /** 是否正在流式输出中 */
@@ -42,8 +47,7 @@ function formatElapsed(ms: number): string {
  * 当 target ≤ displayed 时直接跳到目标（支持估算/真实值互相覆盖）。
  */
 function AnimatedUsage({ usage, cost }: { usage?: UsageInfo; cost?: number }) {
-  const targetTokens =
-    usage ? usage.promptTokens + usage.completionTokens : 0;
+  const targetTokens = usage ? usage.promptTokens + usage.completionTokens : 0;
   const targetCost = cost ?? 0;
 
   // 初次进入时直接定位到首帧，避免从 0 长动画
@@ -73,10 +77,7 @@ function AnimatedUsage({ usage, cost }: { usage?: UsageInfo; cost?: number }) {
 
     // 目标值 ≤ 当前显示值（例：真实 usage 覆盖估算值，且可能偏低）
     // 或首次进入 → 直接跳到目标
-    if (
-      targetTokens <= displayedTokens &&
-      targetCost <= displayedCost
-    ) {
+    if (targetTokens <= displayedTokens && targetCost <= displayedCost) {
       setDisplayedTokens(targetTokens);
       setDisplayedCost(targetCost);
       startRef.current = {
@@ -93,10 +94,7 @@ function AnimatedUsage({ usage, cost }: { usage?: UsageInfo; cost?: number }) {
     // 按变化量粗略估算动画时长：300ms 节流周期 + 少许渐变
     const tokensDelta = targetTokens - displayedTokens;
     const costDelta = targetCost - displayedCost;
-    const durationMs = Math.min(
-      600,
-      Math.max(220, Math.max(tokensDelta, 0) * 1.2 + 220),
-    );
+    const durationMs = Math.min(600, Math.max(220, Math.max(tokensDelta, 0) * 1.2 + 220));
     startRef.current = {
       fromTokens: displayedTokens,
       fromCost: displayedCost,
@@ -142,13 +140,11 @@ function AnimatedUsage({ usage, cost }: { usage?: UsageInfo; cost?: number }) {
   return (
     <>
       {usage && (
-        <Text color="#888888">
-          {Math.round(displayedTokens).toLocaleString()} tokens
-        </Text>
+        <Text color="#888888">{Math.round(displayedTokens).toLocaleString()} tokens</Text>
       )}
       {cost !== undefined && cost > 0 && (
         <Text color="#888888">
-          {' · '}¥{displayedCost.toFixed(4)}
+          {" · "}¥{displayedCost.toFixed(4)}
         </Text>
       )}
     </>
@@ -168,6 +164,7 @@ function AnimatedUsage({ usage, cost }: { usage?: UsageInfo; cost?: number }) {
  */
 export function AssistantMessage({
   content,
+  reasoning,
   toolCalls,
   isStreaming = false,
   usage,
@@ -175,25 +172,53 @@ export function AssistantMessage({
   cost,
   model: _model,
 }: AssistantMessageProps) {
-  // 内容为空且无工具调用时不渲染
-  if (!content && (!toolCalls || toolCalls.length === 0) && !isStreaming) {
+  // 内容为空且无工具调用且无思考链时不渲染
+  if (
+    !content &&
+    (!toolCalls || toolCalls.length === 0) &&
+    (!reasoning || reasoning.length === 0) &&
+    !isStreaming
+  ) {
     return null;
   }
 
   return (
     <Box flexDirection="column" marginTop={1}>
+      {/* 思考链：每个独立段都以暗色小字块展示，区分“内心独白”和“最终答案” */}
+      {reasoning &&
+        reasoning.length > 0 &&
+        reasoning.map((seg, idx) => (
+          <Box key={idx} flexDirection="row" marginBottom={1}>
+            <Box width={4} flexShrink={0}>
+              <Text dimColor>{"🧠"}</Text>
+            </Box>
+            <Box
+              flexGrow={1}
+              flexDirection="column"
+              borderStyle="single"
+              borderColor="#444444"
+              paddingLeft={1}
+              paddingRight={1}
+            >
+              <Text dimColor wrap="wrap">
+                {seg}
+              </Text>
+            </Box>
+          </Box>
+        ))}
+
       {/* 助手标识 + 内容 */}
       <Box flexDirection="row">
         <Box width={4} flexShrink={0}>
-          <Text bold color="#ff00ff">{"🤖"}</Text>
+          <Text bold color="#ff00ff">
+            {"🤖"}
+          </Text>
         </Box>
         <Box flexGrow={1} flexDirection="column">
           {/* 文本内容（带语法高亮） */}
-          {content && (
-            <HighlightedText>{content}</HighlightedText>
-          )}
+          {content && <HighlightedText>{content}</HighlightedText>}
           {/* 流式输出时的光标 */}
-          {isStreaming && !content && (
+          {isStreaming && !content && (!reasoning || reasoning.length === 0) && (
             <Text color="#888888">...</Text>
           )}
         </Box>
@@ -212,8 +237,7 @@ export function AssistantMessage({
       {isStreaming && (usage || cost !== undefined) && (
         <Box flexDirection="row" marginTop={1} marginLeft={3}>
           <Text color="#666666" dimColor>
-            ⏳ 已消耗{' '}
-            <AnimatedUsage usage={usage} cost={cost} />
+            ⏳ 已消耗 <AnimatedUsage usage={usage} cost={cost} />
           </Text>
         </Box>
       )}
@@ -224,20 +248,12 @@ export function AssistantMessage({
           <Text color="#555555">{"─".repeat(36)}</Text>
           <Box flexDirection="row" gap={2}>
             {cost !== undefined && cost > 0 && (
-              <Text color="yellow">
-                💰 本次 {formatMoney(cost)}
-              </Text>
+              <Text color="yellow">💰 本次 {formatMoney(cost)}</Text>
             )}
             {elapsed !== undefined && (
-              <Text color="cyan">
-                🕐 {formatElapsed(elapsed)}
-              </Text>
+              <Text color="cyan">🕐 {formatElapsed(elapsed)}</Text>
             )}
-            {usage && (
-              <Text color="#888888">
-                {formatUsageSummary(usage)}
-              </Text>
-            )}
+            {usage && <Text color="#888888">{formatUsageSummary(usage)}</Text>}
           </Box>
         </Box>
       )}

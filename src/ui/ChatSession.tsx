@@ -17,7 +17,11 @@ import { CostTracker } from "../provider/cost-tracker.js";
 import type { ModelId, ProviderToolCall, UsageInfo } from "../provider/index.js";
 import type { FileDiff } from "../tool/types.js";
 import { createProvider } from "../provider/index.js";
-import { Session, type MessageCheckpointInfo, type RewindResult } from "../agent/index.js";
+import {
+  Session,
+  type MessageCheckpointInfo,
+  type RewindResult,
+} from "../agent/index.js";
 import type { SessionMode } from "../agent/types.js";
 import { builtinTools } from "../tool/index.js";
 import { ToolRegistry } from "../tool/registry.js";
@@ -41,7 +45,12 @@ const PHASE_CONFIG = {
 
 /** 判断工具名是否属于会修改文件系统的类（用于决定 rewind 提示是否出现） */
 export function isFileMutatingTool(name: string): boolean {
-  return name === "edit_file" || name === "write_file" || name === "multi_edit" || name === "delete_range";
+  return (
+    name === "edit_file" ||
+    name === "write_file" ||
+    name === "multi_edit" ||
+    name === "delete_range"
+  );
 }
 
 /** 命令处理结果的类型，支持文本响应和动作跳转 */
@@ -84,15 +93,46 @@ registerCommand("/help", {
   },
 });
 registerCommand("/clear", { desc: "清空对话历史", handler: () => ({ kind: "clear" }) });
-registerCommand("/version", { desc: "显示版本信息", handler: () => ({ kind: "text", content: "dskcode v0.1.10" }) });
-registerCommand("/model", { desc: "切换模型", handler: () => ({ kind: "text", content: "请直接输入 /model 进入选择界面" }) });
-registerCommand("/thinking", { desc: "切换深度思考模式", handler: () => ({ kind: "text", content: "请直接输入 /thinking 切换" }) });
-registerCommand("/effort", { desc: "切换推理等级 High/Max", handler: () => ({ kind: "text", content: "请直接输入 /effort 切换" }) });
-registerCommand("/game", { desc: "启动游戏", handler: () => ({ kind: "navigate", target: "game" }) });
-registerCommand("/stock", { desc: "查看股票行情", handler: () => ({ kind: "navigate", target: "stock" }) });
-registerCommand("/plan", { desc: "切换为计划模式（Shift+Tab）", handler: () => ({ kind: "text", content: "输入 /plan 或按 Shift+Tab 切换为计划模式" }) });
-registerCommand("/code", { desc: "切换回代码模式（Shift+Tab）", handler: () => ({ kind: "text", content: "输入 /code 或按 Shift+Tab 切换回代码模式" }) });
-registerCommand("/rewind", { desc: "回退到历史检查点（1 = 最新）", handler: () => ({ kind: "text", content: "请直接输入 /rewind 查看可回退的检查点列表，或 /rewind <序号> 直接回退（1 = 最新，2 = 上一次，依此类推）" }) });
+registerCommand("/version", {
+  desc: "显示版本信息",
+  handler: () => ({ kind: "text", content: "dskcode v0.1.10" }),
+});
+registerCommand("/model", {
+  desc: "切换模型",
+  handler: () => ({ kind: "text", content: "请直接输入 /model 进入选择界面" }),
+});
+registerCommand("/thinking", {
+  desc: "切换深度思考模式",
+  handler: () => ({ kind: "text", content: "请直接输入 /thinking 切换" }),
+});
+registerCommand("/effort", {
+  desc: "切换推理等级 High/Max",
+  handler: () => ({ kind: "text", content: "请直接输入 /effort 切换" }),
+});
+registerCommand("/game", {
+  desc: "启动游戏",
+  handler: () => ({ kind: "navigate", target: "game" }),
+});
+registerCommand("/stock", {
+  desc: "查看股票行情",
+  handler: () => ({ kind: "navigate", target: "stock" }),
+});
+registerCommand("/plan", {
+  desc: "切换为计划模式（Shift+Tab）",
+  handler: () => ({ kind: "text", content: "输入 /plan 或按 Shift+Tab 切换为计划模式" }),
+});
+registerCommand("/code", {
+  desc: "切换回代码模式（Shift+Tab）",
+  handler: () => ({ kind: "text", content: "输入 /code 或按 Shift+Tab 切换回代码模式" }),
+});
+registerCommand("/rewind", {
+  desc: "回退到历史检查点（1 = 最新）",
+  handler: () => ({
+    kind: "text",
+    content:
+      "请直接输入 /rewind 查看可回退的检查点列表，或 /rewind <序号> 直接回退（1 = 最新，2 = 上一次，依此类推）",
+  }),
+});
 
 /** 流式输出时，输入框随机展示的占位符列表 */
 const STREAMING_PLACEHOLDERS = [
@@ -121,6 +161,11 @@ function pickRandom<T>(arr: readonly T[]): T {
 /** 单条已完成的助手消息 */
 interface CompletedAssistant {
   content: string;
+  /**
+   * 思考链段列表（thinking 模式的 CoT），可选。
+   * 模型一轮内可能经历多轮“思考→调工具”，每一段都保留在这里。
+   */
+  reasoning?: string[];
   toolCalls?: ProviderToolCall[];
   usage?: UsageInfo;
   elapsed?: number;
@@ -167,7 +212,8 @@ export function ChatSession({
   onLaunchGame,
   onLaunchStock,
 }: ChatSessionProps) {
-  const termWidth = typeof process.stdout.columns === "number" ? process.stdout.columns : 80;
+  const termWidth =
+    typeof process.stdout.columns === "number" ? process.stdout.columns : 80;
   const dividerWidth = Math.max(termWidth - 2, 1);
 
   const [offset, setOffset] = useState(0);
@@ -180,14 +226,23 @@ export function ChatSession({
 
   // 流式状态
   const [isStreaming, setIsStreaming] = useState(false);
-  const [streamingPhase, setStreamingPhase] = useState<"thinking" | "generating" | "calling_tools" | "executing_tools" | null>(null);
+  const [streamingPhase, setStreamingPhase] = useState<
+    "thinking" | "generating" | "calling_tools" | "executing_tools" | null
+  >(null);
   const [streamingPlaceholder, setStreamingPlaceholder] = useState("");
-  const [idlePlaceholder, setIdlePlaceholder] = useState(() => pickRandom(IDLE_PLACEHOLDERS));
+  const [idlePlaceholder, setIdlePlaceholder] = useState(() =>
+    pickRandom(IDLE_PLACEHOLDERS),
+  );
   const [gradientColors, setGradientColors] = useState<string[]>([]);
   const gradientPhaseRef = useRef(0);
   const [streamingGradientColors, setStreamingGradientColors] = useState<string[]>([]);
   const streamingPhaseRef = useRef(0);
   const [currentContent, setCurrentContent] = useState("");
+  /**
+   * 本轮已累积的思考链段列表。一轮内可能经历多轮“思考→调工具→思考”，
+   * 每一段都 push 到这里，避免被后一段覆盖。
+   */
+  const [currentReasoning, setCurrentReasoning] = useState<string[]>([]);
   const [currentToolCalls, setCurrentToolCalls] = useState<ProviderToolCall[]>([]);
   const [_currentUsage, setCurrentUsage] = useState<UsageInfo | undefined>(undefined);
   const [_currentElapsed, setCurrentElapsed] = useState<number | undefined>(undefined);
@@ -204,7 +259,9 @@ export function ChatSession({
   const [thinkingEnabled, setThinkingEnabled] = useState(true);
   const [thinkingEffort, setThinkingEffort] = useState<"high" | "max">("high");
   const [responseFormat] = useState<"text" | "json_object">("text");
-  const [toolChoice, setToolChoice] = useState<"auto" | "required" | "none" | undefined>(undefined);
+  const [toolChoice, setToolChoice] = useState<"auto" | "required" | "none" | undefined>(
+    undefined,
+  );
 
   // 本次会话累计费用（从已完成的助手消息中汇总）
   const sessionCost = useMemo(() => {
@@ -242,7 +299,9 @@ export function ChatSession({
   // /rewind 提示：某轮对话修改了文件后，在原状态 loading 处显示「/rewind 1 可撤回本次修改」。
   // 三阶段：idle（不显示）→ pending（流式刚结束，等 2s）→ visible（展示提示）
   // 提示一旦出现会一直保留到下次对话开始，不会被用户输入打断。
-  const [rewindHintPhase, setRewindHintPhase] = useState<"idle" | "pending" | "visible">("idle");
+  const [rewindHintPhase, setRewindHintPhase] = useState<"idle" | "pending" | "visible">(
+    "idle",
+  );
   // 本轮是否触发了文件修改类工具调用（edit_file/write_file/multi_edit/delete_range）
   const currentRoundModifiedRef = useRef(false);
   // 提示计时器句柄
@@ -259,6 +318,7 @@ export function ChatSession({
 
   // 用 ref 跟踪流式内容的最新值，以便 finally 块能获取非闭包过期的值
   const currentContentRef = useRef("");
+  const currentReasoningRef = useRef<string[]>([]);
   const currentToolCallsRef = useRef<ProviderToolCall[]>([]);
   const currentUsageRef = useRef<UsageInfo | undefined>(undefined);
   const currentElapsedRef = useRef<number | undefined>(undefined);
@@ -343,42 +403,50 @@ export function ChatSession({
     setStaticKey((prev) => prev + 1);
   }
 
-  const doRewind = useCallback(async (target: MessageCheckpointInfo, displayNumber: number) => {
-    const session = sessionRef.current;
-    if (!session) return;
-    setRewinding(true);
-    setIsStreaming(true);
-    setStreamingPhase("thinking");
-    setStreamingPlaceholder("⏪ 正在回退到检查点…");
-    setInput("");
-    try {
-      const r: RewindResult = await session.rewind(target.index);
-      if (r.ok) {
-        rebuildDisplayFromSession(session);
-        const tail = r.fileRestored ? "，工作区文件已恢复" : "（仅对话回退，未恢复文件）";
+  const doRewind = useCallback(
+    async (target: MessageCheckpointInfo, displayNumber: number) => {
+      const session = sessionRef.current;
+      if (!session) return;
+      setRewinding(true);
+      setIsStreaming(true);
+      setStreamingPhase("thinking");
+      setStreamingPlaceholder("⏪ 正在回退到检查点…");
+      setInput("");
+      try {
+        const r: RewindResult = await session.rewind(target.index);
+        if (r.ok) {
+          rebuildDisplayFromSession(session);
+          const tail = r.fileRestored
+            ? "，工作区文件已恢复"
+            : "（仅对话回退，未恢复文件）";
+          setDisplayMessages((prev) => [
+            ...prev,
+            {
+              role: "assistant",
+              content: `⏪ 已回退到检查点 #${displayNumber}${tail}。`,
+            },
+          ]);
+        } else {
+          setDisplayMessages((prev) => [
+            ...prev,
+            { role: "assistant", content: `⚠ 回退失败：${r.error}` },
+          ]);
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
         setDisplayMessages((prev) => [
           ...prev,
-          { role: "assistant", content: `⏪ 已回退到检查点 #${displayNumber}${tail}。` },
+          { role: "assistant", content: `⚠ 回退异常：${msg}` },
         ]);
-      } else {
-        setDisplayMessages((prev) => [
-          ...prev,
-          { role: "assistant", content: `⚠ 回退失败：${r.error}` },
-        ]);
+      } finally {
+        setRewinding(false);
+        setIsStreaming(false);
+        setStreamingPhase(null);
+        setStreamingPlaceholder("");
       }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setDisplayMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: `⚠ 回退异常：${msg}` },
-      ]);
-    } finally {
-      setRewinding(false);
-      setIsStreaming(false);
-      setStreamingPhase(null);
-      setStreamingPlaceholder("");
-    }
-  }, []);
+    },
+    [],
+  );
 
   const { doubleCtrlC, handleCtrlC } = useDoubleCtrlC(() => {
     // 双击 Ctrl+C 退出进程 — 先刷新日志再退出
@@ -397,7 +465,9 @@ export function ChatSession({
         // /rewind 选择模式
         if (rewindSelecting) {
           if (key.upArrow) {
-            setRewindSelectIndex((prev) => (prev - 1 + rewindList.length) % rewindList.length);
+            setRewindSelectIndex(
+              (prev) => (prev - 1 + rewindList.length) % rewindList.length,
+            );
           } else if (key.downArrow) {
             setRewindSelectIndex((prev) => (prev + 1) % rewindList.length);
           } else if (key.return) {
@@ -419,7 +489,9 @@ export function ChatSession({
         // 模型选择模式
         if (selectingModel) {
           if (key.upArrow) {
-            setModelSelectIndex((prev) => (prev - 1 + modelOptions.length) % modelOptions.length);
+            setModelSelectIndex(
+              (prev) => (prev - 1 + modelOptions.length) % modelOptions.length,
+            );
           } else if (key.downArrow) {
             setModelSelectIndex((prev) => (prev + 1) % modelOptions.length);
           } else if (key.return) {
@@ -427,7 +499,10 @@ export function ChatSession({
             if (selected === activeModel) {
               setDisplayMessages((prev) => [
                 ...prev,
-                { role: "assistant", content: `已经在使用 ${SUPPORTED_MODELS[selected].displayName}` },
+                {
+                  role: "assistant",
+                  content: `已经在使用 ${SUPPORTED_MODELS[selected].displayName}`,
+                },
               ]);
             } else {
               // 切换模型：持久化到配置 + 重置 Session
@@ -438,7 +513,10 @@ export function ChatSession({
               });
               setDisplayMessages((prev) => [
                 ...prev,
-                { role: "assistant", content: `模型已切换为 ${SUPPORTED_MODELS[selected].displayName}（${selected}）` },
+                {
+                  role: "assistant",
+                  content: `模型已切换为 ${SUPPORTED_MODELS[selected].displayName}（${selected}）`,
+                },
               ]);
             }
             setSelectingModel(false);
@@ -478,7 +556,9 @@ export function ChatSession({
 
         if (skillList.length > 0) {
           if (key.upArrow) {
-            setSkillSelectIndex((prev) => (prev - 1 + skillList.length) % skillList.length);
+            setSkillSelectIndex(
+              (prev) => (prev - 1 + skillList.length) % skillList.length,
+            );
             return;
           }
           if (key.downArrow) {
@@ -529,9 +609,12 @@ export function ChatSession({
             sessionRef.current?.reset();
             setDisplayMessages((prev) => [
               ...prev,
-              { role: "assistant", content: newMode === "plan"
-                ? "📋 已切换为 **计划模式**（Shift+Tab）\n\n在此模式下，我只能读取和分析代码，不会执行任何修改。"
-                : "🛠 已切换为 **代码模式**（Shift+Tab）\n\n现在可以正常读取和修改代码了。",
+              {
+                role: "assistant",
+                content:
+                  newMode === "plan"
+                    ? "📋 已切换为 **计划模式**（Shift+Tab）\n\n在此模式下，我只能读取和分析代码，不会执行任何修改。"
+                    : "🛠 已切换为 **代码模式**（Shift+Tab）\n\n现在可以正常读取和修改代码了。",
               },
             ]);
           }
@@ -543,7 +626,26 @@ export function ChatSession({
           setInput(_input);
         }
       },
-      [selectingModel, modelSelectIndex, modelOptions, activeModel, isStreaming, handleCtrlC, input, skills, skillSelectIndex, fileSelectIndex, getFilteredSkills, getFilteredFiles, sessionMode, setSessionMode, rewindSelecting, rewindSelectIndex, rewindList, doRewind]
+      [
+        selectingModel,
+        modelSelectIndex,
+        modelOptions,
+        activeModel,
+        isStreaming,
+        handleCtrlC,
+        input,
+        skills,
+        skillSelectIndex,
+        fileSelectIndex,
+        getFilteredSkills,
+        getFilteredFiles,
+        sessionMode,
+        setSessionMode,
+        rewindSelecting,
+        rewindSelectIndex,
+        rewindList,
+        doRewind,
+      ],
     ),
   );
 
@@ -568,9 +670,12 @@ export function ChatSession({
     setCmdTipGradientColors(getGradientColors(text, 1, CMD_TIP_GRADIENT_STOPS));
 
     const interval = setInterval(() => {
-      cmdTipPhaseRef.current = (cmdTipPhaseRef.current + GRADIENT_ANIMATION.cmdTipPhaseStep) % 1;
+      cmdTipPhaseRef.current =
+        (cmdTipPhaseRef.current + GRADIENT_ANIMATION.cmdTipPhaseStep) % 1;
       // 反向 phase 使色彩从左到右流动
-      setCmdTipGradientColors(getGradientColors(text, 1 - cmdTipPhaseRef.current, CMD_TIP_GRADIENT_STOPS));
+      setCmdTipGradientColors(
+        getGradientColors(text, 1 - cmdTipPhaseRef.current, CMD_TIP_GRADIENT_STOPS),
+      );
     }, GRADIENT_ANIMATION.cmdTipInterval);
 
     return () => clearInterval(interval);
@@ -614,25 +719,31 @@ export function ChatSession({
     if (!apiKey || !baseUrl) return;
     let cancelled = false;
     setBalanceLoading(true);
-    import("../provider/deepseek.js").then(({ DeepSeekProvider }) => {
-      const provider = new DeepSeekProvider({
-        apiKey,
-        baseUrl,
-        model: "deepseek-v4-flash",
+    import("../provider/deepseek.js")
+      .then(({ DeepSeekProvider }) => {
+        const provider = new DeepSeekProvider({
+          apiKey,
+          baseUrl,
+          model: "deepseek-v4-flash",
+        });
+        return provider.getBalance();
+      })
+      .then((result) => {
+        if (cancelled) return;
+        const cny = result.balances.find((b) => b.currency === "CNY");
+        if (cny) {
+          setBalance(cny.totalBalance);
+        }
+      })
+      .catch(() => {
+        // 查询失败静默处理，不影响主流程
+      })
+      .finally(() => {
+        if (!cancelled) setBalanceLoading(false);
       });
-      return provider.getBalance();
-    }).then((result) => {
-      if (cancelled) return;
-      const cny = result.balances.find((b) => b.currency === "CNY");
-      if (cny) {
-        setBalance(cny.totalBalance);
-      }
-    }).catch(() => {
-      // 查询失败静默处理，不影响主流程
-    }).finally(() => {
-      if (!cancelled) setBalanceLoading(false);
-    });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [apiKey, baseUrl]);
 
   // 加载今日消耗历史数据，并定时刷新
@@ -645,13 +756,16 @@ export function ChatSession({
       setTodayCost(externalCostTracker.todayTotalCost);
     };
 
-    externalCostTracker.load().then(() => {
-      if (cancelled) return;
-      refresh();
-      timer = setInterval(refresh, 5000);
-    }).catch(() => {
-      // 加载失败静默处理
-    });
+    externalCostTracker
+      .load()
+      .then(() => {
+        if (cancelled) return;
+        refresh();
+        timer = setInterval(refresh, 5000);
+      })
+      .catch(() => {
+        // 加载失败静默处理
+      });
 
     return () => {
       cancelled = true;
@@ -670,8 +784,15 @@ export function ChatSession({
     setGradientColors(getGradientColors(idlePlaceholder, 1, IDLE_GRADIENT_STOPS));
 
     const interval = setInterval(() => {
-      gradientPhaseRef.current = (gradientPhaseRef.current + GRADIENT_ANIMATION.idlePhaseStep) % 1;
-      setGradientColors(getGradientColors(idlePlaceholder, 1 - gradientPhaseRef.current, IDLE_GRADIENT_STOPS));
+      gradientPhaseRef.current =
+        (gradientPhaseRef.current + GRADIENT_ANIMATION.idlePhaseStep) % 1;
+      setGradientColors(
+        getGradientColors(
+          idlePlaceholder,
+          1 - gradientPhaseRef.current,
+          IDLE_GRADIENT_STOPS,
+        ),
+      );
     }, GRADIENT_ANIMATION.idleInterval);
 
     return () => clearInterval(interval);
@@ -685,426 +806,527 @@ export function ChatSession({
     }
 
     streamingPhaseRef.current = 0;
-    setStreamingGradientColors(getGradientColors(streamingPlaceholder, 1, STREAMING_GRADIENT_STOPS));
+    setStreamingGradientColors(
+      getGradientColors(streamingPlaceholder, 1, STREAMING_GRADIENT_STOPS),
+    );
 
     const interval = setInterval(() => {
-      streamingPhaseRef.current = (streamingPhaseRef.current + GRADIENT_ANIMATION.streamingPhaseStep) % 1;
-      setStreamingGradientColors(getGradientColors(streamingPlaceholder, 1 - streamingPhaseRef.current, STREAMING_GRADIENT_STOPS));
+      streamingPhaseRef.current =
+        (streamingPhaseRef.current + GRADIENT_ANIMATION.streamingPhaseStep) % 1;
+      setStreamingGradientColors(
+        getGradientColors(
+          streamingPlaceholder,
+          1 - streamingPhaseRef.current,
+          STREAMING_GRADIENT_STOPS,
+        ),
+      );
     }, GRADIENT_ANIMATION.streamingInterval);
 
     return () => clearInterval(interval);
   }, [isStreaming, streamingPlaceholder]);
 
   /** 处理用户输入 */
-  const handleSubmit = useCallback(async (value: string) => {
-    const trimmed = value.trim();
-    if (!trimmed) return;
+  const handleSubmit = useCallback(
+    async (value: string) => {
+      const trimmed = value.trim();
+      if (!trimmed) return;
 
-    // 处理斜杠命令
-    if (trimmed.startsWith("/") && trimmed.length > 1) {
-      const cmdLower = trimmed.toLowerCase();
+      // 处理斜杠命令
+      if (trimmed.startsWith("/") && trimmed.length > 1) {
+        const cmdLower = trimmed.toLowerCase();
 
-      // /rewind 命令：回退到历史检查点
-      if (cmdLower === "/rewind" || cmdLower.startsWith("/rewind ")) {
-        if (isStreaming || rewinding) {
-          const reason = rewinding ? "回退中" : "生成中";
-          setDisplayMessages((prev) => [
-            ...prev,
-            { role: "user", content: trimmed },
-            { role: "assistant", content: `⚠ 正在${reason}，请稍后再试 /rewind。` },
-          ]);
-          setInput("");
-          return;
-        }
-        if (!sessionRef.current) {
-          setDisplayMessages((prev) => [
-            ...prev,
-            { role: "user", content: trimmed },
-            { role: "assistant", content: "⚠ Session 未就绪，无法回退。" },
-          ]);
-          setInput("");
-          return;
-        }
-        const cps = sessionRef.current.listCheckpoints();
-        if (cps.length === 0) {
-          setDisplayMessages((prev) => [
-            ...prev,
-            { role: "user", content: trimmed },
-            { role: "assistant", content: "⚠ 没有可回退的检查点。\n只有在 git 仓库内且发生过对话后才会生成检查点。" },
-          ]);
-          setInput("");
-          return;
-        }
-        // /rewind <N>：1 表示最新（与 git reset HEAD~ 习惯一致），2 表示上一个，依次类推
-        const parts = trimmed.split(/\s+/);
-        if (parts.length >= 2) {
-          const n = Number(parts[1]);
-          if (!Number.isInteger(n) || n < 1 || n > cps.length) {
+        // /rewind 命令：回退到历史检查点
+        if (cmdLower === "/rewind" || cmdLower.startsWith("/rewind ")) {
+          if (isStreaming || rewinding) {
+            const reason = rewinding ? "回退中" : "生成中";
             setDisplayMessages((prev) => [
               ...prev,
               { role: "user", content: trimmed },
-              { role: "assistant", content: `⚠ 无效的序号「${parts[1]}」。可用范围 1~${cps.length}（1 表示最新）。` },
+              { role: "assistant", content: `⚠ 正在${reason}，请稍后再试 /rewind。` },
             ]);
             setInput("");
             return;
           }
-          // 将用户输入的 1-based "最新优先"序号转换为 cps 列表里的索引
-          const target = cps[cps.length - n]!;
-          setInput("");
-          await doRewind(target, n);
-          return;
-        }
-        // 无参数：进入选择模式。逆序展示（最新在第 1 位），默认选中最新
-        setRewindList([...cps].reverse());
-        setRewindSelectIndex(0);
-        setRewindSelecting(true);
-        setDisplayMessages((prev) => [
-          ...prev,
-          { role: "user", content: trimmed },
-          { role: "assistant", content: `⏷↑↓ 选择检查点，Enter 确认，Esc 取消（共 ${cps.length} 个可回退位置）` },
-        ]);
-        setInput("");
-        return;
-      }
-
-      // /model 命令：进入模型选择模式
-      if (cmdLower === "/model") {
-        const curIdx = modelOptions.indexOf(activeModel);
-        setModelSelectIndex(curIdx >= 0 ? curIdx : 0);
-        setSelectingModel(true);
-        setInput("");
-        return;
-      }
-
-      // /thinking 命令：切换深度思考
-      if (cmdLower === "/thinking") {
-        setThinkingEnabled((prev) => !prev);
-        setDisplayMessages((prev) => [
-          ...prev,
-          { role: "user", content: trimmed },
-          { role: "assistant", content: `深度思考已${thinkingEnabled ? "关闭" : "开启"}` },
-        ]);
-        setInput("");
-        return;
-      }
-
-      // /effort 命令：切换推理等级
-      if (cmdLower === "/effort") {
-        const next = thinkingEffort === "high" ? "max" : "high";
-        setThinkingEffort(next);
-        setDisplayMessages((prev) => [
-          ...prev,
-          { role: "user", content: trimmed },
-          { role: "assistant", content: `推理等级已切换为 ${next === "high" ? "High" : "Max"}` },
-        ]);
-        setInput("");
-        return;
-      }
-
-
-
-      // /plan 命令：切换为计划模式（只读分析，不能修改代码）
-      if (cmdLower === "/plan") {
-        if (sessionMode === "plan") {
-          setDisplayMessages((prev) => [
-            ...prev,
-            { role: "user", content: trimmed },
-            { role: "assistant", content: "已经在计划模式中。输入 /code 切回代码模式。" },
-          ]);
-        } else {
-          setSessionMode("plan");
-          sessionRef.current?.setMode("plan");
-          // 计划模式下自动启用工具调用，确保模型可以使用读工具
-          setToolChoice(undefined);
-          setDisplayMessages((prev) => [
-            ...prev,
-            { role: "user", content: trimmed },
-            { role: "assistant", content: "📋 已切换为 **计划模式**\n\n在此模式下，我只能读取和分析代码，不会执行任何修改。\n输入 /code 切回代码模式。" },
-          ]);
-          // 清空会话历史，防止旧模式下产生的工具调用消息干扰新模式
-          sessionRef.current?.reset();
-        }
-        setInput("");
-        return;
-      }
-
-      // /code 命令：切换回代码模式
-      if (cmdLower === "/code") {
-        if (sessionMode === "code") {
-          setDisplayMessages((prev) => [
-            ...prev,
-            { role: "user", content: trimmed },
-            { role: "assistant", content: "已经在代码模式中。输入 /plan 切回计划模式。" },
-          ]);
-        } else {
-          setSessionMode("code");
-          sessionRef.current?.setMode("code");
-          // 回到代码模式时重置工具调用策略，确保可以正常使用所有工具
-          setToolChoice(undefined);
-          setDisplayMessages((prev) => [
-            ...prev,
-            { role: "user", content: trimmed },
-            { role: "assistant", content: "🛠 已切换为 **代码模式**\n\n现在可以正常读取和修改代码了。\n输入 /plan 切换为计划模式（只读分析）。" },
-          ]);
-          // 清空会话历史，防止计划模式下产生的消息干扰代码模式
-          sessionRef.current?.reset();
-        }
-        setInput("");
-        return;
-      }
-
-      // /tools 命令：切换工具调用策略
-      if (cmdLower === "/tools") {
-        const next = toolChoice === undefined ? "none"
-          : toolChoice === "none" ? "required"
-          : toolChoice === "required" ? "auto"
-          : undefined;
-        setToolChoice(next);
-        const label = next === undefined ? "自动（默认）"
-          : next === "none" ? "禁止调用"
-          : next === "required" ? "强制调用"
-          : "自动（默认）";
-        setDisplayMessages((prev) => [
-          ...prev,
-          { role: "user", content: trimmed },
-          { role: "assistant", content: `工具调用策略已切换为 ${label}` },
-        ]);
-        setInput("");
-        return;
-      }
-
-      const cmd = commandRegistry.get(cmdLower);
-      if (cmd) {
-        const result = cmd.handler();
-
-        switch (result.kind) {
-          case "exit":
-            await sessionRef.current?.flushLog();
-            process.exit(0);
-            return;
-          case "clear":
-            // 清空所有会话状态，回到初始界面
-            setDisplayMessages([]);
-            setStaticKey((prev) => prev + 1);
-            setInput("");
-            setStreamError(undefined);
-            // 先清屏再清滚动区，确保终端完全重置
-            process.stdout.write("\x1b[2J\x1b[H\x1b[3J");
-            // 重置 Session 历史
-            sessionRef.current?.reset();
-            return;
-          case "navigate":
-            setInput("");
-            if (result.target === "game") {
-              onLaunchGame?.();
-            } else if (result.target === "stock") {
-              onLaunchStock?.();
-            }
-            return;
-          case "text":
+          if (!sessionRef.current) {
             setDisplayMessages((prev) => [
               ...prev,
               { role: "user", content: trimmed },
-              { role: "assistant", content: result.content },
+              { role: "assistant", content: "⚠ Session 未就绪，无法回退。" },
             ]);
             setInput("");
             return;
-        }
-      }
-      setDisplayMessages((prev) => [
-        ...prev,
-        { role: "user", content: trimmed },
-        { role: "assistant", content: `未知命令：${trimmed}。输入 /help 查看。` },
-      ]);
-      setInput("");
-      return;
-    }
-
-    // 检查 Session 是否就绪
-    if (!sessionRef.current) {
-      setDisplayMessages((prev) => [
-        ...prev,
-        { role: "user", content: trimmed },
-        { role: "assistant", content: "⚠ 无法连接到 Provider。请检查 API Key 和网络配置。" },
-      ]);
-      setInput("");
-      return;
-    }
-
-    // ---- 正常对话：接入 Agent 流式主循环 ----
-
-    // 追加用户消息到显示列表
-    setDisplayMessages((prev) => [
-      ...prev,
-      { role: "user", content: trimmed },
-    ]);
-
-    // 进入流式状态
-    setInput("");
-    // 重置流式状态
-    setIsStreaming(true);
-    setStreamingPhase("thinking");
-    setStreamingPlaceholder(pickRandom(STREAMING_PLACEHOLDERS));
-    setCurrentContent("");
-    setCurrentToolCalls([]);
-    setCurrentUsage(undefined);
-    setCurrentElapsed(undefined);
-    setCurrentCost(undefined);
-    setStreamingModel(undefined);
-    setStreamError(undefined);
-    // 同步重置 ref
-    currentContentRef.current = "";
-    currentToolCallsRef.current = [];
-    currentUsageRef.current = undefined;
-    currentElapsedRef.current = undefined;
-    currentCostRef.current = undefined;
-    currentModelRef.current = undefined;
-    streamErrorRef.current = undefined;
-    // 新一轮对话开始：清除上轮可能残留的 rewind 提示
-    currentRoundModifiedRef.current = false;
-    setRewindHintPhase("idle");
-    if (rewindHintTimerRef.current) {
-      clearTimeout(rewindHintTimerRef.current);
-      rewindHintTimerRef.current = null;
-    }
-
-    const session = sessionRef.current;
-    const abortController = new AbortController();
-    abortRef.current = abortController;
-
-    try {
-      for await (const event of session.chat(trimmed, {
-        thinkingAllowed: thinkingEnabled || undefined,
-        thinkingEffort: thinkingEnabled ? thinkingEffort : undefined,
-        responseFormat: responseFormat !== "text" ? responseFormat : undefined,
-        toolChoice,
-      })) {
-        // 如果请求被取消，跳过后续事件
-        if (abortController.signal.aborted) break;
-
-        switch (event.type) {
-          case "text_delta":
-            setStreamingPhase("generating");
-            setCurrentContent((prev) => {
-              const next = prev + event.content;
-              currentContentRef.current = next;
-              return next;
-            });
-            break;
-
-          case "tool_calls":
-            setStreamingPhase("calling_tools");
-            setCurrentToolCalls((prev) => {
-              const next = [...prev, ...event.calls];
-              currentToolCallsRef.current = next;
-              return next;
-            });
-            // 标记本轮是否触发了文件修改类工具调用
-            for (const call of event.calls) {
-              if (isFileMutatingTool(call.name)) {
-                currentRoundModifiedRef.current = true;
-                break;
-              }
-            }
-            break;
-
-          case "tool_result":
-            // 工具执行完成 — 重置流式状态，准备接收模型的新一轮回复
-            // 这是因为 Agent 循环会在工具执行后再次调用模型
-            setStreamingPhase("executing_tools");
-            // 延迟重置为思考中，表示模型正在处理工具结果进行下一轮推理
-            setTimeout(() => setStreamingPhase("thinking"), 300);
-            setCurrentContent("");
-            currentContentRef.current = "";
-            setCurrentToolCalls([]);
-            currentToolCallsRef.current = [];
-            // 将工具结果追加为一条用户可见的消息
-            // 优先使用工具提供的 summary（一行简短摘要），避免在 UI 中撑出大段文件内容
-            const r = event.result;
-            const line = r.success
-              ? r.summary ?? `✅ ${event.name}: ${r.data.slice(0, 500)}${r.data.length > 500 ? "..." : ""}`
-              : `❌ ${event.name}: ${r.error ?? "执行失败"}`;
+          }
+          const cps = sessionRef.current.listCheckpoints();
+          if (cps.length === 0) {
             setDisplayMessages((prev) => [
               ...prev,
+              { role: "user", content: trimmed },
               {
-                role: "tool" as const,
-                content: line,
-                diff: r.diff,
+                role: "assistant",
+                content:
+                  "⚠ 没有可回退的检查点。\n只有在 git 仓库内且发生过对话后才会生成检查点。",
               },
             ]);
-            break;
-
-          case "usage":
-            setCurrentUsage(event.usage);
-            setStreamingModel(event.model);
-            currentUsageRef.current = event.usage;
-            currentModelRef.current = event.model;
-            // 同步计算费用
-            {
-              // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-              const cost = calculateCost(event.usage, event.model as unknown as ModelId);
-              setCurrentCost(cost.totalCost);
-              currentCostRef.current = cost.totalCost;
+            setInput("");
+            return;
+          }
+          // /rewind <N>：1 表示最新（与 git reset HEAD~ 习惯一致），2 表示上一个，依次类推
+          const parts = trimmed.split(/\s+/);
+          if (parts.length >= 2) {
+            const n = Number(parts[1]);
+            if (!Number.isInteger(n) || n < 1 || n > cps.length) {
+              setDisplayMessages((prev) => [
+                ...prev,
+                { role: "user", content: trimmed },
+                {
+                  role: "assistant",
+                  content: `⚠ 无效的序号「${parts[1]}」。可用范围 1~${cps.length}（1 表示最新）。`,
+                },
+              ]);
+              setInput("");
+              return;
             }
-            break;
-
-          case "done":
-            setCurrentElapsed(event.elapsed);
-            currentElapsedRef.current = event.elapsed;
-            break;
-
-          case "error":
-            setStreamError(event.error.message);
-            streamErrorRef.current = event.error.message;
-            break;
+            // 将用户输入的 1-based "最新优先"序号转换为 cps 列表里的索引
+            const target = cps[cps.length - n]!;
+            setInput("");
+            await doRewind(target, n);
+            return;
+          }
+          // 无参数：进入选择模式。逆序展示（最新在第 1 位），默认选中最新
+          setRewindList([...cps].reverse());
+          setRewindSelectIndex(0);
+          setRewindSelecting(true);
+          setDisplayMessages((prev) => [
+            ...prev,
+            { role: "user", content: trimmed },
+            {
+              role: "assistant",
+              content: `⏷↑↓ 选择检查点，Enter 确认，Esc 取消（共 ${cps.length} 个可回退位置）`,
+            },
+          ]);
+          setInput("");
+          return;
         }
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setStreamError(msg);
-      streamErrorRef.current = msg;
-    } finally {
-      setIsStreaming(false);
-      setStreamingPhase(null);
-      setIdlePlaceholder(pickRandom(IDLE_PLACEHOLDERS));
-      abortRef.current = null;
 
-      // 流式结束后，用 ref 拿到最新值，直接追加完成的助手消息
-      const finContent = currentContentRef.current;
-      const finToolCalls = currentToolCallsRef.current.length > 0 ? currentToolCallsRef.current : undefined;
-      const finStreamError = streamErrorRef.current;
+        // /model 命令：进入模型选择模式
+        if (cmdLower === "/model") {
+          const curIdx = modelOptions.indexOf(activeModel);
+          setModelSelectIndex(curIdx >= 0 ? curIdx : 0);
+          setSelectingModel(true);
+          setInput("");
+          return;
+        }
 
-      if (finContent || finToolCalls || finStreamError) {
-        const completed: CompletedAssistant = {
-          content: finStreamError ? `⚠ 请求出错：${finStreamError}` : (finContent || ""),
-          toolCalls: finToolCalls,
-          usage: currentUsageRef.current,
-          elapsed: currentElapsedRef.current,
-          cost: currentCostRef.current,
-          model: currentModelRef.current,
-        };
+        // /thinking 命令：切换深度思考
+        if (cmdLower === "/thinking") {
+          setThinkingEnabled((prev) => !prev);
+          setDisplayMessages((prev) => [
+            ...prev,
+            { role: "user", content: trimmed },
+            {
+              role: "assistant",
+              content: `深度思考已${thinkingEnabled ? "关闭" : "开启"}`,
+            },
+          ]);
+          setInput("");
+          return;
+        }
+
+        // /effort 命令：切换推理等级
+        if (cmdLower === "/effort") {
+          const next = thinkingEffort === "high" ? "max" : "high";
+          setThinkingEffort(next);
+          setDisplayMessages((prev) => [
+            ...prev,
+            { role: "user", content: trimmed },
+            {
+              role: "assistant",
+              content: `推理等级已切换为 ${next === "high" ? "High" : "Max"}`,
+            },
+          ]);
+          setInput("");
+          return;
+        }
+
+        // /plan 命令：切换为计划模式（只读分析，不能修改代码）
+        if (cmdLower === "/plan") {
+          if (sessionMode === "plan") {
+            setDisplayMessages((prev) => [
+              ...prev,
+              { role: "user", content: trimmed },
+              {
+                role: "assistant",
+                content: "已经在计划模式中。输入 /code 切回代码模式。",
+              },
+            ]);
+          } else {
+            setSessionMode("plan");
+            sessionRef.current?.setMode("plan");
+            // 计划模式下自动启用工具调用，确保模型可以使用读工具
+            setToolChoice(undefined);
+            setDisplayMessages((prev) => [
+              ...prev,
+              { role: "user", content: trimmed },
+              {
+                role: "assistant",
+                content:
+                  "📋 已切换为 **计划模式**\n\n在此模式下，我只能读取和分析代码，不会执行任何修改。\n输入 /code 切回代码模式。",
+              },
+            ]);
+            // 清空会话历史，防止旧模式下产生的工具调用消息干扰新模式
+            sessionRef.current?.reset();
+          }
+          setInput("");
+          return;
+        }
+
+        // /code 命令：切换回代码模式
+        if (cmdLower === "/code") {
+          if (sessionMode === "code") {
+            setDisplayMessages((prev) => [
+              ...prev,
+              { role: "user", content: trimmed },
+              {
+                role: "assistant",
+                content: "已经在代码模式中。输入 /plan 切回计划模式。",
+              },
+            ]);
+          } else {
+            setSessionMode("code");
+            sessionRef.current?.setMode("code");
+            // 回到代码模式时重置工具调用策略，确保可以正常使用所有工具
+            setToolChoice(undefined);
+            setDisplayMessages((prev) => [
+              ...prev,
+              { role: "user", content: trimmed },
+              {
+                role: "assistant",
+                content:
+                  "🛠 已切换为 **代码模式**\n\n现在可以正常读取和修改代码了。\n输入 /plan 切换为计划模式（只读分析）。",
+              },
+            ]);
+            // 清空会话历史，防止计划模式下产生的消息干扰代码模式
+            sessionRef.current?.reset();
+          }
+          setInput("");
+          return;
+        }
+
+        // /tools 命令：切换工具调用策略
+        if (cmdLower === "/tools") {
+          const next =
+            toolChoice === undefined
+              ? "none"
+              : toolChoice === "none"
+                ? "required"
+                : toolChoice === "required"
+                  ? "auto"
+                  : undefined;
+          setToolChoice(next);
+          const label =
+            next === undefined
+              ? "自动（默认）"
+              : next === "none"
+                ? "禁止调用"
+                : next === "required"
+                  ? "强制调用"
+                  : "自动（默认）";
+          setDisplayMessages((prev) => [
+            ...prev,
+            { role: "user", content: trimmed },
+            { role: "assistant", content: `工具调用策略已切换为 ${label}` },
+          ]);
+          setInput("");
+          return;
+        }
+
+        const cmd = commandRegistry.get(cmdLower);
+        if (cmd) {
+          const result = cmd.handler();
+
+          switch (result.kind) {
+            case "exit":
+              await sessionRef.current?.flushLog();
+              process.exit(0);
+              return;
+            case "clear":
+              // 清空所有会话状态，回到初始界面
+              setDisplayMessages([]);
+              setStaticKey((prev) => prev + 1);
+              setInput("");
+              setStreamError(undefined);
+              // 先清屏再清滚动区，确保终端完全重置
+              process.stdout.write("\x1b[2J\x1b[H\x1b[3J");
+              // 重置 Session 历史
+              sessionRef.current?.reset();
+              return;
+            case "navigate":
+              setInput("");
+              if (result.target === "game") {
+                onLaunchGame?.();
+              } else if (result.target === "stock") {
+                onLaunchStock?.();
+              }
+              return;
+            case "text":
+              setDisplayMessages((prev) => [
+                ...prev,
+                { role: "user", content: trimmed },
+                { role: "assistant", content: result.content },
+              ]);
+              setInput("");
+              return;
+          }
+        }
         setDisplayMessages((prev) => [
           ...prev,
-          {
-            role: "assistant" as const,
-            content: completed.content,
-            assistantDetail: completed,
-          },
+          { role: "user", content: trimmed },
+          { role: "assistant", content: `未知命令：${trimmed}。输入 /help 查看。` },
         ]);
+        setInput("");
+        return;
       }
 
-      // 如果本轮触发了文件修改且无流错误 -> 2s 后展示 rewind 提示
-      // 提示会一直保留到下次对话开始（流式再次启动）为止
-      if (currentRoundModifiedRef.current && !finStreamError) {
-        setRewindHintPhase("pending");
-        if (rewindHintTimerRef.current) clearTimeout(rewindHintTimerRef.current);
-        rewindHintTimerRef.current = setTimeout(() => {
-          setRewindHintPhase((prev) => (prev === "pending" ? "visible" : prev));
-          rewindHintTimerRef.current = null;
-        }, 2000);
+      // 检查 Session 是否就绪
+      if (!sessionRef.current) {
+        setDisplayMessages((prev) => [
+          ...prev,
+          { role: "user", content: trimmed },
+          {
+            role: "assistant",
+            content: "⚠ 无法连接到 Provider。请检查 API Key 和网络配置。",
+          },
+        ]);
+        setInput("");
+        return;
       }
-    }
-  }, [onLaunchGame, onLaunchStock, currentContent, currentToolCalls, skills, skillSelectIndex, getFilteredSkills, thinkingEnabled, thinkingEffort, responseFormat, toolChoice, activeModel, sessionMode, isStreaming, rewinding]);
+
+      // ---- 正常对话：接入 Agent 流式主循环 ----
+
+      // 追加用户消息到显示列表
+      setDisplayMessages((prev) => [...prev, { role: "user", content: trimmed }]);
+
+      // 进入流式状态
+      setInput("");
+      // 重置流式状态
+      setIsStreaming(true);
+      setStreamingPhase("thinking");
+      setStreamingPlaceholder(pickRandom(STREAMING_PLACEHOLDERS));
+      setCurrentContent("");
+      setCurrentReasoning([]);
+      setCurrentToolCalls([]);
+      setCurrentUsage(undefined);
+      setCurrentElapsed(undefined);
+      setCurrentCost(undefined);
+      setStreamingModel(undefined);
+      setStreamError(undefined);
+      // 同步重置 ref
+      currentContentRef.current = "";
+      currentReasoningRef.current = [];
+      currentToolCallsRef.current = [];
+      currentUsageRef.current = undefined;
+      currentElapsedRef.current = undefined;
+      currentCostRef.current = undefined;
+      currentModelRef.current = undefined;
+      streamErrorRef.current = undefined;
+      // 新一轮对话开始：清除上轮可能残留的 rewind 提示
+      currentRoundModifiedRef.current = false;
+      setRewindHintPhase("idle");
+      if (rewindHintTimerRef.current) {
+        clearTimeout(rewindHintTimerRef.current);
+        rewindHintTimerRef.current = null;
+      }
+
+      const session = sessionRef.current;
+      const abortController = new AbortController();
+      abortRef.current = abortController;
+
+      try {
+        for await (const event of session.chat(trimmed, {
+          thinkingAllowed: thinkingEnabled || undefined,
+          thinkingEffort: thinkingEnabled ? thinkingEffort : undefined,
+          responseFormat: responseFormat !== "text" ? responseFormat : undefined,
+          toolChoice,
+        })) {
+          // 如果请求被取消，跳过后续事件
+          if (abortController.signal.aborted) break;
+
+          switch (event.type) {
+            case "text_delta":
+              setStreamingPhase("generating");
+              setCurrentContent((prev) => {
+                const next = prev + event.content;
+                currentContentRef.current = next;
+                return next;
+              });
+              break;
+
+            case "reasoning_delta":
+              // 思考链仍处于 thinking 阶段，UI 上以暗色块单独展示
+              // 连续多段之间如果间隔了 text/tool 会被切为多个独立段，避免合并
+              setStreamingPhase("thinking");
+              setCurrentReasoning((prev) => {
+                const last = prev[prev.length - 1];
+                const next =
+                  last !== undefined
+                    ? [...prev.slice(0, -1), last + event.content]
+                    : [...prev, event.content];
+                currentReasoningRef.current = next;
+                return next;
+              });
+              break;
+
+            case "tool_calls":
+              setStreamingPhase("calling_tools");
+              setCurrentToolCalls((prev) => {
+                const next = [...prev, ...event.calls];
+                currentToolCallsRef.current = next;
+                return next;
+              });
+              // 标记本轮是否触发了文件修改类工具调用
+              for (const call of event.calls) {
+                if (isFileMutatingTool(call.name)) {
+                  currentRoundModifiedRef.current = true;
+                  break;
+                }
+              }
+              break;
+
+            case "tool_result":
+              // 工具执行完成 — 重置流式状态，准备接收模型的新一轮回复
+              // 这是因为 Agent 循环会在工具执行后再次调用模型
+              setStreamingPhase("executing_tools");
+              // 延迟重置为思考中，表示模型正在处理工具结果进行下一轮推理
+              setTimeout(() => setStreamingPhase("thinking"), 300);
+              setCurrentContent("");
+              currentContentRef.current = "";
+              // 思考链：工具结果代表一个 sub-turn 结束，把“正在累积的那一段”封口（推 "" 占位），
+              // 下一段思考会 push 到数组末尾，原有前几段保留可见。
+              setCurrentReasoning((prev) => {
+                const next = [...prev, ""];
+                currentReasoningRef.current = next;
+                return next;
+              });
+              setCurrentToolCalls([]);
+              currentToolCallsRef.current = [];
+              // 将工具结果追加为一条用户可见的消息
+              // 优先使用工具提供的 summary（一行简短摘要），避免在 UI 中撑出大段文件内容
+              const r = event.result;
+              const line = r.success
+                ? (r.summary ??
+                  `✅ ${event.name}: ${r.data.slice(0, 500)}${r.data.length > 500 ? "..." : ""}`)
+                : `❌ ${event.name}: ${r.error ?? "执行失败"}`;
+              setDisplayMessages((prev) => [
+                ...prev,
+                {
+                  role: "tool" as const,
+                  content: line,
+                  diff: r.diff,
+                },
+              ]);
+              break;
+
+            case "usage":
+              setCurrentUsage(event.usage);
+              setStreamingModel(event.model);
+              currentUsageRef.current = event.usage;
+              currentModelRef.current = event.model;
+              // 同步计算费用
+              {
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+                const cost = calculateCost(
+                  event.usage,
+                  event.model as unknown as ModelId,
+                );
+                setCurrentCost(cost.totalCost);
+                currentCostRef.current = cost.totalCost;
+              }
+              break;
+
+            case "done":
+              setCurrentElapsed(event.elapsed);
+              currentElapsedRef.current = event.elapsed;
+              break;
+
+            case "error":
+              setStreamError(event.error.message);
+              streamErrorRef.current = event.error.message;
+              break;
+          }
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setStreamError(msg);
+        streamErrorRef.current = msg;
+      } finally {
+        setIsStreaming(false);
+        setStreamingPhase(null);
+        setIdlePlaceholder(pickRandom(IDLE_PLACEHOLDERS));
+        abortRef.current = null;
+
+        // 流式结束后，用 ref 拿到最新值，直接追加完成的助手消息
+        const finContent = currentContentRef.current;
+        // 过滤掉占位的空串和首尾空白，避免在 UI 上生成空白思考块
+        const finReasoning = currentReasoningRef.current
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0);
+        const finToolCalls =
+          currentToolCallsRef.current.length > 0
+            ? currentToolCallsRef.current
+            : undefined;
+        const finStreamError = streamErrorRef.current;
+
+        if (finContent || finToolCalls || finStreamError) {
+          const completed: CompletedAssistant = {
+            content: finStreamError ? `⚠ 请求出错：${finStreamError}` : finContent || "",
+            ...(finReasoning.length > 0 ? { reasoning: finReasoning } : {}),
+            toolCalls: finToolCalls,
+            usage: currentUsageRef.current,
+            elapsed: currentElapsedRef.current,
+            cost: currentCostRef.current,
+            model: currentModelRef.current,
+          };
+          setDisplayMessages((prev) => [
+            ...prev,
+            {
+              role: "assistant" as const,
+              content: completed.content,
+              assistantDetail: completed,
+            },
+          ]);
+        }
+
+        // 如果本轮触发了文件修改且无流错误 -> 2s 后展示 rewind 提示
+        // 提示会一直保留到下次对话开始（流式再次启动）为止
+        if (currentRoundModifiedRef.current && !finStreamError) {
+          setRewindHintPhase("pending");
+          if (rewindHintTimerRef.current) clearTimeout(rewindHintTimerRef.current);
+          rewindHintTimerRef.current = setTimeout(() => {
+            setRewindHintPhase((prev) => (prev === "pending" ? "visible" : prev));
+            rewindHintTimerRef.current = null;
+          }, 2000);
+        }
+      }
+    },
+    [
+      onLaunchGame,
+      onLaunchStock,
+      currentContent,
+      currentReasoning,
+      currentToolCalls,
+      skills,
+      skillSelectIndex,
+      getFilteredSkills,
+      thinkingEnabled,
+      thinkingEffort,
+      responseFormat,
+      toolChoice,
+      activeModel,
+      sessionMode,
+      isStreaming,
+      rewinding,
+    ],
+  );
 
   // 从 costTracker 更新今日消耗（每次流式结束后刷新）
   useEffect(() => {
@@ -1112,8 +1334,6 @@ export function ChatSession({
       setTodayCost(externalCostTracker.todayTotalCost);
     }
   }, [isStreaming, externalCostTracker]);
-
-
 
   return (
     <Box flexDirection="column" paddingLeft={1} paddingRight={1}>
@@ -1136,59 +1356,90 @@ export function ChatSession({
 
           {/* 状态信息 */}
           <Box flexDirection="column" justifyContent="center">
-            <Text color="#00ff41">{"  ✔ "}已就绪 {skillCount} 个 Skill</Text>
-            <Text color="#00ffff">{"  ℹ "}已就绪 {toolCount} 个工具</Text>
-            <Text color="#00ffff">{"  🔧 模型 "}{SUPPORTED_MODELS[activeModel]?.displayName ?? activeModel}</Text>
+            <Text color="#00ff41">
+              {"  ✔ "}已就绪 {skillCount} 个 Skill
+            </Text>
+            <Text color="#00ffff">
+              {"  ℹ "}已就绪 {toolCount} 个工具
+            </Text>
+            <Text color="#00ffff">
+              {"  🔧 模型 "}
+              {SUPPORTED_MODELS[activeModel]?.displayName ?? activeModel}
+            </Text>
             {thinkingEnabled && (
-              <Text color="#ff9800">{"  🧠 深度思考 "}{thinkingEffort === "max" ? "Max" : "High"}</Text>
+              <Text color="#ff9800">
+                {"  🧠 深度思考 "}
+                {thinkingEffort === "max" ? "Max" : "High"}
+              </Text>
             )}
             {/* 模式指示器 */}
             {sessionMode === "plan" && (
-              <Text color="#ff69b4" bold>{"  📋 计划模式"}</Text>
+              <Text color="#ff69b4" bold>
+                {"  📋 计划模式"}
+              </Text>
             )}
             {responseFormat === "json_object" && (
               <Text color="#4caf50">{"  📄 JSON"}</Text>
             )}
             {toolChoice !== undefined && (
-              <Text color="#e91e63">{"  🛠 "}{
-                toolChoice === "none" ? "禁止工具"
-                : toolChoice === "required" ? "强制工具"
-                : ""
-              }</Text>
+              <Text color="#e91e63">
+                {"  🛠 "}
+                {toolChoice === "none"
+                  ? "禁止工具"
+                  : toolChoice === "required"
+                    ? "强制工具"
+                    : ""}
+              </Text>
             )}
             {/* 命令提示轮播 */}
-            {cmdTips.length > 0 && (() => {
-              const tip = cmdTips[cmdTipIndex % cmdTips.length];
-              if (!tip) return null;
-              const text = `${tip.name} ${tip.desc}`;
-              return (
-                <Text>
-                  <Text color="#808080">{"  💡 "}</Text>
-                  {cmdTipGradientColors.length > 0
-                    ? text.split("").map((ch, i) => (
-                        <Text key={i} color={cmdTipGradientColors[i] || undefined}>{ch}</Text>
+            {cmdTips.length > 0 &&
+              (() => {
+                const tip = cmdTips[cmdTipIndex % cmdTips.length];
+                if (!tip) return null;
+                const text = `${tip.name} ${tip.desc}`;
+                return (
+                  <Text>
+                    <Text color="#808080">{"  💡 "}</Text>
+                    {cmdTipGradientColors.length > 0 ? (
+                      text.split("").map((ch, i) => (
+                        <Text key={i} color={cmdTipGradientColors[i] || undefined}>
+                          {ch}
+                        </Text>
                       ))
-                    : <Text color="#808080">{text}</Text>}
-                </Text>
-              );
-            })()}
+                    ) : (
+                      <Text color="#808080">{text}</Text>
+                    )}
+                  </Text>
+                );
+              })()}
             {verbose ? <Text color="#ff1493">{"  ⚡ Verbose"}</Text> : null}
           </Box>
 
           {/* 右侧余额 + 今日消耗 */}
-          <Box flexGrow={1} flexDirection="column" justifyContent="center" alignItems="flex-end">
+          <Box
+            flexGrow={1}
+            flexDirection="column"
+            justifyContent="center"
+            alignItems="flex-end"
+          >
             {balanceLoading && balance === null ? (
               <Text color="yellow">{"  ⏳ 查询余额..."}</Text>
             ) : balance !== null ? (
               <Box flexDirection="row">
                 <Text color="yellow">{"💰 "}</Text>
-                <Text color="yellow">{"余额 ¥"}{balance.toFixed(2)}</Text>
+                <Text color="yellow">
+                  {"余额 ¥"}
+                  {balance.toFixed(2)}
+                </Text>
               </Box>
             ) : null}
             {todayCost !== null ? (
               <Box flexDirection="row">
                 <Text color="cyan">{"📊 "}</Text>
-                <Text color="cyan">{"今日 ¥"}{todayCost.toFixed(2)}</Text>
+                <Text color="cyan">
+                  {"今日 ¥"}
+                  {todayCost.toFixed(2)}
+                </Text>
               </Box>
             ) : null}
           </Box>
@@ -1203,7 +1454,9 @@ export function ChatSession({
               return (
                 <Box key={i} marginTop={1}>
                   <Box width={4} flexShrink={0}>
-                    <Text bold color="#00ff41">{"👤"}</Text>
+                    <Text bold color="#00ff41">
+                      {"👤"}
+                    </Text>
                   </Box>
                   <Box flexGrow={1}>
                     <Text wrap="wrap">{msg.content}</Text>
@@ -1213,15 +1466,18 @@ export function ChatSession({
             }
 
             // 工具消息 — 显示文本内容 + Diff 预览
+            // 工具调用属于“过程信息”，使用 dimColor 让主内容（助手回复）的视觉权重更高
             if (msg.role === "tool") {
               return (
                 <Box key={i} marginTop={1} flexDirection="column">
                   <Box flexDirection="row">
                     <Box width={4} flexShrink={0}>
-                      <Text bold color="#f59e0b">{"🔧"}</Text>
+                      <Text dimColor>{"🔧"}</Text>
                     </Box>
                     <Box flexGrow={1}>
-                      <Text wrap="wrap">{msg.content}</Text>
+                      <Text dimColor wrap="wrap">
+                        {msg.content}
+                      </Text>
                     </Box>
                   </Box>
                   {msg.diff && <DiffPreview diff={msg.diff} />}
@@ -1235,6 +1491,7 @@ export function ChatSession({
               <AssistantMessage
                 key={i}
                 content={msg.content}
+                reasoning={detail?.reasoning}
                 toolCalls={detail?.toolCalls}
                 isStreaming={false}
                 usage={detail?.usage}
@@ -1250,6 +1507,7 @@ export function ChatSession({
         {isStreaming && (
           <AssistantMessage
             content={currentContent}
+            reasoning={currentReasoning}
             toolCalls={currentToolCalls.length > 0 ? currentToolCalls : undefined}
             isStreaming={true}
             usage={_currentUsage}
@@ -1269,9 +1527,13 @@ export function ChatSession({
       {/* 输入区 */}
       {selectingModel ? (
         <Box marginTop={1} flexDirection="column">
-          <Text color="#00ffff" dimColor>{"─".repeat(dividerWidth)}</Text>
+          <Text color="#00ffff" dimColor>
+            {"─".repeat(dividerWidth)}
+          </Text>
           <Box flexDirection="column" marginTop={1}>
-            <Text bold color="#00ffff">选择模型：</Text>
+            <Text bold color="#00ffff">
+              选择模型：
+            </Text>
             {modelOptions.map((id, i) => {
               const meta = SUPPORTED_MODELS[id];
               const isCurrent = id === activeModel;
@@ -1280,27 +1542,34 @@ export function ChatSession({
               const suffix = isCurrent ? " (当前)" : "";
               return (
                 <Box key={id}>
-                  <Text
-                    color={isSelected ? "#00ff41" : undefined}
-                    bold={isSelected}
-                  >
-                    {marker}{meta.displayName}{suffix}
+                  <Text color={isSelected ? "#00ff41" : undefined} bold={isSelected}>
+                    {marker}
+                    {meta.displayName}
+                    {suffix}
                   </Text>
                   {isSelected && <Text color="#808080"> — {id}</Text>}
                 </Box>
               );
             })}
             <Box marginTop={1}>
-              <Text color="#808080" dimColor>↑↓ 选择 · Enter 确认 · Esc 取消</Text>
+              <Text color="#808080" dimColor>
+                ↑↓ 选择 · Enter 确认 · Esc 取消
+              </Text>
             </Box>
           </Box>
-          <Text color="#00ffff" dimColor>{"─".repeat(dividerWidth)}</Text>
+          <Text color="#00ffff" dimColor>
+            {"─".repeat(dividerWidth)}
+          </Text>
         </Box>
       ) : rewindSelecting ? (
         <Box marginTop={1} flexDirection="column">
-          <Text color="#00ffff" dimColor>{"─".repeat(dividerWidth)}</Text>
+          <Text color="#00ffff" dimColor>
+            {"─".repeat(dividerWidth)}
+          </Text>
           <Box flexDirection="column" marginTop={1}>
-            <Text bold color="#ff9800">选择要回退的检查点：</Text>
+            <Text bold color="#ff9800">
+              选择要回退的检查点：
+            </Text>
             {rewindList.map((cp, i) => {
               const isSelected = i === rewindSelectIndex;
               const marker = isSelected ? " > " : "   ";
@@ -1309,25 +1578,29 @@ export function ChatSession({
               const tag = cp.isGitRepo ? "" : " [非 git，仅对话]";
               return (
                 <Box key={cp.index}>
-                  <Text
-                    color={isSelected ? "#ff9800" : undefined}
-                    bold={isSelected}
-                  >
-                    {marker}#{i + 1} {time} `{preview}{tag}`
+                  <Text color={isSelected ? "#ff9800" : undefined} bold={isSelected}>
+                    {marker}#{i + 1} {time} `{preview}
+                    {tag}`
                   </Text>
                 </Box>
               );
             })}
             <Box marginTop={1}>
-              <Text color="#808080" dimColor>↑↓ 选择 · Enter 确认 · Esc 取消</Text>
+              <Text color="#808080" dimColor>
+                ↑↓ 选择 · Enter 确认 · Esc 取消
+              </Text>
             </Box>
           </Box>
-          <Text color="#00ffff" dimColor>{"─".repeat(dividerWidth)}</Text>
+          <Text color="#00ffff" dimColor>
+            {"─".repeat(dividerWidth)}
+          </Text>
         </Box>
       ) : (
         <>
           {/* 流式状态指示器 — 上框上方居中显示 */}
-          {(hasConversationStarted || sessionMode === "plan") && isStreaming && streamingPhase ? (
+          {(hasConversationStarted || sessionMode === "plan") &&
+          isStreaming &&
+          streamingPhase ? (
             <Box marginTop={1} justifyContent="center">
               <Text bold color={PHASE_CONFIG[streamingPhase].color}>
                 {PHASE_CONFIG[streamingPhase].icon} {PHASE_CONFIG[streamingPhase].label}{" "}
@@ -1343,41 +1616,69 @@ export function ChatSession({
           ) : null}
           <Box marginTop={1}>
             {hasConversationStarted || sessionMode === "plan" ? (
-              <Text color={sessionMode === "plan" ? "#ff69b4" : "#00ffff"} dimColor={sessionMode !== "plan"}>
-                <Text>{sessionMode === "plan"
-                  ? "─".repeat(Math.max(dividerWidth - 48, 1))
-                  : "─".repeat(Math.max(dividerWidth - 35, 10))}</Text>
+              <Text
+                color={sessionMode === "plan" ? "#ff69b4" : "#00ffff"}
+                dimColor={sessionMode !== "plan"}
+              >
+                <Text>
+                  {sessionMode === "plan"
+                    ? "─".repeat(Math.max(dividerWidth - 48, 1))
+                    : "─".repeat(Math.max(dividerWidth - 35, 10))}
+                </Text>
                 {balance !== null && (
-                  <Text color="yellow">{" 💰 余额 ¥"}{balance.toFixed(2)}</Text>
+                  <Text color="yellow">
+                    {" 💰 余额 ¥"}
+                    {balance.toFixed(2)}
+                  </Text>
                 )}
                 {isStreaming ? (
-                  <Text color="cyan">{"  📊 本次 ¥"}{sessionCost > 0 ? sessionCost.toFixed(4) + " " : ""}<InkSpinner type="dots" /></Text>
+                  <Text color="cyan">
+                    {"  📊 本次 ¥"}
+                    {sessionCost > 0 ? sessionCost.toFixed(4) + " " : ""}
+                    <InkSpinner type="dots" />
+                  </Text>
                 ) : sessionCost > 0 ? (
-                  <Text color="cyan">{"  📊 本次 ¥"}{sessionCost.toFixed(4)}</Text>
+                  <Text color="cyan">
+                    {"  📊 本次 ¥"}
+                    {sessionCost.toFixed(4)}
+                  </Text>
                 ) : null}
                 {sessionMode === "plan" && (
-                  <Text color="#ff69b4" bold>{"  📋 计划模式"}</Text>
+                  <Text color="#ff69b4" bold>
+                    {"  📋 计划模式"}
+                  </Text>
                 )}
               </Text>
             ) : (
-              <Text color="#00ffff" dimColor>{"─".repeat(dividerWidth)}</Text>
+              <Text color="#00ffff" dimColor>
+                {"─".repeat(dividerWidth)}
+              </Text>
             )}
           </Box>
           <Box>
             <Box width={4} flexShrink={0}>
-              <Text bold color="#00ff41">{"⚡"}</Text>
+              <Text bold color="#00ff41">
+                {"⚡"}
+              </Text>
             </Box>
             <Box flexGrow={1}>
               {!input && !isStreaming && idlePlaceholder && gradientColors.length > 0 ? (
                 <Text>
                   {idlePlaceholder.split("").map((ch, i) => (
-                    <Text key={i} color={gradientColors[i] ?? undefined}>{ch}</Text>
+                    <Text key={i} color={gradientColors[i] ?? undefined}>
+                      {ch}
+                    </Text>
                   ))}
                 </Text>
-              ) : !input && isStreaming && streamingPlaceholder && streamingGradientColors.length > 0 ? (
+              ) : !input &&
+                isStreaming &&
+                streamingPlaceholder &&
+                streamingGradientColors.length > 0 ? (
                 <Text>
                   {streamingPlaceholder.split("").map((ch, i) => (
-                    <Text key={i} color={streamingGradientColors[i] ?? undefined}>{ch}</Text>
+                    <Text key={i} color={streamingGradientColors[i] ?? undefined}>
+                      {ch}
+                    </Text>
                   ))}
                 </Text>
               ) : (
@@ -1392,7 +1693,9 @@ export function ChatSession({
             </Box>
           </Box>
           <Box>
-            <Text color="#00ffff" dimColor>{"─".repeat(dividerWidth)}</Text>
+            <Text color="#00ffff" dimColor>
+              {"─".repeat(dividerWidth)}
+            </Text>
           </Box>
 
           {/* 用户输入 / 时显示 skill 列表 */}

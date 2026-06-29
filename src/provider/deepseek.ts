@@ -71,7 +71,7 @@ interface AccumulatedToolCall {
 }
 
 /** 工具调用累积器：按 index 累积分块到达的 tool call */
-class DeepSeekEventMapper {
+export class DeepSeekEventMapper {
   readonly #toolCallsByIndex = new Map<number, AccumulatedToolCall>();
 
   /**
@@ -92,6 +92,7 @@ class DeepSeekEventMapper {
     const events: ChatChunk[] = [];
     const delta = choice.delta;
     const content = delta?.content ?? "";
+    const reasoningContent = delta?.reasoning_content ?? "";
     const finishReason = this.#mapFinishReason(choice.finish_reason);
 
     // 1. 累积工具调用片段
@@ -115,9 +116,10 @@ class DeepSeekEventMapper {
     const shouldYieldToolCalls =
       finishReason === "tool_calls" && this.#toolCallsByIndex.size > 0;
 
-    // 跳过空块（无内容、无工具调用、无 usage、非结束）
+    // 跳过空块（无内容、无思考链、无工具调用、无 usage、非结束）
     if (
       !content &&
+      !reasoningContent &&
       finishReason === null &&
       !shouldYieldToolCalls &&
       !usage
@@ -127,6 +129,7 @@ class DeepSeekEventMapper {
 
     events.push({
       content,
+      ...(reasoningContent ? { reasoningContent } : {}),
       finishReason,
       ...(shouldYieldToolCalls
         ? { toolCalls: [...this.#toolCallsByIndex.values()] }
@@ -143,9 +146,7 @@ class DeepSeekEventMapper {
   }
 
   /** 将 DeepSeek 的 finish_reason 映射为内部类型 */
-  #mapFinishReason(
-    reason: string | null,
-  ): "stop" | "tool_calls" | "length" | null {
+  #mapFinishReason(reason: string | null): "stop" | "tool_calls" | "length" | null {
     switch (reason) {
       case "stop":
         return "stop";
@@ -239,10 +240,7 @@ export class DeepSeekProvider implements Provider {
   /**
    * 发起聊天补全请求（流式）。
    */
-  async *chat(
-    messages: ChatMessage[],
-    opts?: ChatOptions,
-  ): AsyncIterable<ChatChunk> {
+  async *chat(messages: ChatMessage[], opts?: ChatOptions): AsyncIterable<ChatChunk> {
     // 1. 构建请求体
     const apiMessages = intoDeepSeekMessages(messages);
 
@@ -253,14 +251,13 @@ export class DeepSeekProvider implements Provider {
       max_tokens: opts?.maxTokens,
       temperature: opts?.temperature,
       // 从 ChatOptions 映射 thinking / reasoning_effort
-      thinking: opts?.thinkingAllowed !== undefined
-        ? { type: opts.thinkingAllowed ? "enabled" : "disabled" }
-        : undefined,
+      thinking:
+        opts?.thinkingAllowed !== undefined
+          ? { type: opts.thinkingAllowed ? "enabled" : "disabled" }
+          : undefined,
       reasoning_effort: opts?.thinkingEffort as DeepSeekReasoningEffort | undefined,
       // 从 ChatOptions 映射 response_format
-      response_format: opts?.responseFormat
-        ? { type: opts.responseFormat }
-        : undefined,
+      response_format: opts?.responseFormat ? { type: opts.responseFormat } : undefined,
       // 从 ChatOptions 映射 tool_choice
       tool_choice: opts?.toolChoice as DeepSeekToolChoice | undefined,
     };
@@ -273,13 +270,10 @@ export class DeepSeekProvider implements Provider {
     this.#mapper.reset();
 
     // 3. 使用协议层函数发请求，并通过 mapper 映射事件
-    const stream = protocolStream(
-      this.#client,
-      this.#baseUrl,
-      this.#apiKey,
-      request,
-      { signal: opts?.signal, idleTimeoutMs: this.#idleTimeoutMs },
-    );
+    const stream = protocolStream(this.#client, this.#baseUrl, this.#apiKey, request, {
+      signal: opts?.signal,
+      idleTimeoutMs: this.#idleTimeoutMs,
+    });
 
     for await (const rawChunk of stream) {
       const events = this.#mapper.mapEvent(rawChunk);
