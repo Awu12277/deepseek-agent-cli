@@ -114,6 +114,20 @@ export interface SessionEndEvent extends LogEventBase {
   elapsed: number;
 }
 
+/** 反射事件 — 工具失败归因注入到下一轮 prompt 时记录 */
+export interface ReflectionEvent extends LogEventBase {
+  type: "reflection";
+  /** 本轮触发的反射列表 */
+  items: Array<{
+    /** 反射分类 */
+    category: string;
+    /** 命中的工具名 */
+    toolName: string;
+    /** 提示文本 */
+    hint: string;
+  }>;
+}
+
 /** 所有日志事件的联合类型 */
 export type LogEvent =
   | SessionStartEvent
@@ -124,4 +138,5 @@ export type LogEvent =
   | UsageEvent
   | ErrorEvent
   | TurnDoneEvent
-  | SessionEndEvent;
+  | SessionEndEvent
+  | ReflectionEvent;

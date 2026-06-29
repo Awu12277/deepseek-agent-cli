@@ -217,6 +217,11 @@ export class ConversationLogger {
   logSessionEnd(elapsed: number): void {
     this.log({ ts: Date.now(), type: "session_end", elapsed });
   }
+
+  /** 记录反射（工具失败归因注入到下一轮 prompt 时） */
+  logReflections(items: Array<{ category: string; toolName: string; hint: string }>): void {
+    this.log({ ts: Date.now(), type: "reflection", items });
+  }
 }
 
 /**

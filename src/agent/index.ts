@@ -24,13 +24,14 @@ import type {
 import { CostTracker, calculateCost } from "../provider/index.js";
 import type { AnyAgentTool } from "../tool/index.js";
 import type { Gate, ToolCallRecord } from "../tool/types.js";
-import { AlwaysAllowGate } from "../tool/types.js";
+import { AlwaysAllowGate, ToolKind } from "../tool/types.js";
 import type { AgentEvent, SessionMode, SystemPromptOptions } from "./types.js";
 import { buildSystemPrompt, buildPlanSystemPrompt } from "./system-prompt.js";
 import { trimMessages, buildApiMessages } from "./message-builder.js";
 import { ToolRegistry } from "../tool/registry.js";
 import { ToolExecutor } from "./tool-executor.js";
 import { StormDetector } from "./storm-detector.js";
+import { Reflector, type AnalyzeItem } from "./reflector.js";
 import { buildToolDefinitions } from "./tool-definitions.js";
 import {
   createCheckpoint,
@@ -79,6 +80,8 @@ export interface SessionOptions {
   enableCheckpoint?: boolean;
   /** 是否启用对话日志记录（写入 .dskcode/logs/），默认 true */
   enableLog?: boolean;
+  /** 是否启用 Reflector 失败归因注入（默认 true）。传 false 可彻底关闭 */
+  enableReflection?: boolean;
 }
 
 /**
@@ -125,7 +128,7 @@ export class Session {
   /** 归一化后的构造选项（带默认值） */
   readonly #options: Required<
     Pick<SessionOptions, "cwd" | "maxToolRounds" | "reservedForOutput" | "preserveRecentRounds">
-  > & { projectContext?: string; gate: Gate; writeRoots: string[]; enableCheckpoint: boolean; enableLog: boolean };
+  > & { projectContext?: string; gate: Gate; writeRoots: string[]; enableCheckpoint: boolean; enableLog: boolean; enableReflection: boolean };
   /** 中止信号控制器（abort() 时触发，传递给 LLM 和工具） */
   readonly #abortController = new AbortController();
 
@@ -148,6 +151,10 @@ export class Session {
   readonly #logger: ConversationLogger;
   /** 风暴检测器（连续 3 次同工具同错码失败时中断本轮） */
   readonly #stormDetector: StormDetector;
+  /** 失败归因 Reflector（将本轮失败原因拼到下一轮 prompt；null 表示已关闭） */
+  readonly #reflector: Reflector | null;
+  /** 本轮工具执行结果（仅在 chat() 循环内使用；用于下一轮注入 reflection） */
+  #lastRoundResults: AnalyzeItem[] | null = null;
 
   /**
    * 构造一个 Session。
@@ -183,6 +190,7 @@ export class Session {
       writeRoots: options?.writeRoots ?? [options?.cwd ?? process.cwd()],
       enableCheckpoint: options?.enableCheckpoint ?? true,
       enableLog: options?.enableLog ?? true,
+      enableReflection: options?.enableReflection !== false,
     };
     this.#sessionId = options?.sessionId ?? SessionStore.newId();
     this.#store = options?.store === false ? null : (options?.store ?? new SessionStore());
@@ -192,6 +200,7 @@ export class Session {
     });
     this.#logger.logSessionStart(this.#sessionId, this.#options.cwd, this.#provider.model(), this.#mode);
     this.#stormDetector = new StormDetector({ threshold: 3 });
+    this.#reflector = this.#options.enableReflection ? new Reflector() : null;
   }
 
   /** 当前会话的完整消息历史（只读视图） */
@@ -257,7 +266,22 @@ export class Session {
 
     try {
       while (toolRounds < this.#options.maxToolRounds) {
-        const systemPrompt = this.#buildSystemPrompt();
+        // 构建本轮 system prompt。若上一轮工具调用有失败，Reflector 会把归因
+        // 信息拼到 prompt 尾部（仅在 reflector 开启 + lastRoundResults 非空时生效）
+        let systemPrompt = this.#buildSystemPrompt();
+        if (this.#reflector && this.#lastRoundResults) {
+          const reflections = this.#reflector.analyze(this.#lastRoundResults, {
+            writeRoots: this.#options.writeRoots,
+            cwd: this.#options.cwd,
+          });
+          if (reflections.length > 0) {
+            systemPrompt = this.#reflector.injectIntoPrompt(systemPrompt, reflections);
+            this.#logger.logReflections(
+              reflections.map((r) => ({ category: r.category, toolName: r.toolName, hint: r.hint })),
+            );
+          }
+          this.#lastRoundResults = null;
+        }
         const [trimmed] = trimMessages(
           [...this.#messages],
           {
@@ -386,6 +410,19 @@ export class Session {
 
           const results = await toolExecutor.executeBatch(lastToolCalls);
           this.#stormRecords = results.records;
+          console.log('results',results)
+          // 保存本轮结果，供下一轮循环开始时 Reflector 分析
+          this.#lastRoundResults = results.items.map((it) => {
+            const tool = this.#toolRegistry.get(it.name);
+            return {
+              name: it.name,
+              result: it.result,
+              kind: tool?.kind ?? ToolKind.Other,
+              recentSameTool: results.records
+                .filter((r) => r.name === it.name)
+                .map((r) => ({ success: r.success, error: r.error })),
+            };
+          });
 
           for (const item of results.items) {
             yield { type: "tool_result", name: item.name, result: item.result };
@@ -462,6 +499,7 @@ export class Session {
     this.#costTracker.resetSession();
     this.#stormRecords = [];
     this.#checkpoints.clear();
+    this.#lastRoundResults = null;
   }
 
   /**
