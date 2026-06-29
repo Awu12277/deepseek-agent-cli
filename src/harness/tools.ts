@@ -59,7 +59,7 @@ function makeTodoAddTool(todoList: TodoList): AgentTool<TodoAddArgs> {
       "什么情况下不要调：\n" +
       "  - 一句话能完成的事（查、列、问）\n\n" +
       "用法：每次加一个 step，多步就调多次。有依赖关系传 deps=[前步 id]。返回分配的 id，后续用 todo_mark_done / todo_mark_failed 引用。\n\n" +
-      "示例：用户说「把 X 改成 Y」→ 调 1) todo_add(\"读 X\")  2) todo_add(\"改 X\", deps=[0])  3) todo_add(\"验证\", deps=[1])",
+      "示例：用户说「把 X 改成 Y」→ 调 1) todo_add(\"读 X\")  2) todo_add(\"改 X\", deps=[0])  3) todo_add(\"检查改动\", deps=[1])",
     parameters: {
       type: "object",
       properties: {

@@ -34,7 +34,6 @@ import { StormDetector } from "./storm-detector.js";
 import { Reflector, type AnalyzeItem } from "./reflector.js";
 import { buildToolDefinitions } from "./tool-definitions.js";
 import { TodoList } from "../harness/todo-list.js";
-import { Verifier } from "../harness/verifier.js";
 import { createHarnessTools } from "../harness/tools.js";
 import {
   createCheckpoint,
@@ -85,7 +84,7 @@ export interface SessionOptions {
   enableLog?: boolean;
   /** 是否启用 Reflector 失败归因注入（默认 true）。传 false 可彻底关闭 */
   enableReflection?: boolean;
-  /** 是否启用 Harness（TodoList 规划 + Verifier 自动验证）。默认 true */
+  /** 是否启用 Harness（TodoList 规划 + 任务自检提示）。默认 true */
   enableHarness?: boolean;
 }
 
@@ -173,10 +172,6 @@ export class Session {
   #lastRoundResults: AnalyzeItem[] | null = null;
   /** Harness 任务列表（仅在 enableHarness 时非 null） */
   readonly #todoList: TodoList | null;
-  /** Harness 自动验证器（仅在 enableHarness 时非 null） */
-  readonly #verifier: Verifier | null;
-  /** 本轮是否已跑过 Verifier（避免重复跑） */
-  #verificationRunThisTurn = false;
   /** 本会话内是否已发出过「未拆 todo」护栏提示（避免每轮骚扰） */
   #harnessHintEmitted = false;
 
@@ -233,17 +228,15 @@ export class Session {
     this.#stormDetector = new StormDetector({ threshold: 3 });
     this.#reflector = this.#options.enableReflection ? new Reflector() : null;
 
-    // Harness 初始化（TodoList + Verifier + 3 个新工具）
+    // Harness 初始化（TodoList + 5 个新工具：todo_add / mark_running / mark_done / mark_failed / retry）
     if (this.#options.enableHarness) {
       const todoList = new TodoList();
       this.#todoList = todoList;
-      this.#verifier = new Verifier();
       for (const t of createHarnessTools(todoList)) {
         this.#toolRegistry.registerErased(eraseTool(t));
       }
     } else {
       this.#todoList = null;
-      this.#verifier = null;
     }
   }
 
@@ -330,9 +323,7 @@ export class Session {
     let toolRounds = 0;
     // 工具执行器：本轮内共享同一 signal，避免每次调用都重新构建
     const toolExecutor = this.#buildToolExecutor();
-    // 本轮内 Verifier 只跑一次；chat() 开头重置，避免上轮的标志卡住新输入
-    this.#verificationRunThisTurn = false;
-    // Harness 护栏提示也重置：每个新用户输入重新评估一次「未拆 todo」问题
+    // Harness 护栏提示重置：每个新用户输入重新评估一次「未拆 todo」问题
     this.#harnessHintEmitted = false;
 
     try {
@@ -553,59 +544,20 @@ export class Session {
           continue;
         }
 
-        // 模型不再调工具，准备退出循环。Harness 模式下自动跑 Verifier 验证。
+        // 模型不再调工具，准备退出循环。Harness 模式下若 todo 全结束，
+        // 提示模型自行做一次任务自检（重新读改动过的文件，确认修改正确）。
         if (
-          this.#verifier &&
           this.#todoList &&
-          !this.#verificationRunThisTurn &&
           this.#todoList.items.length > 0 &&
           this.#todoList.isAllTerminated()
         ) {
-          this.#verificationRunThisTurn = true;
-          // 以 system role 提示模型“马上跑验证”，同时护发事件让 UI 看到状态
           this.#messages.push({
             role: "user",
             content:
-              "[系统] 全部 todo 已完成，Harness 正在自动跑验证（type-check / test / lint）。验证结果会随下一轮返回。",
+              "[系统] 全部 todo 已完成。请做一次任务自检：重新读取本次修改过的文件，" +
+              "确认改动正确无误、类型兼容、没有遗漏。如有问题请新增 todo 修复；" +
+              "确认无误后输出最终总结。",
           });
-          yield { type: "text_delta", content: "\n[系统] 正在跑自动验证...\n" };
-          let result;
-          try {
-            result = await this.#verifier.verifyAfter(
-              { id: 0, content: "all-todos", status: "done" },
-              this.#options.cwd,
-            );
-          } catch (err) {
-            result = {
-              ok: false,
-              signals: [
-                {
-                  kind: "type-check",
-                  outcome: "fail",
-                  summary: "verifier 异常",
-                  detail: String(err),
-                },
-              ],
-              elapsedMs: 0,
-            };
-          }
-          const lines = result.signals.map((s) => {
-            const icon = s.outcome === "pass" ? "✅" : s.outcome === "fail" ? "❌" : "⏭";
-            const detail = s.detail ? `\n   ${s.detail}` : "";
-            return `${icon} ${s.kind}: ${s.summary}${detail}`;
-          });
-          const verifierMsg =
-            `\n[自动验证] ok=${result.ok} (${result.elapsedMs}ms)\n` + lines.join("\n");
-          yield { type: "text_delta", content: verifierMsg };
-          this.#messages.push({
-            role: "user",
-            content:
-              `[系统] Harness 自动验证结果：\n${lines.join("\n")}\n\n` +
-              (result.ok
-                ? "全部通过。请输出最终总结。"
-                : "有失败项。请按失败原因修复后重试，或重规划。"),
-          });
-          // 本轮只是“发了验证结果”，实际还是要 break（下一轮才会读这个 user msg）
         }
 
         break;
@@ -669,7 +621,6 @@ export class Session {
     this.#stormRecords = [];
     this.#checkpoints.clear();
     this.#lastRoundResults = null;
-    this.#verificationRunThisTurn = false;
   }
 
   /**
