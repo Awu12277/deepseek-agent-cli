@@ -10,16 +10,16 @@ import {
 } from "../../src/ui/reasoning-utils.js";
 
 describe("joinReasoningSegments", () => {
-  it("多段之间用空行分隔", () => {
-    expect(joinReasoningSegments(["第一段", "第二段"])).toBe("第一段\n\n第二段");
+  it("多段之间用单换行紧凑连接（不空行）", () => {
+    expect(joinReasoningSegments(["第一段", "第二段"])).toBe("第一段\n第二段");
   });
 
-  it("过滤掉空白段（防止双空行）", () => {
-    expect(joinReasoningSegments(["a", "", "  ", "b"])).toBe("a\n\nb");
+  it("过滤掉空白段（防止拼接出双换行）", () => {
+    expect(joinReasoningSegments(["a", "", "  ", "b"])).toBe("a\nb");
   });
 
   it("trim 每段的首尾空白", () => {
-    expect(joinReasoningSegments(["  hello  ", "world  "])).toBe("hello\n\nworld");
+    expect(joinReasoningSegments(["  hello  ", "world  "])).toBe("hello\nworld");
   });
 
   it("空数组返回空串", () => {
@@ -46,10 +46,10 @@ describe("truncateReasoningLines", () => {
     expect(r.hiddenLines).toBe(0);
   });
 
-  it("行数超过上限时只保留前 N 行", () => {
+  it("行数超过上限时只保留末尾 N 行（滚动窗口，丢弃开头旧行）", () => {
     const text = Array.from({ length: 12 }, (_, i) => `line${i + 1}`).join("\n");
     const r = truncateReasoningLines(text, 6);
-    expect(r.visible).toBe("line1\nline2\nline3\nline4\nline5\nline6");
+    expect(r.visible).toBe("line7\nline8\nline9\nline10\nline11\nline12");
     expect(r.hiddenLines).toBe(6);
     expect(r.totalLines).toBe(12);
   });
