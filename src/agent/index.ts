@@ -24,7 +24,7 @@ import type {
 import { CostTracker, calculateCost } from "../provider/index.js";
 import type { AnyAgentTool } from "../tool/index.js";
 import type { Gate, ToolCallRecord } from "../tool/types.js";
-import { AlwaysAllowGate, ToolKind } from "../tool/types.js";
+import { AlwaysAllowGate, ToolKind, eraseTool } from "../tool/types.js";
 import type { AgentEvent, SessionMode, SystemPromptOptions } from "./types.js";
 import { buildSystemPrompt, buildPlanSystemPrompt } from "./system-prompt.js";
 import { trimMessages, buildApiMessages } from "./message-builder.js";
@@ -33,6 +33,9 @@ import { ToolExecutor } from "./tool-executor.js";
 import { StormDetector } from "./storm-detector.js";
 import { Reflector, type AnalyzeItem } from "./reflector.js";
 import { buildToolDefinitions } from "./tool-definitions.js";
+import { TodoList } from "../harness/todo-list.js";
+import { Verifier } from "../harness/verifier.js";
+import { createHarnessTools } from "../harness/tools.js";
 import {
   createCheckpoint,
   restoreCheckpointForce,
@@ -82,6 +85,8 @@ export interface SessionOptions {
   enableLog?: boolean;
   /** 是否启用 Reflector 失败归因注入（默认 true）。传 false 可彻底关闭 */
   enableReflection?: boolean;
+  /** 是否启用 Harness（TodoList 规划 + Verifier 自动验证）。默认 true */
+  enableHarness?: boolean;
 }
 
 /**
@@ -128,7 +133,7 @@ export class Session {
   /** 归一化后的构造选项（带默认值） */
   readonly #options: Required<
     Pick<SessionOptions, "cwd" | "maxToolRounds" | "reservedForOutput" | "preserveRecentRounds">
-  > & { projectContext?: string; gate: Gate; writeRoots: string[]; enableCheckpoint: boolean; enableLog: boolean; enableReflection: boolean };
+  > & { projectContext?: string; gate: Gate; writeRoots: string[]; enableCheckpoint: boolean; enableLog: boolean; enableReflection: boolean; enableHarness: boolean };
   /** 中止信号控制器（abort() 时触发，传递给 LLM 和工具） */
   readonly #abortController = new AbortController();
 
@@ -155,6 +160,12 @@ export class Session {
   readonly #reflector: Reflector | null;
   /** 本轮工具执行结果（仅在 chat() 循环内使用；用于下一轮注入 reflection） */
   #lastRoundResults: AnalyzeItem[] | null = null;
+  /** Harness 任务列表（仅在 enableHarness 时非 null） */
+  readonly #todoList: TodoList | null;
+  /** Harness 自动验证器（仅在 enableHarness 时非 null） */
+  readonly #verifier: Verifier | null;
+  /** 本轮是否已跑过 Verifier（避免重复跑） */
+  #verificationRunThisTurn = false;
 
   /**
    * 构造一个 Session。
@@ -191,6 +202,7 @@ export class Session {
       enableCheckpoint: options?.enableCheckpoint ?? true,
       enableLog: options?.enableLog ?? true,
       enableReflection: options?.enableReflection !== false,
+      enableHarness: options?.enableHarness !== false,
     };
     this.#sessionId = options?.sessionId ?? SessionStore.newId();
     this.#store = options?.store === false ? null : (options?.store ?? new SessionStore());
@@ -201,6 +213,19 @@ export class Session {
     this.#logger.logSessionStart(this.#sessionId, this.#options.cwd, this.#provider.model(), this.#mode);
     this.#stormDetector = new StormDetector({ threshold: 3 });
     this.#reflector = this.#options.enableReflection ? new Reflector() : null;
+
+    // Harness 初始化（TodoList + Verifier + 3 个新工具）
+    if (this.#options.enableHarness) {
+      const todoList = new TodoList();
+      this.#todoList = todoList;
+      this.#verifier = new Verifier();
+      for (const t of createHarnessTools(todoList)) {
+        this.#toolRegistry.registerErased(eraseTool(t));
+      }
+    } else {
+      this.#todoList = null;
+      this.#verifier = null;
+    }
   }
 
   /** 当前会话的完整消息历史（只读视图） */
@@ -442,6 +467,52 @@ export class Session {
           continue;
         }
 
+        // 模型不再调工具，准备退出循环。Harness 模式下自动跑 Verifier 验证。
+        if (
+          this.#verifier &&
+          this.#todoList &&
+          !this.#verificationRunThisTurn &&
+          this.#todoList.items.length > 0 &&
+          this.#todoList.isAllTerminated()
+        ) {
+          this.#verificationRunThisTurn = true;
+          // 以 system role 提示模型“马上跑验证”，同时护发事件让 UI 看到状态
+          this.#messages.push({
+            role: "user",
+            content: "[系统] 全部 todo 已完成，Harness 正在自动跑验证（type-check / test / lint）。验证结果会随下一轮返回。",
+          });
+          yield { type: "text_delta", content: "\n[系统] 正在跑自动验证...\n" };
+          let result;
+          try {
+            result = await this.#verifier.verifyAfter(
+              { id: 0, content: "all-todos", status: "done" },
+              this.#options.cwd,
+            );
+          } catch (err) {
+            result = {
+              ok: false,
+              signals: [{ kind: "type-check", outcome: "fail", summary: "verifier 异常", detail: String(err) }],
+              elapsedMs: 0,
+            };
+          }
+          const lines = result.signals.map((s) => {
+            const icon = s.outcome === "pass" ? "✅" : s.outcome === "fail" ? "❌" : "⏭";
+            const detail = s.detail ? `\n   ${s.detail}` : "";
+            return `${icon} ${s.kind}: ${s.summary}${detail}`;
+          });
+          const verifierMsg =
+            `\n[自动验证] ok=${result.ok} (${result.elapsedMs}ms)\n` + lines.join("\n");
+          yield { type: "text_delta", content: verifierMsg };
+          this.#messages.push({
+            role: "user",
+            content: `[系统] Harness 自动验证结果：\n${lines.join("\n")}\n\n` +
+              (result.ok
+                ? "全部通过。请输出最终总结。"
+                : "有失败项。请按失败原因修复后重试，或重规划。"),
+          });
+          // 本轮只是“发了验证结果”，实际还是要 break（下一轮才会读这个 user msg）
+        }
+
         break;
       }
     } catch (err: unknown) {
@@ -500,6 +571,7 @@ export class Session {
     this.#stormRecords = [];
     this.#checkpoints.clear();
     this.#lastRoundResults = null;
+    this.#verificationRunThisTurn = false;
   }
 
   /**
@@ -765,7 +837,13 @@ export class Session {
       projectContext: this.#options.projectContext ?? undefined,
       cwd: this.#options.cwd,
     };
-    if (this.#mode === "plan") return buildPlanSystemPrompt(opts);
-    return buildSystemPrompt(opts);
+    let base: string;
+    if (this.#mode === "plan") base = buildPlanSystemPrompt(opts);
+    else base = buildSystemPrompt(opts);
+    // Harness 模式下拼接 TodoList 进度到 prompt 末尾，让模型看到自己进度
+    if (this.#todoList && this.#todoList.items.length > 0) {
+      base = base + "\n\n" + this.#todoList.toMarkdown();
+    }
+    return base;
   }
 }
