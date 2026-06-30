@@ -237,7 +237,10 @@ export function ChatSession({
 }: ChatSessionProps) {
   const termWidth =
     typeof process.stdout.columns === "number" ? process.stdout.columns : 80;
-  const dividerWidth = Math.max(termWidth - 2, 1);
+  // 面板系统宽度
+  const contentAreaWidth = termWidth - 2; // 去掉外 padding
+  const leftPanelWidth = Math.max(Math.floor(contentAreaWidth / 3), 30);
+  const rightContentWidth = contentAreaWidth - leftPanelWidth - 1; // 1 为竖线分隔符
 
   const [offset, setOffset] = useState(0);
   const [displayMessages, setDisplayMessages] = useState<DisplayMessage[]>([]);
@@ -309,9 +312,7 @@ export function ChatSession({
 
   const hasConversationStarted = displayMessages.length > 0;
 
-  // 左侧思考链面板宽度 = 1/3 终端宽度（最小 30 字符）
-  const reasoningPanelWidth = Math.max(Math.floor(termWidth / 3), 30);
-  // 仅流式进行中且有思考内容时显示左侧面板，结束后自动隐藏
+  // 仅流式进行中且有思考内容时显示思考链
   const hasReasoningPanel = isStreaming && currentReasoning.length > 0;
 
   // 命令提示轮播索引
@@ -1451,436 +1452,332 @@ export function ChatSession({
 
   return (
     <Box flexDirection="column" paddingLeft={1} paddingRight={1}>
-      {/* Logo + 状态栏 + 余额 — 三栏布局（仅对话未开始时显示） */}
-      {!hasConversationStarted && (
-        <Box flexDirection="row" marginBottom={1}>
-          {/* Logo */}
-          <Box flexDirection="column" marginRight={4}>
-            {LOGO_LINES.map((line, i) => {
-              const colorIndex = (i + offset) % CYBER_PALETTE.length;
-              return (
-                <Box key={i}>
-                  <Text bold color={CYBER_PALETTE[colorIndex]}>
-                    {line}
-                  </Text>
-                </Box>
-              );
-            })}
-            {/* 版本号：紧跟 Logo 下方，灰色小字，不抢主视觉 */}
-            <Box marginTop={1}>
-              <Text color="#808080">{"  📦 v"}{VERSION}</Text>
-            </Box>
-          </Box>
-
-          {/* 状态信息 */}
-          <Box flexDirection="column" justifyContent="center">
-            <Text color="#00ff41">
-              {"  ✔ "}已就绪 {skillCount} 个 Skill
-            </Text>
-            <Text color="#00ffff">
-              {"  ℹ "}已就绪 {toolCount} 个工具
-            </Text>
-            <Text color="#00ffff">
-              {"  🔧 模型 "}
-              {SUPPORTED_MODELS[activeModel]?.displayName ?? activeModel}
-            </Text>
-            {thinkingEnabled && (
-              <Text color="#ff9800">
-                {"  🧠 深度思考 "}
-                {thinkingEffort === "max" ? "Max" : "High"}
-              </Text>
-            )}
-            {/* 模式指示器 */}
-            {sessionMode === "plan" && (
-              <Text color="#ff69b4" bold>
-                {"  📋 计划模式"}
-              </Text>
-            )}
-            {responseFormat === "json_object" && (
-              <Text color="#4caf50">{"  📄 JSON"}</Text>
-            )}
-            {toolChoice !== undefined && (
-              <Text color="#e91e63">
-                {"  🛠 "}
-                {toolChoice === "none"
-                  ? "禁止工具"
-                  : toolChoice === "required"
-                    ? "强制工具"
-                    : ""}
-              </Text>
-            )}
-            {/* 命令提示轮播 */}
-            {cmdTips.length > 0 &&
-              (() => {
-                const tip = cmdTips[cmdTipIndex % cmdTips.length];
-                if (!tip) return null;
-                const text = `${tip.name} ${tip.desc}`;
-                return (
-                  <Text>
-                    <Text color="#808080">{"  💡 "}</Text>
-                    {cmdTipGradientColors.length > 0 ? (
-                      text.split("").map((ch, i) => (
-                        <Text key={i} color={cmdTipGradientColors[i] || undefined}>
-                          {ch}
-                        </Text>
-                      ))
-                    ) : (
-                      <Text color="#808080">{text}</Text>
-                    )}
-                  </Text>
-                );
-              })()}
-            {verbose ? <Text color="#ff1493">{"  ⚡ Verbose"}</Text> : null}
-          </Box>
-
-          {/* 右侧余额 + 今日消耗 */}
-          <Box
-            flexGrow={1}
-            flexDirection="column"
-            justifyContent="center"
-            alignItems="flex-end"
-          >
-            {balanceLoading && balance === null ? (
-              <Text color="yellow">{"  ⏳ 查询余额..."}</Text>
-            ) : balance !== null ? (
-              <Box flexDirection="row">
-                <Text color="yellow">{"💰 "}</Text>
-                <Text color="yellow">
-                  {"余额 ¥"}
-                  {balance.toFixed(2)}
-                </Text>
-              </Box>
-            ) : null}
-            {todayCost !== null ? (
-              <Box flexDirection="row">
-                <Text color="cyan">{"📊 "}</Text>
-                <Text color="cyan">
-                  {"今日 ¥"}
-                  {todayCost.toFixed(2)}
-                </Text>
-              </Box>
-            ) : null}
-          </Box>
-        </Box>
-      )}
-
-      {/* 左右分栏：左侧思考链 | 右侧对话 */}
+      {/* ===== 面板系统：左侧深度思考 | 右侧对话+输入 ===== */}
       <Box flexDirection="row" flexGrow={1}>
-        {/* 左侧思考链面板 — 流式时撑满高度，内容固定在底部 */}
-        {hasReasoningPanel && (
+
+        {/* ========== 左侧面板（1/3 宽度） ========== */}
+        <Box
+          width={leftPanelWidth}
+          flexShrink={0}
+          flexDirection="column"
+        >
           <Box
-            width={reasoningPanelWidth}
-            flexShrink={0}
+            borderStyle="single"
+            borderColor="#333333"
+            paddingX={1}
             flexDirection="column"
-            paddingRight={1}
             flexGrow={1}
-            justifyContent="flex-end"
+            justifyContent={
+              !hasConversationStarted ? "center" : "flex-end"
+            }
           >
-            <Box
-              borderStyle="single"
-              borderColor="#333333"
-              paddingX={1}
-              flexDirection="column"
-            >
-              <Text bold color="#ff9800">
-                {"🧠 深度思考ing"}
-              </Text>
-              <Text dimColor wrap="wrap">
-                {joinReasoningSegments(currentReasoning)}
-              </Text>
-            </Box>
-          </Box>
-        )}
-
-        {/* 垂直分隔线 */}
-        {hasReasoningPanel && (
-          <Box width={1} flexShrink={0}>
-            <Text color="#444">{"│"}</Text>
-          </Box>
-        )}
-
-        {/* 右侧对话面板 */}
-        <Box flexDirection="column" flexGrow={1}>
-          {/* 消息列表 */}
-          <Box flexDirection="column" marginTop={1}>
-        <Static key={staticKey} items={displayMessages}>
-          {(msg, i) => {
-            if (msg.role === "user") {
-              return (
-                <Box key={i} marginTop={1}>
-                  <Box width={4} flexShrink={0}>
-                    <Text bold color="#00ff41">
-                      {"👤"}
+            {!hasConversationStarted ? (
+              /* ===== 首页：Logo + 状态概况 ===== */
+              <Box flexDirection="column" alignItems="center">
+                {LOGO_LINES.map((line, i) => {
+                  const colorIndex = (i + offset) % CYBER_PALETTE.length;
+                  return (
+                    <Text key={i} bold color={CYBER_PALETTE[colorIndex]}>
+                      {line}
                     </Text>
-                  </Box>
-                  <Box flexGrow={1}>
-                    <Text wrap="wrap">{msg.content}</Text>
-                  </Box>
+                  );
+                })}
+                <Box marginTop={1}>
+                  <Text color="#808080">{"📦 v"}{VERSION}</Text>
                 </Box>
-              );
-            }
-
-            // 工具消息 — 显示文本内容 + Diff 预览
-            // 工具调用属于“过程信息”，使用 dimColor 让主内容（助手回复）的视觉权重更高
-            if (msg.role === "tool") {
-              return (
-                <Box key={i} marginTop={1} flexDirection="column">
-                  <Box flexDirection="row">
-                    <Box width={4} flexShrink={0}>
-                      <Text dimColor>{"🔧"}</Text>
-                    </Box>
-                    <Box flexGrow={1}>
-                      <Text dimColor wrap="wrap">
-                        {msg.content}
-                      </Text>
-                    </Box>
-                  </Box>
-                  {msg.diff && <DiffPreview diff={msg.diff} />}
-                </Box>
-              );
-            }
-
-            // 已完成的助手消息
-            const detail = msg.assistantDetail;
-            return (
-              <AssistantMessage
-                key={i}
-                content={msg.content}
-                toolCalls={detail?.toolCalls}
-                isStreaming={false}
-                usage={detail?.usage}
-                elapsed={detail?.elapsed}
-                cost={detail?.cost}
-                model={detail?.model}
-              />
-            );
-          }}
-        </Static>
-
-        {/* 正在流式输出的助手消息 */}
-        {isStreaming && (
-          <AssistantMessage
-            content={currentContent}
-            toolCalls={currentToolCalls.length > 0 ? currentToolCalls : undefined}
-            isStreaming={true}
-            usage={_currentUsage}
-            cost={_currentCost}
-            model={_streamingModel}
-          />
-        )}
-
-        {/* 错误信息（流式结束后显示） */}
-        {!isStreaming && streamError && (
-          <Box marginTop={1} marginLeft={3}>
-            <Text color="red">⚠ {streamError}</Text>
-          </Box>
-        )}
-      </Box>
-
-      {/* 独立的任务进度面板 — 不混入消息列表，每次 todo_* 刷新原地更新。
-          任务全部结束后 2s 自动隐藏；新任务开启时重新显示。 */}
-      {todoPanelVisible && todoSnapshot.length > 0 && (
-        <TodoListPanel items={todoSnapshot} />
-      )}
-
-      {/* 输入区 */}
-      {selectingModel ? (
-        <Box marginTop={1} flexDirection="column">
-          <Text color="#00ffff" dimColor>
-            {"─".repeat(dividerWidth)}
-          </Text>
-          <Box flexDirection="column" marginTop={1}>
-            <Text bold color="#00ffff">
-              选择模型：
-            </Text>
-            {modelOptions.map((id, i) => {
-              const meta = SUPPORTED_MODELS[id];
-              const isCurrent = id === activeModel;
-              const isSelected = i === modelSelectIndex;
-              const marker = isSelected ? " > " : "   ";
-              const suffix = isCurrent ? " (当前)" : "";
-              return (
-                <Box key={id}>
-                  <Text color={isSelected ? "#00ff41" : undefined} bold={isSelected}>
-                    {marker}
-                    {meta.displayName}
-                    {suffix}
+                <Box marginTop={1} flexDirection="column" alignItems="center">
+                  <Text color="#00ff41">{"✔ "}{skillCount} Skills</Text>
+                  <Text color="#00ffff">{"ℹ "}{toolCount} 工具</Text>
+                  <Text color="#00ffff">
+                    {"🔧 "}{SUPPORTED_MODELS[activeModel]?.displayName ?? activeModel}
                   </Text>
-                  {isSelected && <Text color="#808080"> — {id}</Text>}
+                  {thinkingEnabled && (
+                    <Text color="#ff9800">
+                      {"🧠 深度思考 "}{thinkingEffort === "max" ? "Max" : "High"}
+                    </Text>
+                  )}
+                  {sessionMode === "plan" && (
+                    <Text color="#ff69b4" bold>{"📋 计划模式"}</Text>
+                  )}
                 </Box>
-              );
-            })}
-            <Box marginTop={1}>
-              <Text color="#808080" dimColor>
-                ↑↓ 选择 · Enter 确认 · Esc 取消
-              </Text>
-            </Box>
-          </Box>
-          <Text color="#00ffff" dimColor>
-            {"─".repeat(dividerWidth)}
-          </Text>
-        </Box>
-      ) : rewindSelecting ? (
-        <Box marginTop={1} flexDirection="column">
-          <Text color="#00ffff" dimColor>
-            {"─".repeat(dividerWidth)}
-          </Text>
-          <Box flexDirection="column" marginTop={1}>
-            <Text bold color="#ff9800">
-              选择要回退的检查点：
-            </Text>
-            {rewindList.map((cp, i) => {
-              const isSelected = i === rewindSelectIndex;
-              const marker = isSelected ? " > " : "   ";
-              const time = new Date(cp.timestamp).toLocaleTimeString();
-              const preview = cp.preview || "(空)";
-              const tag = cp.isGitRepo ? "" : " [非 git，仅对话]";
-              return (
-                <Box key={cp.index}>
-                  <Text color={isSelected ? "#ff9800" : undefined} bold={isSelected}>
-                    {marker}#{i + 1} {time} `{preview}
-                    {tag}`
-                  </Text>
+                <Box marginTop={1} flexDirection="column" alignItems="center">
+                  {balance !== null ? (
+                    <Text color="yellow">{"💰 余额 ¥"}{balance.toFixed(2)}</Text>
+                  ) : balanceLoading ? (
+                    <Text color="yellow">{"⏳ 查询余额..."}</Text>
+                  ) : null}
+                  {todayCost !== null && (
+                    <Text color="cyan">{"📊 今日 ¥"}{todayCost.toFixed(2)}</Text>
+                  )}
                 </Box>
-              );
-            })}
-            <Box marginTop={1}>
-              <Text color="#808080" dimColor>
-                ↑↓ 选择 · Enter 确认 · Esc 取消
-              </Text>
-            </Box>
-          </Box>
-          <Text color="#00ffff" dimColor>
-            {"─".repeat(dividerWidth)}
-          </Text>
-        </Box>
-      ) : (
-        <>
-          {/* 流式状态指示器 — 上框上方居中显示 */}
-          {(hasConversationStarted || sessionMode === "plan") &&
-          isStreaming &&
-          streamingPhase ? (
-            <Box marginTop={1} justifyContent="center">
-              <Text bold color={PHASE_CONFIG[streamingPhase].color}>
-                {PHASE_CONFIG[streamingPhase].icon} {PHASE_CONFIG[streamingPhase].label}{" "}
-                <InkSpinner type="dots" />
-              </Text>
-            </Box>
-          ) : rewindHintPhase === "visible" ? (
-            // 本轮修改了文件时，流式结束后 2s 在原位置展示 /rewind 提示
-            // 一直保留到下次对话开始，与 /rewind 1（最新检查点）配套
-            <Box marginTop={1} justifyContent="center">
-              <Text color="#808080">{"↩ /rewind 1 可撤回本次修改"}</Text>
-            </Box>
-          ) : null}
-          <Box marginTop={1}>
-            {hasConversationStarted || sessionMode === "plan" ? (
-              <Text
-                color={sessionMode === "plan" ? "#ff69b4" : "#00ffff"}
-                dimColor={sessionMode !== "plan"}
-              >
-                <Text>
-                  {sessionMode === "plan"
-                    ? "─".repeat(Math.max(dividerWidth - 48, 1))
-                    : "─".repeat(Math.max(dividerWidth - 35, 10))}
+                {cmdTips.length > 0 && (() => {
+                  const tip = cmdTips[cmdTipIndex % cmdTips.length];
+                  if (!tip) return null;
+                  const text = `${tip.name} ${tip.desc}`;
+                  return (
+                    <Box marginTop={1}>
+                      <Text color="#808080">{"💡 "}</Text>
+                      {cmdTipGradientColors.length > 0 ? (
+                        text.split("").map((ch, i) => (
+                          <Text key={i} color={cmdTipGradientColors[i] || undefined}>
+                            {ch}
+                          </Text>
+                        ))
+                      ) : (
+                        <Text color="#808080">{text}</Text>
+                      )}
+                    </Box>
+                  );
+                })()}
+                {verbose && <Text color="#ff1493">{"⚡ Verbose"}</Text>}
+              </Box>
+            ) : hasReasoningPanel ? (
+              /* ===== 流式思考中：思考链 ===== */
+              <>
+                <Text bold color="#ff9800">{"🧠 深度思考ing"}</Text>
+                <Text dimColor wrap="wrap">
+                  {joinReasoningSegments(currentReasoning)}
                 </Text>
-                {balance !== null && (
-                  <Text color="yellow">
-                    {" 💰 余额 ¥"}
-                    {balance.toFixed(2)}
-                  </Text>
-                )}
-                {isStreaming ? (
-                  <Text color="cyan">
-                    {"  📊 本次 ¥"}
-                    {sessionCost > 0 ? sessionCost.toFixed(4) + " " : ""}
-                    <InkSpinner type="dots" />
-                  </Text>
-                ) : sessionCost > 0 ? (
-                  <Text color="cyan">
-                    {"  📊 本次 ¥"}
-                    {sessionCost.toFixed(4)}
-                  </Text>
-                ) : null}
-                {sessionMode === "plan" && (
-                  <Text color="#ff69b4" bold>
-                    {"  📋 计划模式"}
-                  </Text>
-                )}
-              </Text>
+              </>
             ) : (
-              <Text color="#00ffff" dimColor>
-                {"─".repeat(dividerWidth)}
-              </Text>
+              /* ===== 对话中（无思考）：会话摘要 ===== */
+              <Box flexDirection="column" alignItems="center">
+                {sessionCost > 0 && (
+                  <Text color="cyan">{"📊 会话 ¥"}{sessionCost.toFixed(4)}</Text>
+                )}
+                <Text color="#808080">
+                  {"🔧 "}{SUPPORTED_MODELS[activeModel]?.displayName ?? activeModel}
+                </Text>
+                {thinkingEnabled && (
+                  <Text color="#ff9800">
+                    {"🧠 "}{thinkingEffort === "max" ? "Max" : "High"}
+                  </Text>
+                )}
+                {balance !== null && (
+                  <Text color="yellow">{"💰 ¥"}{balance.toFixed(2)}</Text>
+                )}
+              </Box>
             )}
           </Box>
-          <Box>
-            <Box width={4} flexShrink={0}>
-              <Text bold color="#00ff41">
-                {"⚡"}
-              </Text>
-            </Box>
-            <Box flexGrow={1}>
-              {!input && !isStreaming && idlePlaceholder && gradientColors.length > 0 ? (
-                <Text>
-                  {idlePlaceholder.split("").map((ch, i) => (
-                    <Text key={i} color={gradientColors[i] ?? undefined}>
-                      {ch}
-                    </Text>
-                  ))}
-                </Text>
-              ) : !input &&
-                isStreaming &&
-                streamingPlaceholder &&
-                streamingGradientColors.length > 0 ? (
-                <Text>
-                  {streamingPlaceholder.split("").map((ch, i) => (
-                    <Text key={i} color={streamingGradientColors[i] ?? undefined}>
-                      {ch}
-                    </Text>
-                  ))}
-                </Text>
-              ) : (
-                <TextInput
-                  key={inputKey}
-                  value={input}
-                  onChange={setInput}
-                  onSubmit={handleSubmit}
-                  placeholder=""
+        </Box>
+
+        {/* ========== 竖线分隔符 ========== */}
+        <Box width={1} flexShrink={0}>
+          <Text color="#444">{"│"}</Text>
+        </Box>
+
+        {/* ========== 右侧面板（2/3 宽度） ========== */}
+        <Box flexDirection="column" flexGrow={1}>
+
+          {/* ----- 对话消息区域（撑满剩余空间） ----- */}
+          <Box flexDirection="column" flexGrow={1}>
+            {/* 消息列表 */}
+            <Box flexDirection="column" marginTop={1}>
+              <Static key={staticKey} items={displayMessages}>
+                {(msg, i) => {
+                  if (msg.role === "user") {
+                    return (
+                      <Box key={i} marginTop={1}>
+                        <Box width={4} flexShrink={0}>
+                          <Text bold color="#00ff41">{"👤"}</Text>
+                        </Box>
+                        <Box flexGrow={1}>
+                          <Text wrap="wrap">{msg.content}</Text>
+                        </Box>
+                      </Box>
+                    );
+                  }
+                  if (msg.role === "tool") {
+                    return (
+                      <Box key={i} marginTop={1} flexDirection="column">
+                        <Box flexDirection="row">
+                          <Box width={4} flexShrink={0}>
+                            <Text dimColor>{"🔧"}</Text>
+                          </Box>
+                          <Box flexGrow={1}>
+                            <Text dimColor wrap="wrap">{msg.content}</Text>
+                          </Box>
+                        </Box>
+                        {msg.diff && <DiffPreview diff={msg.diff} />}
+                      </Box>
+                    );
+                  }
+                  const detail = msg.assistantDetail;
+                  return (
+                    <AssistantMessage
+                      key={i}
+                      content={msg.content}
+                      toolCalls={detail?.toolCalls}
+                      isStreaming={false}
+                      usage={detail?.usage}
+                      elapsed={detail?.elapsed}
+                      cost={detail?.cost}
+                      model={detail?.model}
+                    />
+                  );
+                }}
+              </Static>
+
+              {isStreaming && (
+                <AssistantMessage
+                  content={currentContent}
+                  toolCalls={currentToolCalls.length > 0 ? currentToolCalls : undefined}
+                  isStreaming={true}
+                  usage={_currentUsage}
+                  cost={_currentCost}
+                  model={_streamingModel}
                 />
               )}
+
+              {!isStreaming && streamError && (
+                <Box marginTop={1} marginLeft={3}>
+                  <Text color="red">⚠ {streamError}</Text>
+                </Box>
+              )}
             </Box>
-          </Box>
-          <Box>
-            <Text color="#00ffff" dimColor>
-              {"─".repeat(dividerWidth)}
-            </Text>
+
+            {/* Todo 进度面板 */}
+            {todoPanelVisible && todoSnapshot.length > 0 && (
+              <TodoListPanel items={todoSnapshot} />
+            )}
           </Box>
 
-          {/* 用户输入 / 时显示 skill 列表 */}
-          <SkillSelector skills={skills} input={input} selectedIndex={skillSelectIndex} />
-          {/* 用户输入 @ 时显示文件列表 */}
-          <FileSelector files={files} input={input} selectedIndex={fileSelectIndex} />
-          </>
-        )}
+          {/* ----- 输入区域（固定底部） ----- */}
+          {selectingModel ? (
+            <Box marginTop={1} flexDirection="column">
+              <Text color="#00ffff" dimColor>
+                {"─".repeat(rightContentWidth)}
+              </Text>
+              <Box flexDirection="column" marginTop={1}>
+                <Text bold color="#00ffff">选择模型：</Text>
+                {modelOptions.map((id, i) => {
+                  const meta = SUPPORTED_MODELS[id];
+                  const isCurrent = id === activeModel;
+                  const isSelected = i === modelSelectIndex;
+                  const marker = isSelected ? " > " : "   ";
+                  const suffix = isCurrent ? " (当前)" : "";
+                  return (
+                    <Box key={id}>
+                      <Text color={isSelected ? "#00ff41" : undefined} bold={isSelected}>
+                        {marker}{meta.displayName}{suffix}
+                      </Text>
+                      {isSelected && <Text color="#808080"> — {id}</Text>}
+                    </Box>
+                  );
+                })}
+                <Box marginTop={1}>
+                  <Text color="#808080" dimColor>↑↓ 选择 · Enter 确认 · Esc 取消</Text>
+                </Box>
+              </Box>
+              <Text color="#00ffff" dimColor>
+                {"─".repeat(rightContentWidth)}
+              </Text>
+            </Box>
+          ) : rewindSelecting ? (
+            <Box marginTop={1} flexDirection="column">
+              <Text color="#00ffff" dimColor>
+                {"─".repeat(rightContentWidth)}
+              </Text>
+              <Box flexDirection="column" marginTop={1}>
+                <Text bold color="#ff9800">选择要回退的检查点：</Text>
+                {rewindList.map((cp, i) => {
+                  const isSelected = i === rewindSelectIndex;
+                  const marker = isSelected ? " > " : "   ";
+                  const time = new Date(cp.timestamp).toLocaleTimeString();
+                  const preview = cp.preview || "(空)";
+                  const tag = cp.isGitRepo ? "" : " [非 git，仅对话]";
+                  return (
+                    <Box key={cp.index}>
+                      <Text color={isSelected ? "#ff9800" : undefined} bold={isSelected}>
+                        {marker}#{i + 1} {time} `{preview}{tag}`
+                      </Text>
+                    </Box>
+                  );
+                })}
+                <Box marginTop={1}>
+                  <Text color="#808080" dimColor>↑↓ 选择 · Enter 确认 · Esc 取消</Text>
+                </Box>
+              </Box>
+              <Text color="#00ffff" dimColor>
+                {"─".repeat(rightContentWidth)}
+              </Text>
+            </Box>
+          ) : (
+            <>
+              {/* 流式状态 / rewind 提示 */}
+              {(hasConversationStarted || sessionMode === "plan") &&
+              isStreaming &&
+              streamingPhase ? (
+                <Box marginTop={1} justifyContent="center">
+                  <Text bold color={PHASE_CONFIG[streamingPhase].color}>
+                    {PHASE_CONFIG[streamingPhase].icon} {PHASE_CONFIG[streamingPhase].label}{" "}
+                    <InkSpinner type="dots" />
+                  </Text>
+                </Box>
+              ) : rewindHintPhase === "visible" ? (
+                <Box marginTop={1} justifyContent="center">
+                  <Text color="#808080">{"↩ /rewind 1 可撤回本次修改"}</Text>
+                </Box>
+              ) : null}
+
+              {/* 分隔线 */}
+              <Box marginTop={1}>
+                <Text color="#00ffff" dimColor>
+                  {"─".repeat(rightContentWidth)}
+                </Text>
+              </Box>
+
+              {/* 输入框 */}
+              <Box>
+                <Box width={4} flexShrink={0}>
+                  <Text bold color="#00ff41">{"⚡"}</Text>
+                </Box>
+                <Box flexGrow={1}>
+                  {!input && !isStreaming && idlePlaceholder && gradientColors.length > 0 ? (
+                    <Text>
+                      {idlePlaceholder.split("").map((ch, i) => (
+                        <Text key={i} color={gradientColors[i] ?? undefined}>{ch}</Text>
+                      ))}
+                    </Text>
+                  ) : !input && isStreaming && streamingPlaceholder && streamingGradientColors.length > 0 ? (
+                    <Text>
+                      {streamingPlaceholder.split("").map((ch, i) => (
+                        <Text key={i} color={streamingGradientColors[i] ?? undefined}>{ch}</Text>
+                      ))}
+                    </Text>
+                  ) : (
+                    <TextInput
+                      key={inputKey}
+                      value={input}
+                      onChange={setInput}
+                      onSubmit={handleSubmit}
+                      placeholder=""
+                    />
+                  )}
+                </Box>
+              </Box>
+              <Box>
+                <Text color="#00ffff" dimColor>
+                  {"─".repeat(rightContentWidth)}
+                </Text>
+              </Box>
+
+              <SkillSelector skills={skills} input={input} selectedIndex={skillSelectIndex} />
+              <FileSelector files={files} input={input} selectedIndex={fileSelectIndex} />
+            </>
+          )}
         </Box>
       </Box>
 
-      {/* 双击 Ctrl+C 退出提示 */}
+      {/* 底部提示 — 全宽 */}
       {doubleCtrlC && !isStreaming && (
         <Box marginTop={1}>
-          <Text color="#ff1493" bold>
-            {"  ⚠ 再按一次 Ctrl+C 退出 dskcode"}
-          </Text>
+          <Text color="#ff1493" bold>{"  ⚠ 再按一次 Ctrl+C 退出 dskcode"}</Text>
         </Box>
       )}
-
-      {/* 流式中 Ctrl+C 取消提示 */}
       {isStreaming && (
         <Box marginTop={1}>
-          <Text color="yellow" dimColor>
-            {"  提示：按 Ctrl+C 取消当前请求"}
-          </Text>
+          <Text color="yellow" dimColor>{"  提示：按 Ctrl+C 取消当前请求"}</Text>
         </Box>
       )}
     </Box>
