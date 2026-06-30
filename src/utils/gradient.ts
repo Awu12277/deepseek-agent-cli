@@ -35,15 +35,15 @@ export const GRADIENT_ANIMATION = {
   /** 空闲占位符动画：每帧相位步进（值越大流速越快） */
   idlePhaseStep: 0.06,
   /** 空闲占位符动画：帧间隔（ms） */
-  idleInterval: 40,
+  idleInterval: 200,
   /** 流式占位符动画：每帧相位步进 */
-  streamingPhaseStep: 0.05,
+  streamingPhaseStep: 0.2,
   /** 流式占位符动画：帧间隔（ms） */
-  streamingInterval: 40,
+  streamingInterval: 200,
   /** 命令提示条动画：每帧相位步进 */
-  cmdTipPhaseStep: 0.05,
+  cmdTipPhaseStep: 0.2,
   /** 命令提示条动画：帧间隔（ms） */
-  cmdTipInterval: 40,
+  cmdTipInterval: 200,
 } as const;
 
 // ---- 渲染时跳过着色的字符 ----
