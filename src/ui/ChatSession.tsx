@@ -36,7 +36,7 @@ import {
   getGradientColors,
 } from "../utils/gradient.js";
 import { SUPPORTED_MODELS, calculateCost } from "../provider/models.js";
-import { joinReasoningSegments } from "./reasoning-utils.js";
+import { joinReasoningSegments, truncateReasoningLines } from "./reasoning-utils.js";
 import { AnimatedLogo } from "./AnimatedLogo.js";
 import { saveModelConfig } from "../config/loader.js";
 
@@ -1514,11 +1514,15 @@ export function ChatSession({
                 {verbose && <Text color="#ff1493">{"⚡ Verbose"}</Text>}
               </Box>
             ) : hasReasoningPanel ? (
-              /* ===== 流式思考中：思考链 ===== */
+              /* ===== 流式思考中：截断至最新5行 ===== */
               <>
                 <Text bold color="#ff9800">{"🧠 深度思考ing"}</Text>
                 <Text dimColor wrap="wrap">
-                  {joinReasoningSegments(currentReasoning)}
+                  {(() => {
+                    const full = joinReasoningSegments(currentReasoning);
+                    const { visible } = truncateReasoningLines(full, 12);
+                    return visible;
+                  })()}
                 </Text>
               </>
             ) : (
