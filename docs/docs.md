@@ -289,6 +289,16 @@ Agent 的核心——消息构建、循环控制、工具决策。
 
 ---
 
+## 实战记录
+
+独立排障 / 技术博客，不按架构章节编号，单独收录。
+
+| # | 文章 | 核心内容 | 对应 commit |
+|---|------|----------|-------------|
+| 09 | [一个 `\r` 引发的重试循环：用 toLf 治好 AI Agent 的 CRLF 匹配病](./blog-09-tolf-crlf-fix.md) | Windows CRLF 文件致 edit_file 精确匹配失败、模型重试循环；toLf 归一化匹配 + normalizeEol 落盘还原 | `9ad629bf` |
+
+---
+
 > **状态说明**：✅ 已完成  ⚡ 部分就绪  ❌ 未开始
 > 代码仓库：https://github.com/Awu12277/deepseek-agent-cli
 > 欢迎 Star & PR！
