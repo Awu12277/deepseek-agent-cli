@@ -277,8 +277,13 @@ export function ChatSession({
   const [todoSnapshot, setTodoSnapshot] = useState<ReadonlyArray<TodoItem>>([]);
   // 任务全部结束后延迟隐藏的面板可见性（默认 true：有 snapshot 就显示）
   const [todoPanelVisible, setTodoPanelVisible] = useState(true);
-  // “全部结束后 2s 隐藏”的定时器句柄
+  // "全部结束后 2s 隐藏"的定时器句柄
   const todoHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 上次"全部 terminated"批次的最大 todo id。
+  // 当新批次 todo_add 推来 event.todoSnapshot 时，过滤掉 ≤ 此值的旧批次项，
+  // 避免「上一轮已完成的任务进度在新一轮渲染出来」。
+  // 初始 -1 表示没有上批次，不过滤。
+  const lastDoneBatchMaxIdRef = useRef(-1);
 
   // 会话模式（code / plan）
   const [sessionMode, setSessionMode] = useState<SessionMode>("code");
@@ -396,7 +401,8 @@ export function ChatSession({
       setTodoPanelVisible(true);
     } else {
       // 全部 done / failed / skipped：给用户 2s 缓冲看到完成态，再隐藏面板。
-      // 缓冲期内新一轮 handleSubmit 会清空 snapshot + 取消这个定时器，节奏正确。
+      // 同时记录批次边界，供下次 tool_result 过滤旧批次用。
+      lastDoneBatchMaxIdRef.current = Math.max(...todoSnapshot.map((it) => it.id));
       todoHideTimerRef.current = setTimeout(() => {
         setTodoPanelVisible(false);
         todoHideTimerRef.current = null;
@@ -1121,6 +1127,8 @@ export function ChatSession({
               process.stdout.write("\x1b[2J\x1b[H\x1b[3J");
               // 重置 Session 历史
               sessionRef.current?.reset();
+              // 批次边界同步复位（新 Session 的新 TodoList 从 id=0 开始）
+              lastDoneBatchMaxIdRef.current = -1;
               return;
             case "navigate":
               setInput("");
@@ -1286,13 +1294,30 @@ export function ChatSession({
               const r = event.result;
               if (event.name.startsWith("todo_") && event.todoSnapshot) {
                 // todo_* 工具：更新独立的任务进度 state（覆盖而非追加），不产生消息条目。
-                // 不在这里提前清空 snapshot：全部结束时的"隐藏面板"交给
-                // todoSnapshot effect 排 2s 延迟定时器统一处理，避免和新一轮
-                // handleSubmit 顶部的 setTodoSnapshot([]) 抢时序、出现上轮完成态
-                // 漏给用户看 / 下一轮被旧引用糊一脸。
                 // 拷贝一份 event.todoSnapshot，避免后续 TodoList 内部数组原地修改
                 // 引起 React bail out 后面板不刷新。
-                setTodoSnapshot([...event.todoSnapshot]);
+                const snapshot = [...event.todoSnapshot];
+                // 如果批次全部 terminated（done/failed/skipped），记录最大 id 作为批次边界，
+                // 供下一批次过滤用。不在这里主动清空 snapshot（让 effect 的 2s 延迟统一处理隐藏）。
+                const allTerminated =
+                  snapshot.length > 0 &&
+                  snapshot.every(
+                    (it) =>
+                      it.status === "done" ||
+                      it.status === "failed" ||
+                      it.status === "skipped",
+                  );
+                if (allTerminated) {
+                  lastDoneBatchMaxIdRef.current = Math.max(...snapshot.map((it) => it.id));
+                  setTodoSnapshot(snapshot);
+                } else if (lastDoneBatchMaxIdRef.current >= 0) {
+                  // 有上批次边界存在 → 过滤掉旧批次的 item（id ≤ 上批次最大 id）
+                  setTodoSnapshot(
+                    snapshot.filter((it) => it.id > lastDoneBatchMaxIdRef.current),
+                  );
+                } else {
+                  setTodoSnapshot(snapshot);
+                }
               } else {
                 // 非 todo 工具：优先使用 summary（一行简短摘要），避免在 UI 中撑出大段文件内容
                 const line = r.success
