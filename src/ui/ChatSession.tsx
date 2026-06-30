@@ -1429,6 +1429,10 @@ export function ChatSession({
                 </Box>
               );
             })}
+            {/* 版本号：紧跟 Logo 下方，灰色小字，不抢主视觉 */}
+            <Box marginTop={1}>
+              <Text color="#808080">{"  📦 v"}{VERSION}</Text>
+            </Box>
           </Box>
 
           {/* 状态信息 */}
