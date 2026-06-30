@@ -1511,25 +1511,6 @@ export function ChatSession({
                     <Text color="cyan">{"📊 今日 ¥"}{todayCost.toFixed(2)}</Text>
                   )}
                 </Box>
-                {cmdTips.length > 0 && (() => {
-                  const tip = cmdTips[cmdTipIndex % cmdTips.length];
-                  if (!tip) return null;
-                  const text = `${tip.name} ${tip.desc}`;
-                  return (
-                    <Box marginTop={1}>
-                      <Text color="#808080">{"💡 "}</Text>
-                      {cmdTipGradientColors.length > 0 ? (
-                        text.split("").map((ch, i) => (
-                          <Text key={i} color={cmdTipGradientColors[i] || undefined}>
-                            {ch}
-                          </Text>
-                        ))
-                      ) : (
-                        <Text color="#808080">{text}</Text>
-                      )}
-                    </Box>
-                  );
-                })()}
                 {verbose && <Text color="#ff1493">{"⚡ Verbose"}</Text>}
               </Box>
             ) : hasReasoningPanel ? (
@@ -1574,7 +1555,30 @@ export function ChatSession({
           <Box flexDirection="column" flexGrow={1}>
             {/* 首页右侧：DeepSeek 字符 Logo */}
             {!hasConversationStarted && (
-              <Box flexDirection="column" alignItems="flex-start" justifyContent="flex-end" flexGrow={1} paddingBottom={1}>
+              <Box flexDirection="column" alignItems="flex-start" flexGrow={1} paddingBottom={1}>
+                {/* 命令提示 — 居中显示 */}
+                {cmdTips.length > 0 && (() => {
+                  const tip = cmdTips[cmdTipIndex % cmdTips.length];
+                  if (!tip) return null;
+                  const text = `${tip.name} ${tip.desc}`;
+                  return (
+                    <Box marginTop={1} alignSelf="center">
+                      <Text color="#808080">{"💡 "}</Text>
+                      {cmdTipGradientColors.length > 0 ? (
+                        text.split("").map((ch, i) => (
+                          <Text key={i} color={cmdTipGradientColors[i] || undefined}>
+                            {ch}
+                          </Text>
+                        ))
+                      ) : (
+                        <Text color="#808080">{text}</Text>
+                      )}
+                    </Box>
+                  );
+                })()}
+                {/* 撑满剩余空间 */}
+                <Box flexGrow={1} />
+                {/* Logo 固定底部，左对齐 */}
                 <AnimatedLogo panelWidth={rightContentWidth} />
               </Box>
             )}

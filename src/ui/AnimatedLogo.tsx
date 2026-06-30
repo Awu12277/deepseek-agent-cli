@@ -1,12 +1,12 @@
 // ---------------------------------------------------------------------------
-// 动画 DeepSeek Logo — 在面板内左右往返移动，触壁翻转
+// 动画 DeepSeek Logo — 从右向左循环滚动
+// 进入时右侧逐渐显现，离开时左侧逐渐裁剪
 // ---------------------------------------------------------------------------
 
 import { Box, Text } from "ink";
 import { useEffect, useRef, useState } from "react";
 
-/** 朝左移动时使用 */
-const LOGO_RIGHT = [
+const LOGO_LINES = [
   "  ▄▄▄▄▄▄▄█    █▄   ▄▄",
   " ▄███████████▄▄▀███▀▀",
   "▀█     ▀▀███▄ ████",
@@ -14,16 +14,7 @@ const LOGO_RIGHT = [
   "   ▀▀▀█████▄▀▀▀▀▀",
 ];
 
-/** 朝右移动时使用 */
-const LOGO_LEFT = [
-  "▄▄   ▄█    █▄▄▄▄▄▄▄  ",
-  "▀▀███▀▄▄███████████▄ ",
-  "████ ▄███▀▀     █▀",
-  "▀█████▀ ▄    ▄█▀ ",
-  "▀▀▀▀▀▄█████▀▀▀   ",
-];
-
-const LOGO_WIDTH = 22; // 字符最大宽度
+const LOGO_WIDTH = 22;
 const MOVE_INTERVAL_MS = 120;
 const LOGO_COLOR = "#6185f6";
 
@@ -33,45 +24,46 @@ interface AnimatedLogoProps {
 }
 
 export function AnimatedLogo({ panelWidth }: AnimatedLogoProps) {
-  const maxOffset = Math.max(0, panelWidth - LOGO_WIDTH);
-
-  // 用 ref 存实时位置和方向，避免闭包过期问题
-  const posRef = useRef(maxOffset); // 初始在最右侧
-  const dirRef = useRef(-1); // -1 → 向左移动
-
+  // pos 表示 Logo 左边缘距面板左边缘的偏移量
+  // panelWidth = 刚好完全在右侧不可见
+  const posRef = useRef(panelWidth);
   const [renderTick, setRenderTick] = useState(0);
 
   useEffect(() => {
-    if (maxOffset <= 0) return;
-
     const timer = setInterval(() => {
-      posRef.current += dirRef.current;
+      posRef.current -= 1; // 一直向左移动
 
-      if (posRef.current <= 0) {
-        posRef.current = 0;
-        dirRef.current = 1; // 触左壁 → 向右
-      } else if (posRef.current >= maxOffset) {
-        posRef.current = maxOffset;
-        dirRef.current = -1; // 触右壁 → 向左
+      // 完全移出左侧后，重置到右侧重新穿入
+      if (posRef.current <= -LOGO_WIDTH) {
+        posRef.current = panelWidth;
       }
 
       setRenderTick((t) => t + 1);
     }, MOVE_INTERVAL_MS);
 
     return () => clearInterval(timer);
-  }, [maxOffset]);
+  }, [panelWidth]);
 
-  // Logo 朝向移动方向
-  const movingLeft = dirRef.current === -1;
-  const logoLines = movingLeft ? LOGO_RIGHT : LOGO_LEFT;
-  const indent = posRef.current;
+  const pos = posRef.current;
+
+  // 完全在右侧不可见 → 跳过渲染
+  if (pos >= panelWidth) return null;
+
+  // 左侧裁剪：负偏移时裁掉左侧字符
+  const leftClip = Math.max(0, -pos);
+
+  // 右侧裁剪：仅保留面板宽度内的部分
+  const rightClip = Math.max(0, pos + LOGO_WIDTH - panelWidth);
+
+  // 左侧空格：正偏移时留空定位
+  const padding = Math.max(0, pos);
 
   return (
     <Box flexDirection="column" alignItems="flex-start">
-      {logoLines.map((line, i) => (
+      {LOGO_LINES.map((line, i) => (
         <Text key={i} color={LOGO_COLOR} bold>
-          {" ".repeat(indent)}
-          {line}
+          {" ".repeat(padding)}
+          {line.slice(leftClip, LOGO_WIDTH - rightClip)}
         </Text>
       ))}
     </Box>
