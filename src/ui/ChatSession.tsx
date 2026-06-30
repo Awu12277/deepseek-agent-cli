@@ -1463,8 +1463,6 @@ export function ChatSession({
           flexDirection="column"
         >
           <Box
-            borderStyle="single"
-            borderColor="#333333"
             paddingX={1}
             flexDirection="column"
             flexGrow={1}
@@ -1514,10 +1512,8 @@ export function ChatSession({
                 {verbose && <Text color="#ff1493">{"⚡ Verbose"}</Text>}
               </Box>
             ) : hasReasoningPanel ? (
-              /* ===== 流式思考中：截断至最新12行，空行填充维持固定高度 ===== */
-              <>
-                <Text bold color="#ff9800">{"🧠 深度思考ing"}</Text>
-                <Text dimColor wrap="wrap">
+              /* ===== 流式思考中（纯文本，无边框） ===== */
+              <Text dimColor wrap="wrap">
                   {(() => {
                     const full = joinReasoningSegments(currentReasoning);
                     const maxContentLines = 11;
@@ -1530,7 +1526,6 @@ export function ChatSession({
                     return kept.join("\n");
                   })()}
                 </Text>
-              </>
             ) : (
               /* ===== 对话中（无思考）：会话状态面板 ===== */
               <Box flexDirection="column" alignItems="center">
