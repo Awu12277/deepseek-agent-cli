@@ -372,7 +372,7 @@ export function ChatSession({
 
   // todo 面板可见性：
   // - 有未完成项（pending / running / failed）→ 一直显示
-  // - 全部结束（done / skipped）→ 立即隐藏
+  // - 全部结束（done / skipped）→ 2s 缓冲后自动隐藏，让用户看清完成态
   // - snapshot 为空 → 隐藏
   // 新任务开始时（snapshot 从空 → 非空）会重新出现
   useEffect(() => {
@@ -392,7 +392,16 @@ export function ChatSession({
       (it) => it.status === "pending" || it.status === "running" || it.status === "failed",
     );
 
-    setTodoPanelVisible(hasUnfinished);
+    if (hasUnfinished) {
+      setTodoPanelVisible(true);
+    } else {
+      // 全部 done / failed / skipped：给用户 2s 缓冲看到完成态，再隐藏面板。
+      // 缓冲期内新一轮 handleSubmit 会清空 snapshot + 取消这个定时器，节奏正确。
+      todoHideTimerRef.current = setTimeout(() => {
+        setTodoPanelVisible(false);
+        todoHideTimerRef.current = null;
+      }, 2000);
+    }
   }, [todoSnapshot]);
 
   // 获取当前输入匹配的 skill 列表
@@ -1189,11 +1198,17 @@ export function ChatSession({
         clearTimeout(rewindHintTimerRef.current);
         rewindHintTimerRef.current = null;
       }
-      // 新一轮对话开始：主动清空上轮残留的 todoSnapshot，
-      // 避免上轮最后一次 todo_mark_done 推的是 TodoList 内部数组引用、
-      // 新一轮第一次 todo_add 又推同一引用导致 React bail out 后面板不刷新。
-      // effect 会同步设 todoPanelVisible = false。
+      // 新一轮对话开始：主动清空上轮残留的 todoSnapshot + 立即隐藏面板。
+      // - 清空 snapshot：避免上轮最后一次 todo_mark_done 推的是 TodoList 内部数组引用、
+      //   新一轮第一次 todo_add 又推同一引用导致 React bail out 后面板不刷新。
+      // - 显式 setTodoPanelVisible(false)：清掉 effect 里的"2s 延迟隐藏"定时器，
+      //   防止上一轮任务结束触发的延迟隐藏定时器在用户敲回车的瞬间把新任务的面板误关。
       setTodoSnapshot([]);
+      if (todoHideTimerRef.current) {
+        clearTimeout(todoHideTimerRef.current);
+        todoHideTimerRef.current = null;
+      }
+      setTodoPanelVisible(false);
 
       const session = sessionRef.current;
       const abortController = new AbortController();
@@ -1271,22 +1286,13 @@ export function ChatSession({
               const r = event.result;
               if (event.name.startsWith("todo_") && event.todoSnapshot) {
                 // todo_* 工具：更新独立的任务进度 state（覆盖而非追加），不产生消息条目。
-                // 全部结束后（所有项都是 done / failed / skipped）→ 直接清空 snapshot，
-                // 让 <TodoListPanel> 立即消失，避免结束后面板还赖着占位。
-                //  AssistantMessage 里已渲染的 todo_* 工具块保留（那是历史回放）。
-                const allTerminated =
-                  event.todoSnapshot.length > 0 &&
-                  event.todoSnapshot.every(
-                    (it) =>
-                      it.status === "done" ||
-                      it.status === "failed" ||
-                      it.status === "skipped",
-                  );
-                if (allTerminated) {
-                  setTodoSnapshot([]);
-                } else {
-                  setTodoSnapshot(event.todoSnapshot);
-                }
+                // 不在这里提前清空 snapshot：全部结束时的"隐藏面板"交给
+                // todoSnapshot effect 排 2s 延迟定时器统一处理，避免和新一轮
+                // handleSubmit 顶部的 setTodoSnapshot([]) 抢时序、出现上轮完成态
+                // 漏给用户看 / 下一轮被旧引用糊一脸。
+                // 拷贝一份 event.todoSnapshot，避免后续 TodoList 内部数组原地修改
+                // 引起 React bail out 后面板不刷新。
+                setTodoSnapshot([...event.todoSnapshot]);
               } else {
                 // 非 todo 工具：优先使用 summary（一行简短摘要），避免在 UI 中撑出大段文件内容
                 const line = r.success

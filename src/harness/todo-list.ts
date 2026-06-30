@@ -194,9 +194,9 @@ export class TodoList {
     );
   }
 
-  /** 全部条目（只读快照） */
+  /** 全部条目（只读快照 — 每次返回新数组，避免上游拿到内部引用后被原地修改） */
   get items(): ReadonlyArray<TodoItem> {
-    return this.#items;
+    return this.#items.map((it) => ({ ...it }));
   }
 
   /**
