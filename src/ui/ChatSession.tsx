@@ -1514,14 +1514,20 @@ export function ChatSession({
                 {verbose && <Text color="#ff1493">{"⚡ Verbose"}</Text>}
               </Box>
             ) : hasReasoningPanel ? (
-              /* ===== 流式思考中：截断至最新5行 ===== */
+              /* ===== 流式思考中：截断至最新12行，空行填充维持固定高度 ===== */
               <>
                 <Text bold color="#ff9800">{"🧠 深度思考ing"}</Text>
                 <Text dimColor wrap="wrap">
                   {(() => {
                     const full = joinReasoningSegments(currentReasoning);
-                    const { visible } = truncateReasoningLines(full, 12);
-                    return visible;
+                    const maxContentLines = 11;
+                    const lines = full.split("\n");
+                    const kept = lines.slice(-maxContentLines);
+                    // 填充空行到固定行数，防止布局抖动
+                    while (kept.length < maxContentLines) {
+                      kept.unshift("");
+                    }
+                    return kept.join("\n");
                   })()}
                 </Text>
               </>
