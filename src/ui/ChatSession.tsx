@@ -1522,21 +1522,29 @@ export function ChatSession({
                 </Text>
               </>
             ) : (
-              /* ===== 对话中（无思考）：会话摘要 ===== */
+              /* ===== 对话中（无思考）：会话状态面板 ===== */
               <Box flexDirection="column" alignItems="center">
-                {sessionCost > 0 && (
-                  <Text color="cyan">{"📊 会话 ¥"}{sessionCost.toFixed(4)}</Text>
-                )}
-                <Text color="#808080">
-                  {"🔧 "}{SUPPORTED_MODELS[activeModel]?.displayName ?? activeModel}
-                </Text>
-                {thinkingEnabled && (
-                  <Text color="#ff9800">
-                    {"🧠 "}{thinkingEffort === "max" ? "Max" : "High"}
+                <Text color="#00ffff" bold>{"💬 对话进行中"}</Text>
+                <Box marginTop={1} flexDirection="column" alignItems="center">
+                  <Text color="#00ff41">{"📝 消息 "}{displayMessages.length} 条</Text>
+                  {sessionCost > 0 && (
+                    <Text color="cyan">{"💰 会话 ¥"}{sessionCost.toFixed(4)}</Text>
+                  )}
+                </Box>
+                <Box marginTop={1} flexDirection="column" alignItems="center">
+                  <Text color="#808080">
+                    {"🔧 "}{SUPPORTED_MODELS[activeModel]?.displayName ?? activeModel}
                   </Text>
-                )}
+                  {thinkingEnabled && (
+                    <Text color="#ff9800">
+                      {"🧠 "}{thinkingEffort === "max" ? "Max" : "High"}
+                    </Text>
+                  )}
+                </Box>
                 {balance !== null && (
-                  <Text color="yellow">{"💰 ¥"}{balance.toFixed(2)}</Text>
+                  <Box marginTop={1}>
+                    <Text color="yellow">{"💰 ¥"}{balance.toFixed(2)}</Text>
+                  </Box>
                 )}
               </Box>
             )}
@@ -1551,7 +1559,7 @@ export function ChatSession({
         {/* ========== 右侧面板（2/3 宽度） ========== */}
         <Box flexDirection="column" flexGrow={1}>
 
-          {/* ----- 对话消息区域（撑满剩余空间） ----- */}
+          {/* ----- 对话消息区域 ----- */}
           <Box flexDirection="column" flexGrow={1}>
             {/* 首页右侧：DeepSeek 字符 Logo */}
             {!hasConversationStarted && (

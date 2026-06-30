@@ -7,7 +7,6 @@ import { useEffect, useRef, useState } from "react";
 import type { ProviderToolCall, UsageInfo } from "../provider/index.js";
 import { formatMoney } from "../provider/cost-tracker.js";
 import { ToolCallBlock } from "./ToolCallBlock.js";
-import { formatUsageSummary } from "../agent/message-builder.js";
 import { HighlightedText } from "./HighlightedText.js";
 
 
@@ -219,7 +218,7 @@ export function AssistantMessage({
             {elapsed !== undefined && (
               <Text color="cyan">🕐 {formatElapsed(elapsed)}</Text>
             )}
-            {usage && <Text color="#888888">{formatUsageSummary(usage)}</Text>}
+            {usage && <Text color="#888888">📦 {(usage.promptTokens + usage.completionTokens).toLocaleString()} tokens</Text>}
           </Box>
         </Box>
       )}
