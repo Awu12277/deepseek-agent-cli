@@ -3,11 +3,12 @@
 // ---------------------------------------------------------------------------
 
 import { readFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { ToolKind, type AgentTool, type ToolContext, type ToolResult } from "../types.js";
 import { resolvePath, confine } from "../sandbox.js";
 import { computeFileDiff } from "../diff.js";
-import { writeFileWithEol } from "../eol.js";
+import { normalizeEol, toLf } from "../eol.js";
 
 /** delete_range 工具的参数格式 */
 export interface DeleteRangeArgs {
@@ -23,11 +24,15 @@ export interface DeleteRangeArgs {
 
 /**
  * 在行列表中查找唯一匹配的行号。
+ *
+ * 锐点与行内容均先做 LF 归一化（去掊尾 `\r`）再比较，避免 CRLF 文件上
+ * 锐点整行失配。
  */
 function findUniqueLine(lines: string[], anchor: string, label: string): { line: number } | { error: string } {
+  const anchorN = toLf(anchor);
   const matches: number[] = [];
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i] === anchor) {
+    if (toLf(lines[i]!) === anchorN) {
       matches.push(i);
     }
   }
@@ -97,7 +102,8 @@ export const deleteRangeTool: AgentTool<DeleteRangeArgs> = {
 
     try {
       const content = await readFile(filePath, "utf-8");
-      const lines = content.split("\n");
+      // 按实际行尾拆行（兼容 CRLF / LF），每行去掊尾 `\r` 后再做锐点比较。
+      const lines = toLf(content).split("\n");
 
       const startResult = findUniqueLine(lines, args.startAnchor, "start_anchor");
       if ("error" in startResult) {
@@ -132,11 +138,12 @@ export const deleteRangeTool: AgentTool<DeleteRangeArgs> = {
       }
 
       const newLines = [...lines.slice(0, rangeStart), ...lines.slice(rangeEnd + 1)];
-      const newContent = newLines.join("\n");
+      const newContentN = newLines.join("\n");
+      // 按原文件 EOL 还原后再落盘，diff 也基于实际落盘内容计算。
+      const writtenContent = normalizeEol(content, newContentN);
+      await writeFile(filePath, writtenContent, "utf-8");
 
-      await writeFileWithEol(filePath, content, newContent);
-
-      const diff = computeFileDiff(content, newContent, filePath);
+      const diff = computeFileDiff(content, writtenContent, filePath);
       diff.existedBefore = true;
 
       const deletedLines = rangeEnd - rangeStart + 1;

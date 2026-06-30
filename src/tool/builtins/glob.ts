@@ -5,7 +5,7 @@
 import { readdir, stat } from "node:fs/promises";
 import { join, relative, isAbsolute } from "node:path";
 import { ToolKind, type AgentTool, type ToolContext, type ToolResult } from "../types.js";
-import { truncateOutput } from "../sandbox.js";
+import { truncateOutput, stripMentionPrefix } from "../sandbox.js";
 
 /** glob 工具的参数格式 */
 export interface GlobArgs {
@@ -96,8 +96,9 @@ export const globTool: AgentTool<GlobArgs> = {
       return { success: false, data: "缺少必要参数 pattern", error: "INVALID_ARGS" };
     }
 
-    const searchDir = args.directory
-      ? (isAbsolute(args.directory) ? args.directory : join(ctx.cwd, args.directory))
+    const dir = args.directory ? stripMentionPrefix(args.directory) : undefined;
+    const searchDir = dir
+      ? (isAbsolute(dir) ? dir : join(ctx.cwd, dir))
       : ctx.cwd;
     const regex = globToRegex(args.pattern);
 

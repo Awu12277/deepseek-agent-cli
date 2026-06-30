@@ -7,6 +7,7 @@ import { open } from "node:fs/promises";
 import { relative } from "node:path";
 import { ToolKind, type AgentTool, type ToolContext, type ToolResult } from "../types.js";
 import { resolvePath, truncateOutput } from "../sandbox.js";
+import { toLf } from "../eol.js";
 
 /** read_file 工具的参数格式 */
 export interface ReadFileArgs {
@@ -106,7 +107,10 @@ export const readFileTool: AgentTool<ReadFileArgs> = {
       }
 
       const content = await readFile(filePath, "utf-8");
-      const lines = content.split("\n");
+      // 按 LF 归一化后拆行：CRLF 文件每行末尾不再残留 `\r`，展示干净，
+      // 也与 edit_file / multi_edit / delete_range 的 LF 归一化匹配保持一致
+      // —— LLM 看到什么就能直接拿去作 old_text/锐点。
+      const lines = toLf(content).split("\n");
 
       // 如果是空文件，最后一项为空行，pop 掉
       if (lines.length > 0 && lines[lines.length - 1] === "" && content.endsWith("\n")) {

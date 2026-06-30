@@ -8,11 +8,13 @@ import { builtinTools } from "../src/tool/builtins/index.js";
 import { readFileTool } from "../src/tool/builtins/read-file.js";
 import { writeFileTool } from "../src/tool/builtins/write-file.js";
 import { editFileTool } from "../src/tool/builtins/edit-file.js";
+import { multiEditTool } from "../src/tool/builtins/multi-edit.js";
+import { deleteRangeTool } from "../src/tool/builtins/delete-range.js";
 import { bashTool } from "../src/tool/builtins/bash.js";
 import { lsTool } from "../src/tool/builtins/ls.js";
 import { ToolKind, type AnyAgentTool, type ToolContext } from "../src/tool/types.js";
 import { resolvePath, truncateOutput, createTimeoutSignal } from "../src/tool/sandbox.js";
-import { writeFile, mkdir, rm } from "node:fs/promises";
+import { writeFile, mkdir, rm, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -303,6 +305,28 @@ describe("read_file 工具", () => {
     expect(result.error).toBe("READ_ERROR");
   });
 
+  it("CRLF 文件展示不含尾部 \\r", async () => {
+    // read_file 应对 CRLF 做归一化展示，避免 LLM 看到 \r\n 后又拿去作 old_text
+    // 却写错。展示干净后与 edit_file 的 LF 归一化匹配保持一致。
+    const file = join(testDir, "crlf.txt");
+    await writeFile(file, "aaa\r\nbbb\r\nccc", "utf-8");
+    const result = await readFileTool.execute({ path: file }, createTestContext());
+    expect(result.success).toBe(true);
+    expect(result.data).not.toContain("\r");
+    expect(result.data).toContain("aaa");
+    expect(result.data).toContain("bbb");
+  });
+
+  it("@ 前缀路径能读取（剩掊 @ 后解析）", async () => {
+    // 在 testDir 作为 cwd 下读 @test.txt 应等价于读 test.txt
+    const result = await readFileTool.execute(
+      { path: "@test.txt" },
+      createTestContext(testDir),
+    );
+    expect(result.success).toBe(true);
+    expect(result.data).toContain("第一行");
+  });
+
   afterAll(async () => {
     await rm(testDir, { recursive: true }).catch(() => {});
   });
@@ -399,6 +423,114 @@ describe("edit_file 工具", () => {
     const result = await editFileTool.execute({ path: testFile }, createTestContext());
     expect(result.success).toBe(false);
     expect(result.error).toBe("INVALID_ARGS");
+  });
+
+  it("CRLF 文件用 LF 的 old_text 仍能匹配且保留原行尾", async () => {
+    // 回全会话日志 e65f0205 round 8/10/13：Windows CRLF 文件上，LLM 用 LF
+    // 编写 old_text 导致连续三次 TEXT_NOT_FOUND。匹配应做 LF 归一化，
+    // 落盘时还原为 CRLF，不产生 EOL 翻转。
+    const crlfFile = join(testDir, "crlf-test.txt");
+    await writeFile(crlfFile, "line one\r\nfoo bar\r\nline three", "utf-8");
+    const result = await editFileTool.execute(
+      { path: crlfFile, old_text: "foo bar", new_text: "baz qux" },
+      createTestContext(),
+    );
+    expect(result.success).toBe(true);
+    const after = await readFile(crlfFile, "utf-8");
+    expect(after).toBe("line one\r\nbaz qux\r\nline three");
+  });
+
+  it("CRLF 文件多行 old_text（LF 编写）能匹配", async () => {
+    const crlfFile = join(testDir, "crlf-multi.txt");
+    await writeFile(crlfFile, "a\r\nb\r\nc\r\nd", "utf-8");
+    const result = await editFileTool.execute(
+      { path: crlfFile, old_text: "b\nc\nd", new_text: "x\ny" },
+      createTestContext(),
+    );
+    expect(result.success).toBe(true);
+    const after = await readFile(crlfFile, "utf-8");
+    expect(after).toBe("a\r\nx\r\ny");
+  });
+
+  afterAll(async () => {
+    await rm(testDir, { recursive: true }).catch(() => {});
+  });
+});
+
+// ---------------------------------------------------------------------------
+// multi_edit 工具测试（CRLF 归一化）
+// ---------------------------------------------------------------------------
+
+describe("multi_edit 工具", () => {
+  const testDir = join(tmpdir(), "dskcode-test-multiedit");
+  const testFile = join(testDir, "multi.txt");
+
+  beforeEach(async () => {
+    await mkdir(testDir, { recursive: true });
+  });
+
+  it("CRLF 文件多步替换（LF 编写 oldText）成功且保留 CRLF", async () => {
+    await writeFile(testFile, "alpha\r\nbeta\r\ngamma\r\n", "utf-8");
+    const result = await multiEditTool.execute(
+      {
+        path: testFile,
+        edits: [
+          { oldText: "alpha", newText: "ALPHA" },
+          { oldText: "gamma", newText: "GAMMA" },
+        ],
+      },
+      createTestContext(),
+    );
+    expect(result.success).toBe(true);
+    const after = await readFile(testFile, "utf-8");
+    expect(after).toBe("ALPHA\r\nbeta\r\nGAMMA\r\n");
+  });
+
+  it("replaceAll 在 CRLF 文件上替换所有匹配", async () => {
+    await writeFile(testFile, "x\r\nx\r\nx", "utf-8");
+    const result = await multiEditTool.execute(
+      {
+        path: testFile,
+        edits: [{ oldText: "x", newText: "y", replaceAll: true }],
+      },
+      createTestContext(),
+    );
+    expect(result.success).toBe(true);
+    const after = await readFile(testFile, "utf-8");
+    expect(after).toBe("y\r\ny\r\ny");
+  });
+
+  afterAll(async () => {
+    await rm(testDir, { recursive: true }).catch(() => {});
+  });
+});
+
+// ---------------------------------------------------------------------------
+// delete_range 工具测试（CRLF 锐点匹配）
+// ---------------------------------------------------------------------------
+
+describe("delete_range 工具", () => {
+  const testDir = join(tmpdir(), "dskcode-test-deleterange");
+  const testFile = join(testDir, "delete.txt");
+
+  beforeEach(async () => {
+    await mkdir(testDir, { recursive: true });
+  });
+
+  it("CRLF 文件用 LF 锐点定位范围成功且保留 CRLF", async () => {
+    await writeFile(testFile, "start\r\nmiddle1\r\nmiddle2\r\nend", "utf-8");
+    const result = await deleteRangeTool.execute(
+      {
+        path: testFile,
+        startAnchor: "start",
+        endAnchor: "end",
+        inclusive: false,
+      },
+      createTestContext(),
+    );
+    expect(result.success).toBe(true);
+    const after = await readFile(testFile, "utf-8");
+    expect(after).toBe("start\r\nend");
   });
 
   afterAll(async () => {
@@ -500,6 +632,14 @@ describe("resolvePath", () => {
     const resolved = resolvePath("C:/some/path", "/project");
     expect(typeof resolved).toBe("string");
     expect(resolved.length).toBeGreaterThan(0);
+  });
+
+  it("剩下一个开头的 @ 引用标记", () => {
+    // system prompt 把 @<路径> 定义为文件引用语法，LLM 常把 @test.ts 原样传入。
+    // resolvePath 应剩掊 @ 后再解析，避免拼出 cwd\@test.ts 而 ENOENT。
+    const resolved = resolvePath("@test.ts", "/project");
+    expect(resolved).not.toContain("@");
+    expect(resolved).toContain("test.ts");
   });
 });
 

@@ -3,11 +3,12 @@
 // ---------------------------------------------------------------------------
 
 import { readFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { ToolKind, type AgentTool, type ToolContext, type ToolResult } from "../types.js";
 import { resolvePath, confine } from "../sandbox.js";
 import { computeFileDiff } from "../diff.js";
-import { writeFileWithEol } from "../eol.js";
+import { normalizeEol, toLf } from "../eol.js";
 
 /** 单个编辑步骤 */
 export interface EditStep {
@@ -80,7 +81,9 @@ export const multiEditTool: AgentTool<MultiEditArgs> = {
 
     try {
       const originalContent = await readFile(filePath, "utf-8");
-      let currentContent = originalContent;
+      // 在 LF 归一化空间执行替换循环：原文件可能是 CRLF，LLM 提供的
+      // oldText/newText 习惯用 LF。归一化后匹配，最后一步统一还原原 EOL。
+      let currentContent = toLf(originalContent);
 
       for (let idx = 0; idx < args.edits.length; idx++) {
         const step = args.edits[idx]!;
@@ -91,11 +94,21 @@ export const multiEditTool: AgentTool<MultiEditArgs> = {
             error: "INVALID_STEP_ARGS",
           };
         }
+        if (typeof step.newText !== "string") {
+          return {
+            success: false,
+            data: `第 ${idx + 1} 步：缺少有效的 newText`,
+            error: "INVALID_STEP_ARGS",
+          };
+        }
+
+        const oldTextN = toLf(step.oldText);
+        const newTextN = toLf(step.newText);
 
         if (step.replaceAll) {
           let count = 0;
           let pos = -1;
-          while ((pos = currentContent.indexOf(step.oldText, pos + 1)) !== -1) {
+          while ((pos = currentContent.indexOf(oldTextN, pos + 1)) !== -1) {
             count++;
           }
 
@@ -107,9 +120,9 @@ export const multiEditTool: AgentTool<MultiEditArgs> = {
             };
           }
 
-          currentContent = currentContent.split(step.oldText).join(step.newText);
+          currentContent = currentContent.split(oldTextN).join(newTextN);
         } else {
-          const firstIdx = currentContent.indexOf(step.oldText);
+          const firstIdx = currentContent.indexOf(oldTextN);
           if (firstIdx === -1) {
             return {
               success: false,
@@ -118,7 +131,7 @@ export const multiEditTool: AgentTool<MultiEditArgs> = {
             };
           }
 
-          const secondIdx = currentContent.indexOf(step.oldText, firstIdx + 1);
+          const secondIdx = currentContent.indexOf(oldTextN, firstIdx + 1);
           if (secondIdx !== -1) {
             return {
               success: false,
@@ -127,13 +140,18 @@ export const multiEditTool: AgentTool<MultiEditArgs> = {
             };
           }
 
-          currentContent = currentContent.replace(step.oldText, step.newText);
+          currentContent =
+            currentContent.slice(0, firstIdx) +
+            newTextN +
+            currentContent.slice(firstIdx + oldTextN.length);
         }
       }
 
-      await writeFileWithEol(filePath, originalContent, currentContent);
+      // 按原文件 EOL 还原后再落盘，diff 也基于实际落盘内容计算。
+      const writtenContent = normalizeEol(originalContent, currentContent);
+      await writeFile(filePath, writtenContent, "utf-8");
 
-      const diff = computeFileDiff(originalContent, currentContent, filePath);
+      const diff = computeFileDiff(originalContent, writtenContent, filePath);
       diff.existedBefore = true;
 
       return {

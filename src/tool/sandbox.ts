@@ -20,11 +20,26 @@ const isWindows = process.platform === "win32";
 // ---------------------------------------------------------------------------
 
 /**
+ * 剩下一个开头的 `@` 引用标记。
+ *
+ * system prompt 把 `@<路径>` 定义为「文件路径引用」语法，但 LLM 经常把
+ * `@test.ts` 原样传给工具，导致 read_file 拼出 `cwd\@test.ts` 而 ENOENT
+ * （见会话日志 e65f0205 round 0）。`@` 不可能是一段真实路径的合法首字符，
+ * 在路径解析边界统一剩下一个 `@` 即可让该语法在所有走 resolvePath 的工具上生效。
+ * glob/grep 不走 resolvePath，可在解析 `directory` 参数时复用本函数。
+ */
+export function stripMentionPrefix(inputPath: string): string {
+  if (inputPath.startsWith("@")) return inputPath.slice(1);
+  return inputPath;
+}
+
+/**
  * 将路径解析为绝对路径。
- * 相对路径基于 cwd 解析，绝对路径原样返回。
+ * 相对路径基于 cwd 解析，绝对路径原样返回。会先剩下一个开头的 `@` 引用标记。
  */
 export function resolvePath(inputPath: string, cwd: string): string {
-  const resolved = isAbsolute(inputPath) ? inputPath : resolve(cwd, inputPath);
+  const stripped = stripMentionPrefix(inputPath);
+  const resolved = isAbsolute(stripped) ? stripped : resolve(cwd, stripped);
   return resolve(resolved);
 }
 

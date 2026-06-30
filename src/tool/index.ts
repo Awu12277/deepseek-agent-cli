@@ -32,6 +32,7 @@ export {
   getDefaultMaxFileSize,
   createTimeoutSignal,
   execCommand,
+  stripMentionPrefix,
 } from "./sandbox.js";
 
 // Diff 计算

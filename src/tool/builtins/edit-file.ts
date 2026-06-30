@@ -3,11 +3,12 @@
 // ---------------------------------------------------------------------------
 
 import { readFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { ToolKind, type AgentTool, type ToolContext, type ToolResult } from "../types.js";
 import { resolvePath, confine } from "../sandbox.js";
 import { computeFileDiff } from "../diff.js";
-import { writeFileWithEol } from "../eol.js";
+import { normalizeEol, toLf } from "../eol.js";
 
 /** edit_file 工具的参数格式 */
 export interface EditFileArgs {
@@ -70,7 +71,14 @@ export const editFileTool: AgentTool<EditFileArgs> = {
     try {
       const content = await readFile(filePath, "utf-8");
 
-      const firstIndex = content.indexOf(args.old_text);
+      // 匹配在 LF 归一化空间进行：原文件可能是 CRLF，而 LLM 习惯用 LF
+      // 编写 old_text/new_text。这里把两端都归一为 LF 再 indexOf，落盘时
+      // 再由 normalizeEol 还原为原 EOL，避免「CRLF 文件整段匹配失败」的
+      // 反复重试，也不产生 EOL 翻转噪声。
+      const contentN = toLf(content);
+      const oldTextN = toLf(args.old_text);
+
+      const firstIndex = contentN.indexOf(oldTextN);
       if (firstIndex === -1) {
         return {
           success: false,
@@ -79,7 +87,7 @@ export const editFileTool: AgentTool<EditFileArgs> = {
         };
       }
 
-      const secondIndex = content.indexOf(args.old_text, firstIndex + 1);
+      const secondIndex = contentN.indexOf(oldTextN, firstIndex + 1);
       if (secondIndex !== -1) {
         return {
           success: false,
@@ -88,16 +96,21 @@ export const editFileTool: AgentTool<EditFileArgs> = {
         };
       }
 
-      const newContent = content.replace(args.old_text, args.new_text);
-      await writeFileWithEol(filePath, content, newContent);
+      const newContentN =
+        contentN.slice(0, firstIndex) +
+        toLf(args.new_text) +
+        contentN.slice(firstIndex + oldTextN.length);
+      // 按原文件 EOL 还原后再落盘，diff 也基于实际落盘内容计算。
+      const writtenContent = normalizeEol(content, newContentN);
+      await writeFile(filePath, writtenContent, "utf-8");
 
-      const diff = computeFileDiff(content, newContent, filePath);
+      const diff = computeFileDiff(content, writtenContent, filePath);
       diff.existedBefore = true;
 
-      const beforeText = content.slice(0, firstIndex);
+      const beforeText = contentN.slice(0, firstIndex);
       const startLine = beforeText.split("\n").length;
-      const oldLines = args.old_text.split("\n").length;
-      const newLines = args.new_text.split("\n").length;
+      const oldLines = oldTextN.split("\n").length;
+      const newLines = toLf(args.new_text).split("\n").length;
 
       const diffSummary = `+${diff.additions} -${diff.deletions}`;
       const summary = `📝 修改: ${basename(filePath)} (+${diff.additions} -${diff.deletions})`;

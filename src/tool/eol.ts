@@ -41,6 +41,24 @@ export function hasTrailingNewline(text: string): boolean {
 }
 
 /**
+ * 把行尾统一为 LF（\n），仅供「匹配 / 比较」使用，不要用于落盘。
+ *
+ * 解决问题：read_file 展示 CRLF 文件时每行末尾会残留 `\r`，而 LLM 通常
+ * 用 LF 编写 old_text，导致 edit_file / multi_edit / delete_range 的精确
+ * 匹配在 Windows CRLF 文件上整段失败、反复重试（见会话日志
+ * e65f0205 中 round 8/10/13 的 TEXT_NOT_FOUND 三连）。
+ *
+ * 策略：匹配前对文件内容与待匹配文本都做 LF 归一化，落盘时再由
+ * normalizeEol / writeFileWithEol 还原为原 EOL，既避免误匹配又不产生
+ * EOL 翻转噪声。仅替换 `\r\n` → `\n`；罕见的独立 `\r`（旧 Mac 风格）
+ * 也一并归一以保持行语义。
+ */
+export function toLf(text: string): string {
+  if (!text.includes("\r")) return text;
+  return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+/**
  * 按给定 EOL 规整文本，并保留与原内容一致的"是否以行尾结尾"特征。
  *
  * 规整步骤：

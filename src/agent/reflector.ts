@@ -4,11 +4,12 @@
 // 设计原则：
 // - 纯类：输入（工具执行结果 + 历史 + 上下文）→ 输出（反射列表 / 拼装后的 prompt）
 // - 不持有 Session / messages 状态
-// - 4 条规则（按优先级检查，先匹配先返回，单条目不重复触发）：
+// - 5 条规则（按优先级检查，先匹配先返回，单条目不重复触发）：
 //     R1 连续失败   — 同一工具连续 ≥threshold 次相同错误码失败
 //     R2 文件不存在 — TOOL_NOT_FOUND 或 ENOENT / not found / No such file
+//     R2.5 文本未找到 — TEXT_NOT_FOUND / TEXT_MULTIPLE_MATCHES（编辑工具高频失败）
 //     R3 权限拒绝   — GATE_DENIED 或 EACCES / permission / denied
-//     R4 写根外     — kind ∈ Edit/Delete/Move 且失败
+//     R4 写根外     — kind ∈ Edit/Delete/Move 且错误码为 OUTSIDE_WRITE_ROOTS
 // - 注入策略：拼到 system prompt 尾部，不修改 messages
 //
 // 函数注释规范见仓库根 AGENTS.md「函数注释规范」一节。
@@ -24,6 +25,7 @@ import { ToolKind, type ToolResult } from "../tool/types.js";
 export type ReflectionCategory =
   | "repeated_failure"
   | "file_not_found"
+  | "text_not_found"
   | "permission_denied"
   | "out_of_write_root";
 
@@ -121,6 +123,7 @@ export class Reflector {
       const r =
         this.#ruleRepeatedFailure(item) ??
         this.#ruleFileNotFound(item) ??
+        this.#ruleTextNotFound(item) ??
         this.#rulePermissionDenied(item) ??
         this.#ruleOutOfWriteRoot(item, ctx.writeRoots);
       if (r) reflections.push(r);
@@ -207,6 +210,31 @@ export class Reflector {
   }
 
   /**
+   * R2.5 文本未找到：edit_file / multi_edit 报 TEXT_NOT_FOUND 或 TEXT_MULTIPLE_MATCHES。
+   *
+   * 这是编辑工具最高频的失败。工具内部已对 CRLF 做归一化，仍报此错通常是
+   * old_text 与当前文件内容不一致（缩进 / 已被改过 / 多次出现）。给一条明确
+   * 的「重新读文件、逐字复制」指引，避免模型用同一份旧 old_text 反复重试。
+   *
+   * @pure 仅读入参
+   */
+  #ruleTextNotFound(item: AnalyzeItem): Reflection | null {
+    const isTextErr =
+      item.result.error === "TEXT_NOT_FOUND" ||
+      item.result.error === "TEXT_MULTIPLE_MATCHES";
+    if (!isTextErr) return null;
+    const multiple = item.result.error === "TEXT_MULTIPLE_MATCHES";
+    const hint = multiple
+      ? `\`${item.name}\`：old_text 在文件中出现多次。请补充上下文让 old_text 唯一，或改用 multi_edit 的 replaceAll。`
+      : `\`${item.name}\`：未找到 old_text。请重新 \`read_file\` 看当前内容，逐字复制要替换的片段（注意缩进与空格）；行尾已做 CRLF 归一化，无需手写 \\r\\n。`;
+    return {
+      category: "text_not_found",
+      toolName: item.name,
+      hint,
+    };
+  }
+
+  /**
    * R3 权限拒绝：GATE_DENIED 错误码 或 data 含 EACCES / permission / denied（不区分大小写）。
    *
    * @pure 仅读入参
@@ -225,7 +253,12 @@ export class Reflector {
   }
 
   /**
-   * R4 写根外：kind ∈ Edit/Delete/Move 且失败。
+   * R4 写根外：kind ∈ Edit/Delete/Move 且错误码为 OUTSIDE_WRITE_ROOTS。
+   *
+   * 仅在工具本身明确报「路径超出写根」时才命中。旧实现只要写类工具失败就
+   * 触发，会把 TEXT_NOT_FOUND / EXECUTION_ERROR 等误报为「写根外」，注入
+   * 误导性提示（见会话日志 e65f0205 round 13：edit_file 因 CRLF 失配返回
+   * TEXT_NOT_FOUND，却被反射为 out_of_write_root）。
    *
    * @pure 仅读入参
    */
@@ -235,6 +268,7 @@ export class Reflector {
       item.kind === ToolKind.Delete ||
       item.kind === ToolKind.Move;
     if (!isWriteKind) return null;
+    if (item.result.error !== "OUTSIDE_WRITE_ROOTS") return null;
     const primary = writeRoots[0] ?? "<未配置>";
     return {
       category: "out_of_write_root",

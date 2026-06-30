@@ -5,7 +5,8 @@
 //   - R1 连续失败（同一工具连续失败 ≥2 次）
 //   - R2 文件不存在（TOOL_NOT_FOUND 或 ENOENT 等关键字）
 //   - R3 权限拒绝（GATE_DENIED 或 permission/EACCES 等关键字）
-//   - R4 写根外（kind ∈ Edit/Delete/Move 且失败）
+//   - R4 写根外（kind ∈ Edit/Delete/Move 且错误码为 OUTSIDE_WRITE_ROOTS）
+//   - R2.5 文本未找到（TEXT_NOT_FOUND / TEXT_MULTIPLE_MATCHES）
 //   - analyze 编排（去重 / 截断 / 全成功无反射）
 //   - injectIntoPrompt 拼装格式
 // ---------------------------------------------------------------------------
@@ -289,13 +290,13 @@ describe("R3 权限拒绝", () => {
 // ---------------------------------------------------------------------------
 
 describe("R4 写根外", () => {
-  it("kind=Edit + 失败：命中 out_of_write_root", () => {
+  it("kind=Edit + error=OUTSIDE_WRITE_ROOTS：命中 out_of_write_root", () => {
     const r = new Reflector();
     const reflections = r.analyze(
       [
         makeItem("write_file", false, {
           kind: ToolKind.Edit,
-          error: "EXECUTION_ERROR",
+          error: "OUTSIDE_WRITE_ROOTS",
           data: "目标路径 /etc/passwd 不在允许根目录内",
         }),
       ],
@@ -305,12 +306,13 @@ describe("R4 写根外", () => {
     expect(reflections[0].category).toBe("out_of_write_root");
   });
 
-  it("kind=Delete + 失败：命中 out_of_write_root", () => {
+  it("kind=Delete + error=OUTSIDE_WRITE_ROOTS：命中 out_of_write_root", () => {
     const r = new Reflector();
     const reflections = r.analyze(
       [
         makeItem("delete_range", false, {
           kind: ToolKind.Delete,
+          error: "OUTSIDE_WRITE_ROOTS",
           data: "目标路径 /etc/x 不在允许根目录内",
         }),
       ],
@@ -320,12 +322,13 @@ describe("R4 写根外", () => {
     expect(reflections[0].category).toBe("out_of_write_root");
   });
 
-  it("kind=Move + 失败：命中 out_of_write_root", () => {
+  it("kind=Move + error=OUTSIDE_WRITE_ROOTS：命中 out_of_write_root", () => {
     const r = new Reflector();
     const reflections = r.analyze(
       [
         makeItem("bash", false, {
           kind: ToolKind.Move,
+          error: "OUTSIDE_WRITE_ROOTS",
           data: "mv failed",
         }),
       ],
@@ -333,6 +336,24 @@ describe("R4 写根外", () => {
     );
     expect(reflections).toHaveLength(1);
     expect(reflections[0].category).toBe("out_of_write_root");
+  });
+
+  it("kind=Edit + error=TEXT_NOT_FOUND：R4 不命中（不能误报为写根外）", () => {
+    // 回归会话日志 e65f0205 round 13：edit_file 因 CRLF 失配返回
+    // TEXT_NOT_FOUND，旧 R4 会误报 out_of_write_root，现在应走 R2.5
+    const r = new Reflector();
+    const reflections = r.analyze(
+      [
+        makeItem("edit_file", false, {
+          kind: ToolKind.Edit,
+          error: "TEXT_NOT_FOUND",
+          data: "未找到要替换的文本",
+        }),
+      ],
+      CTX,
+    );
+    expect(reflections.find((x) => x.category === "out_of_write_root")).toBeUndefined();
+    expect(reflections[0].category).toBe("text_not_found");
   });
 
   it("kind=Read + 失败：R4 不命中（只读工具不涉及写根）", () => {
@@ -365,12 +386,68 @@ describe("R4 写根外", () => {
       [
         makeItem("write_file", false, {
           kind: ToolKind.Edit,
+          error: "OUTSIDE_WRITE_ROOTS",
           data: "fail",
         }),
       ],
       { writeRoots: ["/my/project"], cwd: "/my/project" },
     );
     expect(reflections[0].hint).toContain("/my/project");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R2.5 文本未找到（编辑工具高频失败）
+// ---------------------------------------------------------------------------
+
+describe("R2.5 文本未找到", () => {
+  it("error=TEXT_NOT_FOUND：命中 text_not_found", () => {
+    const r = new Reflector();
+    const reflections = r.analyze(
+      [
+        makeItem("edit_file", false, {
+          kind: ToolKind.Edit,
+          error: "TEXT_NOT_FOUND",
+          data: "未找到要替换的文本",
+        }),
+      ],
+      CTX,
+    );
+    expect(reflections).toHaveLength(1);
+    expect(reflections[0].category).toBe("text_not_found");
+    expect(reflections[0].hint).toContain("read_file");
+  });
+
+  it("error=TEXT_MULTIPLE_MATCHES：命中 text_not_found 且提示唯一性", () => {
+    const r = new Reflector();
+    const reflections = r.analyze(
+      [
+        makeItem("multi_edit", false, {
+          kind: ToolKind.Edit,
+          error: "TEXT_MULTIPLE_MATCHES",
+          data: "要替换的文本在文件中出现多次",
+        }),
+      ],
+      CTX,
+    );
+    expect(reflections).toHaveLength(1);
+    expect(reflections[0].category).toBe("text_not_found");
+    expect(reflections[0].hint).toContain("多次");
+  });
+
+  it("error=EXECUTION_ERROR（编辑工具）：R2.5 不命中", () => {
+    const r = new Reflector();
+    const reflections = r.analyze(
+      [
+        makeItem("edit_file", false, {
+          kind: ToolKind.Edit,
+          error: "EXECUTION_ERROR",
+          data: "disk full",
+        }),
+      ],
+      CTX,
+    );
+    expect(reflections.find((x) => x.category === "text_not_found")).toBeUndefined();
   });
 });
 
@@ -396,7 +473,11 @@ describe("analyze 编排", () => {
     const reflections = r.analyze(
       [
         makeItem("read_file", false, { kind: ToolKind.Read, data: "ENOENT" }),
-        makeItem("write_file", false, { kind: ToolKind.Edit, data: "fail" }),
+        makeItem("write_file", false, {
+          kind: ToolKind.Edit,
+          error: "OUTSIDE_WRITE_ROOTS",
+          data: "fail",
+        }),
       ],
       CTX,
     );
@@ -436,7 +517,11 @@ describe("analyze 编排", () => {
     const reflections = r.analyze(
       [
         makeItem("read_file", true, { kind: ToolKind.Read, data: "ok" }),
-        makeItem("write_file", false, { kind: ToolKind.Edit, data: "fail" }),
+        makeItem("write_file", false, {
+          kind: ToolKind.Edit,
+          error: "OUTSIDE_WRITE_ROOTS",
+          data: "fail",
+        }),
       ],
       CTX,
     );
@@ -490,6 +575,7 @@ describe("限流", () => {
     const items: AnalyzeItem[] = Array.from({ length: 7 }, (_, i) =>
       makeItem(`tool_${i}`, false, {
         kind: ToolKind.Edit,
+        error: "OUTSIDE_WRITE_ROOTS",
         data: "fail",
       }),
     );
