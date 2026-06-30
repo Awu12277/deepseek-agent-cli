@@ -36,11 +36,12 @@ import {
   getGradientColors,
 } from "../utils/gradient.js";
 import { SUPPORTED_MODELS, calculateCost } from "../provider/models.js";
+import { joinReasoningSegments } from "./reasoning-utils.js";
 import { saveModelConfig } from "../config/loader.js";
 
 /** 流式阶段配置：图标、标签、颜色 */
 const PHASE_CONFIG = {
-  thinking: { icon: "🧠", label: "深度思考中", color: "#ff9800" },
+  thinking: { icon: "🧠", label: "思考中", color: "#ff9800" },
   generating: { icon: "✨", label: "生成中", color: "#00ff41" },
   calling_tools: { icon: "🛠", label: "调用工具", color: "#f59e0b" },
   executing_tools: { icon: "⚡", label: "执行工具", color: "#00ffff" },
@@ -307,6 +308,11 @@ export function ChatSession({
   }, [displayMessages]);
 
   const hasConversationStarted = displayMessages.length > 0;
+
+  // 左侧思考链面板宽度 = 1/3 终端宽度（最小 30 字符）
+  const reasoningPanelWidth = Math.max(Math.floor(termWidth / 3), 30);
+  // 仅流式进行中且有思考内容时显示左侧面板，结束后自动隐藏
+  const hasReasoningPanel = isStreaming && currentReasoning.length > 0;
 
   // 命令提示轮播索引
   const cmdTips = Array.from(getRegisteredCommands())
@@ -1558,8 +1564,45 @@ export function ChatSession({
         </Box>
       )}
 
-      {/* 消息列表 - 已完成的消息用 Static 固定，避免重绘时丢失滚动位置 */}
-      <Box flexDirection="column" marginTop={1}>
+      {/* 左右分栏：左侧思考链 | 右侧对话 */}
+      <Box flexDirection="row" flexGrow={1}>
+        {/* 左侧思考链面板 — 流式时撑满高度，内容固定在底部 */}
+        {hasReasoningPanel && (
+          <Box
+            width={reasoningPanelWidth}
+            flexShrink={0}
+            flexDirection="column"
+            paddingRight={1}
+            flexGrow={1}
+            justifyContent="flex-end"
+          >
+            <Box
+              borderStyle="single"
+              borderColor="#333333"
+              paddingX={1}
+              flexDirection="column"
+            >
+              <Text bold color="#ff9800">
+                {"🧠 深度思考ing"}
+              </Text>
+              <Text dimColor wrap="wrap">
+                {joinReasoningSegments(currentReasoning)}
+              </Text>
+            </Box>
+          </Box>
+        )}
+
+        {/* 垂直分隔线 */}
+        {hasReasoningPanel && (
+          <Box width={1} flexShrink={0}>
+            <Text color="#444">{"│"}</Text>
+          </Box>
+        )}
+
+        {/* 右侧对话面板 */}
+        <Box flexDirection="column" flexGrow={1}>
+          {/* 消息列表 */}
+          <Box flexDirection="column" marginTop={1}>
         <Static key={staticKey} items={displayMessages}>
           {(msg, i) => {
             if (msg.role === "user") {
@@ -1603,7 +1646,6 @@ export function ChatSession({
               <AssistantMessage
                 key={i}
                 content={msg.content}
-                reasoning={detail?.reasoning}
                 toolCalls={detail?.toolCalls}
                 isStreaming={false}
                 usage={detail?.usage}
@@ -1619,7 +1661,6 @@ export function ChatSession({
         {isStreaming && (
           <AssistantMessage
             content={currentContent}
-            reasoning={currentReasoning}
             toolCalls={currentToolCalls.length > 0 ? currentToolCalls : undefined}
             isStreaming={true}
             usage={_currentUsage}
@@ -1820,8 +1861,10 @@ export function ChatSession({
           <SkillSelector skills={skills} input={input} selectedIndex={skillSelectIndex} />
           {/* 用户输入 @ 时显示文件列表 */}
           <FileSelector files={files} input={input} selectedIndex={fileSelectIndex} />
-        </>
-      )}
+          </>
+        )}
+        </Box>
+      </Box>
 
       {/* 双击 Ctrl+C 退出提示 */}
       {doubleCtrlC && !isStreaming && (

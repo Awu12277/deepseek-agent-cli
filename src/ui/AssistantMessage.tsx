@@ -9,20 +9,11 @@ import { formatMoney } from "../provider/cost-tracker.js";
 import { ToolCallBlock } from "./ToolCallBlock.js";
 import { formatUsageSummary } from "../agent/message-builder.js";
 import { HighlightedText } from "./HighlightedText.js";
-import {
-  DEFAULT_REASONING_MAX_LINES,
-  joinReasoningSegments,
-  truncateReasoningLines,
-} from "./reasoning-utils.js";
+
 
 interface AssistantMessageProps {
   /** 助手回复的文本内容 */
   content: string;
-  /**
-   * 思考链段列表（thinking 模式的 CoT），可选。
-   * 一个回合可能包含多段 CoT（多轮“思考→调工具”），每段独立成块展示。
-   */
-  reasoning?: string[];
   /** 工具调用列表 */
   toolCalls?: ProviderToolCall[];
   /** 是否正在流式输出中 */
@@ -168,7 +159,6 @@ function AnimatedUsage({ usage, cost }: { usage?: UsageInfo; cost?: number }) {
  */
 export function AssistantMessage({
   content,
-  reasoning,
   toolCalls,
   isStreaming = false,
   usage,
@@ -176,51 +166,13 @@ export function AssistantMessage({
   cost,
   model: _model,
 }: AssistantMessageProps) {
-  // 内容为空且无工具调用且无思考链时不渲染
-  if (
-    !content &&
-    (!toolCalls || toolCalls.length === 0) &&
-    (!reasoning || reasoning.length === 0) &&
-    !isStreaming
-  ) {
+  // 内容为空且无工具调用时不渲染
+  if (!content && (!toolCalls || toolCalls.length === 0) && !isStreaming) {
     return null;
   }
 
   return (
     <Box flexDirection="column" marginTop={1}>
-      {/* 思考链：所有段拼接为单文本（段间空行分隔），统一截断到 8 行。
-          多 sub-turn 的短段不再各自画框，避免空块堆点屏幕。 */}
-      {reasoning &&
-        reasoning.length > 0 &&
-        (() => {
-          const merged = joinReasoningSegments(reasoning);
-          if (!merged) return null;
-          // 滚动窗口：保留最后 N 行（最新思考），丢弃开头的旧行，与终端自动滚屏一致
-          const { visible } = truncateReasoningLines(
-            merged,
-            DEFAULT_REASONING_MAX_LINES,
-          );
-          return (
-            <Box flexDirection="row" marginBottom={1}>
-              <Box width={4} flexShrink={0}>
-                <Text dimColor>{"🧠"}</Text>
-              </Box>
-              <Box
-                flexGrow={1}
-                flexDirection="column"
-                borderStyle="single"
-                borderColor="#444444"
-                paddingLeft={1}
-                paddingRight={1}
-              >
-                <Text dimColor wrap="wrap">
-                  {visible}
-                </Text>
-              </Box>
-            </Box>
-          );
-        })()}
-
       {/* 助手标识 + 内容 */}
       <Box flexDirection="row">
         <Box width={4} flexShrink={0}>
@@ -232,7 +184,7 @@ export function AssistantMessage({
           {/* 文本内容（带语法高亮） */}
           {content && <HighlightedText>{content}</HighlightedText>}
           {/* 流式输出时的光标 */}
-          {isStreaming && !content && (!reasoning || reasoning.length === 0) && (
+          {isStreaming && !content && (
             <Text color="#888888">...</Text>
           )}
         </Box>
