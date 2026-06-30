@@ -163,7 +163,6 @@ function AnimatedUsage({ usage, cost }: { usage?: UsageInfo; cost?: number }) {
  *   🤖 流式文本内容...
  *     📦 tool_name ────
  *        参数摘要
- *        ⏳ 等待执行
  *   ────────────────────────────
  *   💰 本次 ¥0.0012 │ 🕐 3.2s │ 📦 1.2k tokens
  */

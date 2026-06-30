@@ -7,8 +7,6 @@ import type { ProviderToolCall } from "../provider/index.js";
 
 interface ToolCallBlockProps {
   call: ProviderToolCall;
-  /** 是否显示"等待执行"提示（默认 true） */
-  showPendingHint?: boolean;
 }
 
 /**
@@ -38,9 +36,8 @@ function formatArgsSummary(args: string): string {
  * 显示效果：
  *   📦 read_file ─────────────────
  *      📂 path: src/provider/types.ts
- *      ⏳ 等待执行
  */
-export function ToolCallBlock({ call, showPendingHint = true }: ToolCallBlockProps) {
+export function ToolCallBlock({ call }: ToolCallBlockProps) {
   const argsDisplay = formatArgsSummary(call.arguments);
 
   return (
@@ -52,11 +49,6 @@ export function ToolCallBlock({ call, showPendingHint = true }: ToolCallBlockPro
       <Box flexDirection="column">
         <Text dimColor>{argsDisplay}</Text>
       </Box>
-      {showPendingHint && (
-        <Box>
-          <Text dimColor>⏳ 等待执行</Text>
-        </Box>
-      )}
     </Box>
   );
 }

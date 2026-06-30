@@ -62,6 +62,25 @@ export type CommandAction =
   | { kind: "clear" }
   | { kind: "navigate"; target: "game" | "stock" };
 
+/**
+ * 从 toolCalls 中过滤掉 `todo_*` 任务进度工具。
+ *
+ * todo_* 工具是任务进度的元数据（todo_add / todo_mark_done / todo_mark_failed / todo_retry），
+ * 它们不表示 AI 实际做了什么，UI 上交给独立的 <TodoListPanel> 维护，不进入消息列表。
+ *
+ * @param calls — 原始 tool_calls 列表（可能为 undefined）
+ * @returns 过滤后的列表（若过滤后为空返回 undefined）
+ *
+ * @pure
+ */
+function filterTodoToolCalls(
+  calls: ReadonlyArray<ProviderToolCall> | undefined,
+): ProviderToolCall[] | undefined {
+  if (!calls) return undefined;
+  const filtered = calls.filter((tc) => !tc.name.startsWith("todo_"));
+  return filtered.length > 0 ? filtered : undefined;
+}
+
 export interface ChatCommand {
   desc: string;
   handler: () => CommandAction;
@@ -351,12 +370,12 @@ export function ChatSession({
   }, []);
 
   // todo 面板可见性：
-  // - 有未完成项（pending / running）→ 一直显示，同时清掉隐藏计时器
-  // - 全部结束（done / failed / skipped）→ 保持显示 2s 后隐藏
-  // - snapshot 为空 → 立即隐藏（下一轮可重新出现）
-  // - 组件卸载时清理计时器
+  // - 有未完成项（pending / running / failed）→ 一直显示
+  // - 全部结束（done / skipped）→ 立即隐藏
+  // - snapshot 为空 → 隐藏
+  // 新任务开始时（snapshot 从空 → 非空）会重新出现
   useEffect(() => {
-    // 先清掉上一次的“全结束后隐藏”计时器
+    // 顺手清掉可能残留的隐藏计时器（保留 ref 以备未来需要）
     if (todoHideTimerRef.current) {
       clearTimeout(todoHideTimerRef.current);
       todoHideTimerRef.current = null;
@@ -372,25 +391,7 @@ export function ChatSession({
       (it) => it.status === "pending" || it.status === "running" || it.status === "failed",
     );
 
-    if (hasUnfinished) {
-      setTodoPanelVisible(true);
-      return;
-    }
-
-    // 全部是 done / skipped：保持显示 2s 后隐藏
-    setTodoPanelVisible(true);
-    todoHideTimerRef.current = setTimeout(() => {
-      setTodoPanelVisible(false);
-      todoHideTimerRef.current = null;
-    }, 2000);
-
-    return () => {
-      // 依赖变化或卸载时清理计时器
-      if (todoHideTimerRef.current) {
-        clearTimeout(todoHideTimerRef.current);
-        todoHideTimerRef.current = null;
-      }
-    };
+    setTodoPanelVisible(hasUnfinished);
   }, [todoSnapshot]);
 
   // 获取当前输入匹配的 skill 列表
@@ -442,7 +443,7 @@ export function ChatSession({
           content: m.content,
           assistantDetail: {
             content: m.content,
-            toolCalls: m.toolCalls,
+            toolCalls: filterTodoToolCalls(m.toolCalls),
           },
         });
       } else if (m.role === "tool") {
@@ -1263,8 +1264,23 @@ export function ChatSession({
               // 将工具结果追加为一条用户可见的消息
               const r = event.result;
               if (event.name.startsWith("todo_") && event.todoSnapshot) {
-                // todo_* 工具：更新独立的任务进度 state（覆盖而非追加），不产生消息条目
-                setTodoSnapshot(event.todoSnapshot);
+                // todo_* 工具：更新独立的任务进度 state（覆盖而非追加），不产生消息条目。
+                // 全部结束后（所有项都是 done / failed / skipped）→ 直接清空 snapshot，
+                // 让 <TodoListPanel> 立即消失，避免结束后面板还赖着占位。
+                //  AssistantMessage 里已渲染的 todo_* 工具块保留（那是历史回放）。
+                const allTerminated =
+                  event.todoSnapshot.length > 0 &&
+                  event.todoSnapshot.every(
+                    (it) =>
+                      it.status === "done" ||
+                      it.status === "failed" ||
+                      it.status === "skipped",
+                  );
+                if (allTerminated) {
+                  setTodoSnapshot([]);
+                } else {
+                  setTodoSnapshot(event.todoSnapshot);
+                }
               } else {
                 // 非 todo 工具：优先使用 summary（一行简短摘要），避免在 UI 中撑出大段文件内容
                 const line = r.success
@@ -1326,10 +1342,9 @@ export function ChatSession({
         const finReasoning = currentReasoningRef.current
           .map((s) => s.trim())
           .filter((s) => s.length > 0);
-        const finToolCalls =
-          currentToolCallsRef.current.length > 0
-            ? currentToolCallsRef.current
-            : undefined;
+        // 过滤掉 todo_* 工具：它们是任务进度的元数据，不在消息列表里展示
+        // （TodoListPanel 独立维护了一份进度状态）
+        const finToolCalls = filterTodoToolCalls(currentToolCallsRef.current);
         const finStreamError = streamErrorRef.current;
 
         if (finContent || finToolCalls || finStreamError) {
