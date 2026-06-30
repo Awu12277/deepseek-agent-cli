@@ -171,57 +171,61 @@ export function AssistantMessage({
   }
 
   return (
-    <Box flexDirection="column" marginTop={1}>
-      {/* 助手标识 + 内容 */}
-      <Box flexDirection="row">
-        <Box width={4} flexShrink={0}>
-          <Text bold color="#ff00ff">
-            {"🤖"}
-          </Text>
-        </Box>
-        <Box flexGrow={1} flexDirection="column">
-          {/* 文本内容（带语法高亮） */}
-          {content && <HighlightedText>{content}</HighlightedText>}
-          {/* 流式输出时的光标 */}
-          {isStreaming && !content && (
-            <Text color="#888888">...</Text>
-          )}
-        </Box>
-      </Box>
-
-      {/* 工具调用 */}
-      {toolCalls && toolCalls.length > 0 && (
-        <Box flexDirection="column">
-          {toolCalls.map((tc, i) => (
-            <ToolCallBlock key={tc.id ?? i} call={tc} />
-          ))}
-        </Box>
-      )}
-
-      {/* 流式输出中的实时消耗（带平滑动画） */}
-      {isStreaming && (usage || cost !== undefined) && (
-        <Box flexDirection="row" marginTop={1} marginLeft={3}>
-          <Text color="#666666" dimColor>
-            ⏳ 已消耗 <AnimatedUsage usage={usage} cost={cost} />
-          </Text>
-        </Box>
-      )}
-
-      {/* 成本/耗时摘要行（仅在流式结束后显示） */}
-      {!isStreaming && (usage || elapsed !== undefined) && (
-        <Box flexDirection="column" marginTop={1} marginLeft={3}>
-          <Text color="#555555">{"─".repeat(36)}</Text>
-          <Box flexDirection="row" gap={2}>
-            {cost !== undefined && cost > 0 && (
-              <Text color="yellow">💰 本次 {formatMoney(cost)}</Text>
+    <Box flexDirection="row" marginTop={1}>
+      {/* 粉紫色竖线 — 表示 AI 回复 */}
+      <Box width={1} backgroundColor="#E040FB" flexShrink={0} />
+      <Box flexGrow={1} paddingLeft={1} flexDirection="column">
+        {/* 助手标识 + 内容 */}
+        <Box flexDirection="row">
+          <Box width={4} flexShrink={0}>
+            <Text bold color="#ff00ff">
+              {"🤖"}
+            </Text>
+          </Box>
+          <Box flexGrow={1} flexDirection="column">
+            {/* 文本内容（带语法高亮） */}
+            {content && <HighlightedText>{content}</HighlightedText>}
+            {/* 流式输出时的光标 */}
+            {isStreaming && !content && (
+              <Text color="#888888">...</Text>
             )}
-            {elapsed !== undefined && (
-              <Text color="cyan">🕐 {formatElapsed(elapsed)}</Text>
-            )}
-            {usage && <Text color="#888888">📦 {(usage.promptTokens + usage.completionTokens).toLocaleString()} tokens</Text>}
           </Box>
         </Box>
-      )}
+
+        {/* 工具调用 */}
+        {toolCalls && toolCalls.length > 0 && (
+          <Box flexDirection="column">
+            {toolCalls.map((tc, i) => (
+              <ToolCallBlock key={tc.id ?? i} call={tc} />
+            ))}
+          </Box>
+        )}
+
+        {/* 流式输出中的实时消耗（带平滑动画） */}
+        {isStreaming && (usage || cost !== undefined) && (
+          <Box flexDirection="row" marginTop={1} marginLeft={3}>
+            <Text color="#666666" dimColor>
+              ⏳ 已消耗 <AnimatedUsage usage={usage} cost={cost} />
+            </Text>
+          </Box>
+        )}
+
+        {/* 成本/耗时摘要行（仅在流式结束后显示） */}
+        {!isStreaming && (usage || elapsed !== undefined) && (
+          <Box flexDirection="column" marginTop={1} marginLeft={3}>
+            <Text color="#555555">{"─".repeat(36)}</Text>
+            <Box flexDirection="row" gap={2}>
+              {cost !== undefined && cost > 0 && (
+                <Text color="yellow">💰 本次 {formatMoney(cost)}</Text>
+              )}
+              {elapsed !== undefined && (
+                <Text color="cyan">🕐 {formatElapsed(elapsed)}</Text>
+              )}
+              {usage && <Text color="#888888">📦 {(usage.promptTokens + usage.completionTokens).toLocaleString()} tokens</Text>}
+            </Box>
+          </Box>
+        )}
+      </Box>
     </Box>
   );
 }

@@ -1596,28 +1596,38 @@ export function ChatSession({
                 {(msg, i) => {
                   if (msg.role === "user") {
                     return (
-                      <Box key={i} marginTop={1}>
-                        <Box width={4} flexShrink={0}>
-                          <Text bold color="#00ff41">{"👤"}</Text>
-                        </Box>
-                        <Box flexGrow={1}>
-                          <Text wrap="wrap">{msg.content}</Text>
+                      <Box key={i} marginTop={1} flexDirection="row">
+                        {/* 橙色竖线 — 表示用户发言 */}
+                        <Box width={1} backgroundColor="#FF8C00" flexShrink={0} />
+                        <Box flexGrow={1} paddingLeft={1}>
+                          <Box flexDirection="row">
+                            <Box width={4} flexShrink={0}>
+                              <Text bold color="#FF8C00">{"💬"}</Text>
+                            </Box>
+                            <Box flexGrow={1}>
+                              <Text wrap="wrap">{msg.content}</Text>
+                            </Box>
+                          </Box>
                         </Box>
                       </Box>
                     );
                   }
                   if (msg.role === "tool") {
                     return (
-                      <Box key={i} marginTop={1} flexDirection="column">
-                        <Box flexDirection="row">
-                          <Box width={4} flexShrink={0}>
-                            <Text dimColor>{"🔧"}</Text>
+                      <Box key={i} marginTop={1} flexDirection="row">
+                        {/* 灰色竖线 — 表示工具调用 */}
+                        <Box width={1} backgroundColor="#666666" flexShrink={0} />
+                        <Box flexGrow={1} paddingLeft={1} flexDirection="column">
+                          <Box flexDirection="row">
+                            <Box width={4} flexShrink={0}>
+                              <Text dimColor>{"🔧"}</Text>
+                            </Box>
+                            <Box flexGrow={1}>
+                              <Text dimColor wrap="wrap">{msg.content}</Text>
+                            </Box>
                           </Box>
-                          <Box flexGrow={1}>
-                            <Text dimColor wrap="wrap">{msg.content}</Text>
-                          </Box>
+                          {msg.diff && <DiffPreview diff={msg.diff} />}
                         </Box>
-                        {msg.diff && <DiffPreview diff={msg.diff} />}
                       </Box>
                     );
                   }
