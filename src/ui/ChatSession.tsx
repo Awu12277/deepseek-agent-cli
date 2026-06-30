@@ -18,6 +18,7 @@ import type { ModelId, ProviderToolCall, UsageInfo } from "../provider/index.js"
 import type { FileDiff } from "../tool/types.js";
 import { TodoListPanel } from "./TodoListPanel.js";
 import type { TodoItem } from "../harness/todo-list.js";
+import { VERSION } from "../utils/version.js";
 import { createProvider } from "../provider/index.js";
 import {
   Session,
@@ -116,7 +117,7 @@ registerCommand("/help", {
 registerCommand("/clear", { desc: "清空对话历史", handler: () => ({ kind: "clear" }) });
 registerCommand("/version", {
   desc: "显示版本信息",
-  handler: () => ({ kind: "text", content: "dskcode v0.1.10" }),
+  handler: () => ({ kind: "text", content: `dskcode v${VERSION}` }),
 });
 registerCommand("/model", {
   desc: "切换模型",

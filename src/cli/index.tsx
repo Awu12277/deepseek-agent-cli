@@ -17,6 +17,7 @@ import chalk from "chalk";
 import { StockList } from "../stock/index.js";
 import { CostTracker } from "../provider/cost-tracker.js";
 import { scanProjectFiles } from "../utils/scan-files.js";
+import { VERSION } from "../utils/version.js";
 
 const SUBCOMMANDS = ["chat", "run", "setup", "init", "completion", "game", "stock"];
 
@@ -27,7 +28,7 @@ export function createCli(): Command {
   program
     .name("dskcode")
     .description("基于 DeepSeek 的 AI 编程助手终端工具")
-    .version("0.0.0", "-V, --version", "显示版本号")
+    .version(VERSION, "-V, --version", "显示版本号")
     .option("--verbose", "开启详细日志输出")
     .option("--config <path>", "指定配置文件路径");
 
