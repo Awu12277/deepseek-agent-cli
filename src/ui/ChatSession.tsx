@@ -1188,6 +1188,11 @@ export function ChatSession({
         clearTimeout(rewindHintTimerRef.current);
         rewindHintTimerRef.current = null;
       }
+      // 新一轮对话开始：主动清空上轮残留的 todoSnapshot，
+      // 避免上轮最后一次 todo_mark_done 推的是 TodoList 内部数组引用、
+      // 新一轮第一次 todo_add 又推同一引用导致 React bail out 后面板不刷新。
+      // effect 会同步设 todoPanelVisible = false。
+      setTodoSnapshot([]);
 
       const session = sessionRef.current;
       const abortController = new AbortController();

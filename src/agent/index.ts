@@ -506,9 +506,11 @@ export class Session {
 
           for (const item of results.items) {
             // todo_* 工具执行后，附带当前 todo 列表快照，供 UI 渲染任务进度面板
+            // 注意：必须铺新数组 + 新 item 对象，否则 React useState 的 Object.is 比较
+            // 会 bail out，导致 TodoListPanel 不刷新（任务切换时还显示旧进度）。
             const todoSnapshot =
               item.name.startsWith("todo_") && this.#todoList
-                ? this.#todoList.items
+                ? this.#todoList.items.map((it) => ({ ...it }))
                 : undefined;
             yield {
               type: "tool_result",
