@@ -37,6 +37,7 @@ import {
 } from "../utils/gradient.js";
 import { SUPPORTED_MODELS, calculateCost } from "../provider/models.js";
 import { joinReasoningSegments } from "./reasoning-utils.js";
+import { AnimatedLogo } from "./AnimatedLogo.js";
 import { saveModelConfig } from "../config/loader.js";
 
 /** 流式阶段配置：图标、标签、颜色 */
@@ -1573,24 +1574,8 @@ export function ChatSession({
           <Box flexDirection="column" flexGrow={1}>
             {/* 首页右侧：DeepSeek 字符 Logo */}
             {!hasConversationStarted && (
-              <Box flexDirection="column" alignItems="center" justifyContent="flex-end" flexGrow={1} paddingBottom={1}>
-                <Box flexDirection="column">
-                  <Text color="#6185f6" bold>
-                    {"  ▄▄▄▄▄▄▄█    █▄   ▄▄"}
-                  </Text>
-                  <Text color="#6185f6" bold>
-                    {" ▄███████████▄▄▀███▀▀"}
-                  </Text>
-                  <Text color="#6185f6" bold>
-                    {"▀█     ▀▀███▄ ████"}
-                  </Text>
-                  <Text color="#6185f6" bold>
-                    {" ▀█▄    ▄ ▀█████▀"}
-                  </Text>
-                  <Text color="#6185f6" bold>
-                    {"   ▀▀▀█████▄▀▀▀▀▀"}
-                  </Text>
-                </Box>
+              <Box flexDirection="column" alignItems="flex-start" justifyContent="flex-end" flexGrow={1} paddingBottom={1}>
+                <AnimatedLogo panelWidth={rightContentWidth} />
               </Box>
             )}
             {/* 消息列表 */}
