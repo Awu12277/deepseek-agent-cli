@@ -1571,6 +1571,28 @@ export function ChatSession({
 
           {/* ----- 对话消息区域（撑满剩余空间） ----- */}
           <Box flexDirection="column" flexGrow={1}>
+            {/* 首页右侧：DeepSeek 字符 Logo */}
+            {!hasConversationStarted && (
+              <Box flexDirection="column" alignItems="center" justifyContent="flex-end" flexGrow={1} paddingBottom={1}>
+                <Box flexDirection="column">
+                  <Text color="#6185f6" bold>
+                    {"  ▄▄▄▄▄▄▄█    █▄   ▄▄"}
+                  </Text>
+                  <Text color="#6185f6" bold>
+                    {" ▄███████████▄▄▀███▀▀"}
+                  </Text>
+                  <Text color="#6185f6" bold>
+                    {"▀█     ▀▀███▄ ████"}
+                  </Text>
+                  <Text color="#6185f6" bold>
+                    {" ▀█▄    ▄ ▀█████▀"}
+                  </Text>
+                  <Text color="#6185f6" bold>
+                    {"   ▀▀▀█████▄▀▀▀▀▀"}
+                  </Text>
+                </Box>
+              </Box>
+            )}
             {/* 消息列表 */}
             <Box flexDirection="column" marginTop={1}>
               <Static key={staticKey} items={displayMessages}>
