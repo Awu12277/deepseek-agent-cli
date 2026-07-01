@@ -12,4 +12,6 @@ export { SkillSelector } from "./SkillSelector.js";
 export { FileSelector } from "./FileSelector.js";
 export { DiffPreview } from "./DiffPreview.js";
 export { TodoListPanel } from "./TodoListPanel.js";
+export { CompactionProgress } from "./CompactionProgress.js";
+export type { CompactionState, CompactionPhase } from "./CompactionProgress.js";
 export { useDoubleCtrlC } from "./useDoubleCtrlC.js";

@@ -17,6 +17,11 @@ import { CostTracker } from "../provider/cost-tracker.js";
 import type { ModelId, ProviderToolCall, UsageInfo } from "../provider/index.js";
 import type { FileDiff } from "../tool/types.js";
 import { TodoListPanel } from "./TodoListPanel.js";
+import {
+  CompactionProgress,
+  type CompactionState,
+  type CompactionPhase,
+} from "./CompactionProgress.js";
 import type { TodoItem } from "../harness/todo-list.js";
 import { VERSION } from "../utils/version.js";
 import { createProvider } from "../provider/index.js";
@@ -26,6 +31,7 @@ import {
   type RewindResult,
 } from "../agent/index.js";
 import type { SessionMode } from "../agent/types.js";
+import type { CompactionProgress as CompactionProgressEvent } from "../agent/compactor.js";
 import { builtinTools } from "../tool/index.js";
 import { ToolRegistry } from "../tool/registry.js";
 import {
@@ -369,6 +375,16 @@ export function ChatSession({
   const [modelSelectIndex, setModelSelectIndex] = useState(0);
   const modelOptions: ModelId[] = ["deepseek-v4-flash", "deepseek-v4-pro"];
 
+  // /compact 进度状态：phase="idle" 时不显示；运行中实时刷新；完成后保留 4s 再隐藏并静默
+  const [compactionState, setCompactionState] = useState<CompactionState>({
+    phase: "idle",
+    progress: null,
+  });
+  // 压缩完成后是否要把"完成的进度面板"静默、沉送到 displayMessages
+  const compactionSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 最新 strategy 的 ref（setTimeout 回调用，避免闭包拿到旧值）
+  const compactionStrategyRef = useRef<"summary" | "fallback" | undefined>(undefined);
+
   // Session 引用（保持跨渲染稳定）
   const sessionRef = useRef<Session | null>(null);
   const abortRef = useRef<AbortController>(null);
@@ -395,6 +411,10 @@ export function ChatSession({
       if (rewindHintTimerRef.current) {
         clearTimeout(rewindHintTimerRef.current);
         rewindHintTimerRef.current = null;
+      }
+      if (compactionSettleTimerRef.current) {
+        clearTimeout(compactionSettleTimerRef.current);
+        compactionSettleTimerRef.current = null;
       }
     };
   }, []);
@@ -1046,54 +1066,143 @@ export function ChatSession({
             return;
           }
           setInput("");
-          setDisplayMessages((prev) => [
-            ...prev,
-            { role: "user", content: trimmed },
-            { role: "assistant", content: "⏳ 正在压缩上下文..." },
-          ]);
+          // 推送用户命令到 displayMessages
+          setDisplayMessages((prev) => [...prev, { role: "user", content: trimmed }]);
+
+          // 初始化压缩状态为 running，由 CompactionProgress 组件实时渲染
+          setCompactionState({
+            phase: "running",
+            progress: null,
+            beforeTokens: undefined,
+            afterTokens: undefined,
+            droppedTurns: undefined,
+            keptTurns: undefined,
+            strategy: undefined,
+            errorMessage: undefined,
+          });
+
           try {
-            const result = await sessionRef.current.compact();
+            const result = await sessionRef.current.compact(
+              (event: CompactionProgressEvent) => {
+                // 进度回调：累加到 state。错误静默处理（不中断压缩）
+                setCompactionState((prev) => {
+                  if (event.type === "start") {
+                    return {
+                      ...prev,
+                      phase: "running",
+                      progress: event,
+                      beforeTokens: event.beforeTokens,
+                      droppedTurns: event.droppedTurns,
+                    };
+                  }
+                  if (event.type === "summary_delta") {
+                    return {
+                      ...prev,
+                      phase: "running",
+                      progress: event,
+                    };
+                  }
+                  if (event.type === "fallback") {
+                    compactionStrategyRef.current = "fallback";
+                    return {
+                      ...prev,
+                      phase: "running",
+                      progress: event,
+                      strategy: "fallback",
+                    };
+                  }
+                  if (event.type === "done") {
+                    const finalStrategy: "summary" | "fallback" =
+                      compactionStrategyRef.current === "fallback"
+                        ? "fallback"
+                        : "summary";
+                    compactionStrategyRef.current = finalStrategy;
+                    return {
+                      ...prev,
+                      phase: "done",
+                      progress: event,
+                      droppedTurns: event.droppedTurns,
+                      keptTurns: event.keptTurns,
+                      beforeTokens: event.beforeTokens,
+                      afterTokens: event.afterTokens,
+                      strategy: finalStrategy,
+                    };
+                  }
+                  return prev;
+                });
+              },
+            );
+
             if (result.droppedTurns === 0) {
-              setDisplayMessages((prev) => {
-                const next = prev.slice(0, -1);
-                return [
-                  ...next,
+              // 不需压缩：在 state 上设个临时态，2s 后静默并送一条文本消息
+              setCompactionState((prev) => ({
+                ...prev,
+                phase: "done",
+                progress: prev.progress,
+                droppedTurns: 0,
+                keptTurns: result.keptTurns,
+                beforeTokens: result.beforeTokens,
+                afterTokens: result.afterTokens,
+                strategy: undefined,
+              }));
+              if (compactionSettleTimerRef.current) {
+                clearTimeout(compactionSettleTimerRef.current);
+              }
+              compactionSettleTimerRef.current = setTimeout(() => {
+                setCompactionState({ phase: "idle", progress: null });
+                setDisplayMessages((prev) => [
+                  ...prev,
                   {
                     role: "assistant",
                     content:
                       "ℹ 当前对话太短，无需压缩（少于最小回合数 或 都在保留区内）。",
                   },
-                ];
-              });
+                ]);
+              }, 2500);
             } else {
-              const ratioSaved = (
-                ((result.beforeTokens - result.afterTokens) /
-                  Math.max(result.beforeTokens, 1)) *
-                100
-              ).toFixed(1);
-              setDisplayMessages((prev) => {
-                const next = prev.slice(0, -1);
-                return [
-                  ...next,
+              // 正常完成：4s 后静默并补一条简洁回执
+              if (compactionSettleTimerRef.current) {
+                clearTimeout(compactionSettleTimerRef.current);
+              }
+              compactionSettleTimerRef.current = setTimeout(() => {
+                const ratioSaved = (
+                  ((result.beforeTokens - result.afterTokens) /
+                    Math.max(result.beforeTokens, 1)) *
+                  100
+                ).toFixed(1);
+                const strategyNote =
+                  compactionStrategyRef.current === "fallback"
+                    ? "\n⚠ 摘要为本地兑底（LLM 不可用）"
+                    : "";
+                setCompactionState({ phase: "idle", progress: null });
+                compactionStrategyRef.current = undefined;
+                setDisplayMessages((prev) => [
+                  ...prev,
                   {
                     role: "assistant",
                     content:
-                      `✔ 压缩完成：丢弃 ${result.droppedTurns} 个回合，保留 ${result.keptTurns} 个回合。\n` +
-                      `📦 token 估算：${result.beforeTokens} → ${result.afterTokens}（节省 ${ratioSaved}%）\n` +
-                      `（调用了 LLM 生成摘要，旧消息已折叠为一段 system 消息插入到对话顶部）`,
+                      `✔ 压缩完成：${result.droppedTurns} 回合 → ${result.keptTurns} 回合（节省 ${ratioSaved}% token）${strategyNote}`,
                   },
-                ];
-              });
+                ]);
+              }, 4000);
             }
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
-            setDisplayMessages((prev) => {
-              const next = prev.slice(0, -1);
-              return [
-                ...next,
+            setCompactionState((prev) => ({
+              ...prev,
+              phase: "error",
+              errorMessage: msg,
+            }));
+            if (compactionSettleTimerRef.current) {
+              clearTimeout(compactionSettleTimerRef.current);
+            }
+            compactionSettleTimerRef.current = setTimeout(() => {
+              setCompactionState({ phase: "idle", progress: null });
+              setDisplayMessages((prev) => [
+                ...prev,
                 { role: "assistant", content: `⚠ 压缩失败：${msg}` },
-              ];
-            });
+              ]);
+            }, 3000);
           }
           return;
         }
@@ -1339,6 +1448,13 @@ export function ChatSession({
         todoHideTimerRef.current = null;
       }
       setTodoPanelVisible(false);
+      // 新一轮对话开始：清掉任何残留的压缩面板（避免遮挡新内容）
+      setCompactionState({ phase: "idle", progress: null });
+      compactionStrategyRef.current = undefined;
+      if (compactionSettleTimerRef.current) {
+        clearTimeout(compactionSettleTimerRef.current);
+        compactionSettleTimerRef.current = null;
+      }
 
       const session = sessionRef.current;
       const abortController = new AbortController();
@@ -1796,6 +1912,14 @@ export function ChatSession({
                     usage={_currentUsage}
                     cost={_currentCost}
                     model={_streamingModel}
+                  />
+                )}
+
+                {/* 压缩进度面板：phase 不是 idle 时实时渲染 */}
+                {compactionState.phase !== "idle" && (
+                  <CompactionProgress
+                    state={compactionState}
+                    contentWidth={rightContentWidth}
                   />
                 )}
 

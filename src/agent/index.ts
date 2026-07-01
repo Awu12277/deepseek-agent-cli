@@ -704,11 +704,14 @@ export class Session {
    * 与自动压缩逻辑复用同一个 compactContext()；若回合数过少则返回空结果（droppedTurns=0）。
    * 可被 UI 的 /compact 命令调用。
    *
+   * @param onProgress — 可选进度回调（UI 实时展示压缩进度）
    * @returns 压缩结果；droppedTurns=0 表示无实际压缩发生
    *
    * @sideEffect 可能调一次 provider.chat()（LLM 摘要）；成功后改写 #messages
    */
-  async compact(): Promise<CompactionResult> {
+  async compact(
+    onProgress?: (event: import("./compactor.js").CompactionProgress) => void,
+  ): Promise<CompactionResult> {
     const meta = getModelMeta(this.#provider.model() as ModelId);
     const result = await compactContext(this.#messages, {
       contextWindow: meta.contextWindow,
@@ -717,6 +720,7 @@ export class Session {
       minTurnsToCompact: this.#options.minTurnsToCompact,
       provider: this.#provider,
       signal: this.#abortController.signal,
+      ...(onProgress ? { onProgress } : {}),
     });
     if (result.droppedTurns > 0) {
       this.#messages.length = 0;

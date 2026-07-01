@@ -73,6 +73,20 @@ export interface ContextStats {
 }
 
 /**
+ * 压缩进度事件。
+ *
+ * @field type — "start"：压缩开始（会在调 LLM 前发出）
+ * @field type — "summary_delta"：调 LLM 生成摘要时每收到一个 chunk 都发出
+ * @field type — "fallback"：LLM 失败走兑底时发出
+ * @field type — "done"：压缩完成（会在改写 #messages 前发出，携带 before/after token）
+ */
+export type CompactionProgress =
+  | { type: "start"; droppedTurns: number; beforeTokens: number }
+  | { type: "summary_delta"; delta: string; totalSoFar: string }
+  | { type: "fallback"; reason: string; fallbackSummary: string }
+  | { type: "done"; droppedTurns: number; keptTurns: number; beforeTokens: number; afterTokens: number };
+
+/**
  * 压缩配置。
  *
  * @field contextWindow — 模型上下文窗口（来自 getModelMeta）
@@ -81,6 +95,7 @@ export interface ContextStats {
  * @field minTurnsToCompact — 触发压缩的最小回合数（少于此不压缩），默认 8
  * @field provider — 用于调 LLM 生成摘要
  * @field signal — 中止信号（可选；传给 provider.chat）
+ * @field onProgress — 进度回调（可选；UI 可用此实时展示压缩进度）
  */
 export interface CompactionOptions {
   contextWindow: number;
@@ -89,6 +104,15 @@ export interface CompactionOptions {
   minTurnsToCompact?: number;
   provider: Provider;
   signal?: AbortSignal;
+  /**
+   * 进度回调。可选；调用方传入后可实时看到压缩进度。
+   * - "start"：压缩开始
+   * - "summary_delta"：LLM 生成摘要时每收到一个 chunk（实时流式）
+   * - "fallback"：LLM 失败走兑底
+   * - "done"：压缩完成
+   * 错误不会从回调抛出（以免中断压缩流程）。
+   */
+  onProgress?: (event: CompactionProgress) => void;
 }
 
 /**
@@ -281,20 +305,54 @@ export async function summarizeOldTurns(
     });
     let summary = "";
     for await (const chunk of stream) {
-      if (chunk.content) summary += chunk.content;
+      if (chunk.content) {
+        summary += chunk.content;
+        // 实时把增量推给 UI（错误静默处理 — onProgress 抛错不应影响压缩）
+        if (opts.onProgress) {
+          try {
+            opts.onProgress({
+              type: "summary_delta",
+              delta: chunk.content,
+              totalSoFar: summary,
+            });
+          } catch {
+            /* 回调出错不影响压缩 */
+          }
+        }
+      }
     }
     if (!summary.trim()) {
-      return fallbackSummary(oldTurns);
+      const fb = fallbackSummary(oldTurns);
+      if (opts.onProgress) {
+        try {
+          opts.onProgress({
+            type: "fallback",
+            reason: "LLM 返回空字符串",
+            fallbackSummary: fb,
+          });
+        } catch {
+          /* 静默 */
+        }
+      }
+      return fb;
     }
     return summary.trim();
   } catch (err) {
-    // LLM 摘要失败不抛错 — 走兜底，压缩流程不被打断
-    if (opts.signal?.aborted) {
-      // 中止信号触发时仍然走兜底，调用方按 abort 决定下一步
+    // LLM 摘要失败不抛错 — 走兑底，压缩流程不被打断
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const fb = fallbackSummary(oldTurns);
+    if (opts.onProgress) {
+      try {
+        opts.onProgress({
+          type: "fallback",
+          reason: errMsg,
+          fallbackSummary: fb,
+        });
+      } catch {
+        /* 静默 */
+      }
     }
-    // 故意忽略 err（已 fallback）
-    void err;
-    return fallbackSummary(oldTurns);
+    return fb;
   }
 }
 
@@ -368,6 +426,19 @@ export async function compactContext(
   const oldTurns = turns.slice(0, splitAt);
   const keptTurns = turns.slice(splitAt);
 
+  // 发出 start 事件（调 LLM 之前）
+  if (opts.onProgress) {
+    try {
+      opts.onProgress({
+        type: "start",
+        droppedTurns: oldTurns.length,
+        beforeTokens,
+      });
+    } catch {
+      /* 静默 */
+    }
+  }
+
   // 4) 调 LLM 生成摘要（失败走 fallback）
   const summary = await summarizeOldTurns(oldTurns, opts);
 
@@ -380,6 +451,22 @@ export async function compactContext(
   }
 
   const afterTokens = estimateMessagesTokens(newMessages);
+
+  // 发出 done 事件（改写消息之前）
+  if (opts.onProgress) {
+    try {
+      opts.onProgress({
+        type: "done",
+        droppedTurns: oldTurns.length,
+        keptTurns: keptTurns.length,
+        beforeTokens,
+        afterTokens,
+      });
+    } catch {
+      /* 静默 */
+    }
+  }
+
   return {
     messages: newMessages,
     summary,

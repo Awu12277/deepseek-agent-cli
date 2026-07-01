@@ -559,3 +559,138 @@ describe("默认常量", () => {
     expect(DEFAULT_MIN_TURNS_TO_COMPACT).toBe(8);
   });
 });
+
+// ---------------------------------------------------------------------------
+// onProgress 进度回调测试（供 UI 实时展示压缩进度）
+// ---------------------------------------------------------------------------
+
+describe("compactContext onProgress", () => {
+  it("成功路径：按 start → summary_delta* → done 顺序发出事件", async () => {
+    const events: Array<{ type: string; [k: string]: unknown }> = [];
+    const provider = createMockProvider([
+      { content: "第一段", finishReason: null },
+      { content: "第二段", finishReason: "stop" },
+    ]);
+    const msgs = makeMessages(20, 50, 50);
+    await compactContext(msgs, {
+      contextWindow: 1_000_000,
+      preserveRecentRounds: 6,
+      minTurnsToCompact: 8,
+      provider,
+      onProgress: (e) => events.push({ ...e }),
+    });
+    const types = events.map((e) => e.type);
+    expect(types[0]).toBe("start");
+    expect(types).toContain("summary_delta");
+    expect(types[types.length - 1]).toBe("done");
+    // start 事件的字段
+    const startEvent = events[0]!;
+    expect(startEvent.droppedTurns).toBe(14);
+    expect(startEvent.beforeTokens).toBeGreaterThan(0);
+  });
+
+  it("summary_delta 事件递增多内容", async () => {
+    const deltas: string[] = [];
+    const provider = createMockProvider([
+      { content: "A", finishReason: null },
+      { content: "B", finishReason: null },
+      { content: "C", finishReason: "stop" },
+    ]);
+    const msgs = makeMessages(15, 30, 30);
+    await compactContext(msgs, {
+      contextWindow: 1_000_000,
+      preserveRecentRounds: 6,
+      minTurnsToCompact: 8,
+      provider,
+      onProgress: (e) => {
+        if (e.type === "summary_delta") deltas.push(e.delta);
+      },
+    });
+    expect(deltas).toEqual(["A", "B", "C"]);
+  });
+
+  it("done 事件携带 before/after token 与回合数", async () => {
+    let doneEvent: { type: string; [k: string]: unknown } | null = null;
+    const provider = createMockProvider([
+      { content: "OK", finishReason: "stop" },
+    ]);
+    const msgs = makeMessages(20, 50, 50);
+    await compactContext(msgs, {
+      contextWindow: 1_000_000,
+      preserveRecentRounds: 6,
+      minTurnsToCompact: 8,
+      provider,
+      onProgress: (e) => {
+        if (e.type === "done") doneEvent = { ...e };
+      },
+    });
+    expect(doneEvent).not.toBeNull();
+    expect(doneEvent!.droppedTurns).toBe(14);
+    expect(doneEvent!.keptTurns).toBe(6);
+    expect(doneEvent!.beforeTokens).toBeGreaterThan(doneEvent!.afterTokens as number);
+  });
+
+  it("LLM 抛错：先发 start，再发 fallback（不发出 summary_delta 或 done）", async () => {
+    const events: string[] = [];
+    const provider = createFailingProvider("网络错误");
+    const msgs = makeMessages(20, 30, 30);
+    await compactContext(msgs, {
+      contextWindow: 1_000_000,
+      preserveRecentRounds: 6,
+      minTurnsToCompact: 8,
+      provider,
+      onProgress: (e) => events.push(e.type),
+    });
+    expect(events[0]).toBe("start");
+    expect(events).toContain("fallback");
+    expect(events).toContain("done"); // fallback 后仍会发出 done
+  });
+
+  it("LLM 返回空字符串：发 fallback 事件", async () => {
+    const events: string[] = [];
+    const provider = createMockProvider([
+      { content: "  ", finishReason: "stop" },
+    ]);
+    const msgs = makeMessages(20, 30, 30);
+    await compactContext(msgs, {
+      contextWindow: 1_000_000,
+      preserveRecentRounds: 6,
+      minTurnsToCompact: 8,
+      provider,
+      onProgress: (e) => events.push(e.type),
+    });
+    expect(events[0]).toBe("start");
+    expect(events).toContain("fallback");
+  });
+
+  it("onProgress 回调抛错不影响压缩流程", async () => {
+    const provider = createMockProvider([
+      { content: "ok", finishReason: "stop" },
+    ]);
+    const msgs = makeMessages(20, 30, 30);
+    const result = await compactContext(msgs, {
+      contextWindow: 1_000_000,
+      preserveRecentRounds: 6,
+      minTurnsToCompact: 8,
+      provider,
+      onProgress: () => {
+        throw new Error("回调坏掉");
+      },
+    });
+    // 压缩仍然成功
+    expect(result.droppedTurns).toBe(14);
+    expect(result.summary).toBe("ok");
+  });
+
+  it("太短不压缩：不发任何进度事件", async () => {
+    const events: string[] = [];
+    const provider = createMockProvider([]);
+    const msgs = makeMessages(3, 10, 10);
+    await compactContext(msgs, {
+      contextWindow: 1_000_000,
+      provider,
+      onProgress: (e) => events.push(e.type),
+    });
+    expect(events).toHaveLength(0);
+  });
+});
