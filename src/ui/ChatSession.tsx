@@ -1720,13 +1720,6 @@ export function ChatSession({
                   <Text color="#00ffff">
                     {"🔧 "}{SUPPORTED_MODELS[activeModel]?.displayName ?? activeModel}
                   </Text>
-                  {contextStats && (
-                    <Text color="#808080">
-                      {"📚 窗口 "}
-                      {(contextStats.contextWindow / 1000).toFixed(0)}
-                      {"k tokens"}
-                    </Text>
-                  )}
                   {thinkingEnabled && (
                     <Text color="#ff9800">
                       {"🧠 深度思考 "}{thinkingEffort === "max" ? "Max" : "High"}
@@ -1773,23 +1766,7 @@ export function ChatSession({
                     <Text color="cyan">{"💰 会话 ¥"}{sessionCost.toFixed(4)}</Text>
                   )}
                   {contextStats && (
-                    <Text
-                      color={
-                        contextStats.ratio > 0.85
-                          ? "#ff6347"
-                          : contextStats.ratio > 0.6
-                            ? "#ff9800"
-                            : "#808080"
-                      }
-                    >
-                      {"📚 上下文 "}
-                      {contextStats.tokens.toLocaleString()}
-                      {" / "}
-                      {contextStats.contextWindow.toLocaleString()}
-                      {" ("}
-                      {(contextStats.ratio * 100).toFixed(1)}
-                      {"%)"}
-                    </Text>
+                    <ContextUsageBar stats={contextStats} />
                   )}
                 </Box>
                 <Box marginTop={1} flexDirection="column" alignItems="center">
@@ -2100,5 +2077,64 @@ export function ChatSession({
         </Box>
       )}
     </Box>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ContextUsageBar — 上下文使用量可视化（小巧进度条 + 百分比 + 颜色阈值）
+// ---------------------------------------------------------------------------
+
+/** 上下文使用档位与对应颜色 */
+export type ContextUsageLevel = "safe" | "warning" | "danger";
+
+/** 进度条填充字符数（小巧 12 格） */
+const CONTEXT_BAR_WIDTH = 12;
+
+/** 颜色阈值档位映射（抽出来便于测试） */
+export function classifyContextRatio(ratio: number): ContextUsageLevel {
+  if (ratio >= 0.85) return "danger";
+  if (ratio >= 0.6) return "warning";
+  return "safe";
+}
+
+/** 档位 → 颜色映射（抽出来便于测试） */
+export function contextLevelColor(level: ContextUsageLevel): string {
+  switch (level) {
+    case "danger":
+      return "#ff6347"; // 红色
+    case "warning":
+      return "#ffcc00"; // 黄色
+    case "safe":
+      return "#00ff41"; // 绿色
+  }
+}
+
+/**
+ * ContextUsageBar — 渲染上下文使用量进度条（1 行）。
+ * 格式：`📚 ████░░░░░░  42.0%`
+ * 颜色按 ratio 档位变：< 60% 绿 / 60-85% 黄 / ≥ 85% 红。
+ */
+export function ContextUsageBar({
+  stats,
+}: {
+  stats: { tokens: number; contextWindow: number; ratio: number };
+}) {
+  const level = classifyContextRatio(stats.ratio);
+  const color = contextLevelColor(level);
+  const filled = Math.min(
+    CONTEXT_BAR_WIDTH,
+    // 只要 ratio > 0 就至少 1 格 █，避免“占用极少”时空条被误读为“未使用”
+    Math.max(stats.ratio > 0 ? 1 : 0, Math.round(stats.ratio * CONTEXT_BAR_WIDTH)),
+  );
+  const empty = CONTEXT_BAR_WIDTH - filled;
+  return (
+    <Text color={color}>
+      {"📚 "}
+      <Text color={color}>{"█".repeat(filled)}</Text>
+      <Text color="#444444">{"░".repeat(empty)}</Text>
+      {"  "}
+      {(stats.ratio * 100).toFixed(1)}
+      {"%"}
+    </Text>
   );
 }
