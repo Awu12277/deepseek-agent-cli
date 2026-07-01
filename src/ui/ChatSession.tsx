@@ -157,6 +157,13 @@ registerCommand("/rewind", {
       "请直接输入 /rewind 查看可回退的检查点列表，或 /rewind <序号> 直接回退（1 = 最新，2 = 上一次，依此类推）",
   }),
 });
+registerCommand("/compact", {
+  desc: "压缩上下文：摘要旧回合并保留最近 N 轮",
+  handler: () => ({
+    kind: "text",
+    content: "请直接输入 /compact 手动压缩上下文（需当前不处于生成中）",
+  }),
+});
 
 /** 流式输出时，输入框随机展示的占位符列表 */
 const STREAMING_PLACEHOLDERS = [
@@ -250,6 +257,15 @@ export function ChatSession({
   const [balance, setBalance] = useState<number | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(false);
   const [todayCost, setTodayCost] = useState<number | null>(null);
+  // 上下文压缩：当前 messages 的 token 估算 / 占窗口比例
+  // - usage 事件触发更新
+  // - 每 3 秒轮询补充（防止后续没有新轮询事件）
+  // - /compact 后也会重新计算
+  const [contextStats, setContextStats] = useState<{
+    tokens: number;
+    ratio: number;
+    contextWindow: number;
+  } | null>(null);
 
   // 流式状态
   const [isStreaming, setIsStreaming] = useState(false);
@@ -381,6 +397,31 @@ export function ChatSession({
         rewindHintTimerRef.current = null;
       }
     };
+  }, []);
+
+  // 上下文用量轮询：每 3 秒更新一次左侧面板的「📚 上下文」行
+  // 不依赖流式事件，避免流间长时间静默时面板上不刷新
+  useEffect(() => {
+    const refresh = () => {
+      const session = sessionRef.current;
+      if (!session) {
+        setContextStats(null);
+        return;
+      }
+      try {
+        const s = session.getContextStats();
+        setContextStats({
+          tokens: s.estimatedTokens,
+          ratio: s.ratio,
+          contextWindow: s.contextWindow,
+        });
+      } catch {
+        setContextStats(null);
+      }
+    };
+    refresh();
+    const id = setInterval(refresh, 3000);
+    return () => clearInterval(id);
   }, []);
 
   // todo 面板可见性：
@@ -984,6 +1025,79 @@ export function ChatSession({
           return;
         }
 
+        // /compact 命令：手动压缩上下文
+        if (cmdLower === "/compact") {
+          if (isStreaming) {
+            setDisplayMessages((prev) => [
+              ...prev,
+              { role: "user", content: trimmed },
+              { role: "assistant", content: "⚠ 正在生成中，请稍后再试 /compact。" },
+            ]);
+            setInput("");
+            return;
+          }
+          if (!sessionRef.current) {
+            setDisplayMessages((prev) => [
+              ...prev,
+              { role: "user", content: trimmed },
+              { role: "assistant", content: "⚠ Session 未就绪，无法压缩。" },
+            ]);
+            setInput("");
+            return;
+          }
+          setInput("");
+          setDisplayMessages((prev) => [
+            ...prev,
+            { role: "user", content: trimmed },
+            { role: "assistant", content: "⏳ 正在压缩上下文..." },
+          ]);
+          try {
+            const result = await sessionRef.current.compact();
+            if (result.droppedTurns === 0) {
+              setDisplayMessages((prev) => {
+                const next = prev.slice(0, -1);
+                return [
+                  ...next,
+                  {
+                    role: "assistant",
+                    content:
+                      "ℹ 当前对话太短，无需压缩（少于最小回合数 或 都在保留区内）。",
+                  },
+                ];
+              });
+            } else {
+              const ratioSaved = (
+                ((result.beforeTokens - result.afterTokens) /
+                  Math.max(result.beforeTokens, 1)) *
+                100
+              ).toFixed(1);
+              setDisplayMessages((prev) => {
+                const next = prev.slice(0, -1);
+                return [
+                  ...next,
+                  {
+                    role: "assistant",
+                    content:
+                      `✔ 压缩完成：丢弃 ${result.droppedTurns} 个回合，保留 ${result.keptTurns} 个回合。\n` +
+                      `📦 token 估算：${result.beforeTokens} → ${result.afterTokens}（节省 ${ratioSaved}%）\n` +
+                      `（调用了 LLM 生成摘要，旧消息已折叠为一段 system 消息插入到对话顶部）`,
+                  },
+                ];
+              });
+            }
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            setDisplayMessages((prev) => {
+              const next = prev.slice(0, -1);
+              return [
+                ...next,
+                { role: "assistant", content: `⚠ 压缩失败：${msg}` },
+              ];
+            });
+          }
+          return;
+        }
+
         // /model 命令：进入模型选择模式
         if (cmdLower === "/model") {
           const curIdx = modelOptions.indexOf(activeModel);
@@ -1490,6 +1604,13 @@ export function ChatSession({
                   <Text color="#00ffff">
                     {"🔧 "}{SUPPORTED_MODELS[activeModel]?.displayName ?? activeModel}
                   </Text>
+                  {contextStats && (
+                    <Text color="#808080">
+                      {"📚 窗口 "}
+                      {(contextStats.contextWindow / 1000).toFixed(0)}
+                      {"k tokens"}
+                    </Text>
+                  )}
                   {thinkingEnabled && (
                     <Text color="#ff9800">
                       {"🧠 深度思考 "}{thinkingEffort === "max" ? "Max" : "High"}
@@ -1534,6 +1655,25 @@ export function ChatSession({
                   <Text color="#00ff41">{"📝 消息 "}{displayMessages.length} 条</Text>
                   {sessionCost > 0 && (
                     <Text color="cyan">{"💰 会话 ¥"}{sessionCost.toFixed(4)}</Text>
+                  )}
+                  {contextStats && (
+                    <Text
+                      color={
+                        contextStats.ratio > 0.85
+                          ? "#ff6347"
+                          : contextStats.ratio > 0.6
+                            ? "#ff9800"
+                            : "#808080"
+                      }
+                    >
+                      {"📚 上下文 "}
+                      {contextStats.tokens.toLocaleString()}
+                      {" / "}
+                      {contextStats.contextWindow.toLocaleString()}
+                      {" ("}
+                      {(contextStats.ratio * 100).toFixed(1)}
+                      {"%)"}
+                    </Text>
                   )}
                 </Box>
                 <Box marginTop={1} flexDirection="column" alignItems="center">
@@ -1747,6 +1887,14 @@ export function ChatSession({
                 ) : rewindHintPhase === "visible" ? (
                   <Box marginTop={1} justifyContent="center">
                     <Text color="#808080">{"↩ /rewind 1 可撤回本次修改"}</Text>
+                  </Box>
+                ) : contextStats && contextStats.ratio > 0.85 ? (
+                  <Box marginTop={1} justifyContent="center">
+                    <Text color="#ff9800">
+                      {"📚 上下文已用 "}
+                      {(contextStats.ratio * 100).toFixed(0)}
+                      {"%，输入 /compact 可手动压缩"}
+                    </Text>
                   </Box>
                 ) : null}
 

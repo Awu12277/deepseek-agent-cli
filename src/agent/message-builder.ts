@@ -43,9 +43,14 @@ function estimateMessageTokens(msg: ChatMessage): number {
  *   （DeepSeek/OpenAI 兼容 API 要求 tool_calls 与对应的 tool 结果消息一一配对，
  *   否则返回 400 错误）。因此裁剪时不能把这对拆开。
  *
+ * 导出供 compactor 复用，确保「裁剪」与「摘要压缩」使用完全一致的回合划分逻辑。
+ *
+ * @param messages — 消息历史（不含 system prompt）
  * @returns 回合数组；每个回合是一个非空消息数组，原顺序保留
+ *
+ * @pure 不修改入参
  */
-function groupIntoTurns(messages: ChatMessage[]): ChatMessage[][] {
+export function groupIntoTurns(messages: ReadonlyArray<ChatMessage>): ChatMessage[][] {
   const turns: ChatMessage[][] = [];
   let current: ChatMessage[] | null = null;
 

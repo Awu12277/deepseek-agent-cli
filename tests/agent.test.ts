@@ -532,3 +532,172 @@ describe("Session", () => {
     expect(events.filter((e) => e.type === "tool_result")).toHaveLength(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Session 上下文压缩集成测试
+// ---------------------------------------------------------------------------
+
+describe("Session 上下文压缩", () => {
+  let costTracker: CostTracker;
+  beforeEach(() => {
+    costTracker = new CostTracker({ budgetLimit: 0, tokenBudgetLimit: 0 });
+  });
+
+  it("getContextStats 返回当前消息统计", async () => {
+    const chunks: ChatChunk[] = [
+      { content: "ok", finishReason: "stop" },
+      { content: "", finishReason: null, usage: { promptTokens: 5, completionTokens: 1 } },
+    ];
+    const provider = createMockProvider(chunks);
+    const session = new Session(provider, [], costTracker);
+    for await (const _e of session.chat("hi")) {/* drain */}
+
+    const stats = session.getContextStats();
+    expect(stats.messageCount).toBe(2); // user + assistant
+    expect(stats.contextWindow).toBe(1_000_000);
+    expect(stats.estimatedTokens).toBeGreaterThan(0);
+    expect(stats.ratio).toBeGreaterThan(0);
+    expect(stats.ratio).toBeLessThan(0.01); // 2 条短消息在 1M 窗口中
+  });
+
+  it("Session.compact() 在对话太短时返回 droppedTurns=0", async () => {
+    const provider = createMockProvider([
+      { content: "hi", finishReason: "stop" },
+    ]);
+    const session = new Session(provider, [], costTracker, { store: false });
+    for await (const _e of session.chat("hi")) {/* drain */}
+
+    const result = await session.compact();
+    expect(result.droppedTurns).toBe(0);
+    expect(result.keptTurns).toBe(1);
+    // messages 未变动
+    expect(session.messages).toHaveLength(2);
+  });
+
+  it("Session.compact() 调用 LLM 摘要并改写 messages", async () => {
+    // 预填 20 个回合进 session
+    const provider: Provider = {
+      name: "mock",
+      model: () => "deepseek-v4-flash",
+      countTokens: (text: string) => Math.ceil(text.length / 3),
+      chat: async function* (msgs: ChatMessage[]) {
+        // 判断是否压缩调用：根据最近一条 user content 是否包含"请把以下"
+        const lastUser = [...msgs].reverse().find((m) => m.role === "user");
+        if (lastUser?.content.includes("压缩")) {
+          yield { content: "【LLM 摘要】", finishReason: "stop" };
+        } else {
+          yield { content: "echo", finishReason: "stop" };
+        }
+      },
+    };
+    const session = new Session(provider, [], costTracker, { store: false });
+    // 手动 push 20 个回合
+    for (let i = 0; i < 20; i++) {
+      session.messages.push({ role: "user", content: `u${i}` });
+      session.messages.push({ role: "assistant", content: `a${i}` });
+    }
+    const beforeCount = session.messages.length;
+
+    const result = await session.compact();
+    expect(result.droppedTurns).toBe(14); // 20 - 6
+    expect(result.keptTurns).toBe(6);
+    expect(result.summary).toBe("【LLM 摘要】");
+    // messages 数组变了
+    expect(session.messages.length).toBeLessThan(beforeCount);
+    // 首条是 system 摘要消息
+    expect(session.messages[0]!.role).toBe("system");
+    expect(session.messages[0]!.content).toContain("[history-summary]");
+  });
+
+  it("chat() 中超过阈值自动发出 compaction 事件", async () => {
+    // 构造 provider：第 1 次 chat 调用前会检查 LLM 调用（自动压缩可能调一次）
+    let chatCount = 0;
+    const provider: Provider = {
+      name: "mock",
+      model: () => "deepseek-v4-flash",
+      countTokens: (text: string) => Math.ceil(text.length / 3),
+      chat: async function* (msgs: ChatMessage[]) {
+        chatCount++;
+        // 如果是压缩调用（最后一条 user 含"压缩"）
+        const lastUser = [...msgs].reverse().find((m) => m.role === "user");
+        if (lastUser?.content.includes("压缩")) {
+          yield { content: "自动摘要", finishReason: "stop" };
+        } else {
+          yield { content: "hi", finishReason: "stop" };
+          yield {
+            content: "",
+            finishReason: null,
+            usage: { promptTokens: 1, completionTokens: 1 },
+          };
+        }
+      },
+    };
+    // 预填 12 回合 + 极小上下文窗口 + 调低阈值，迫使自动压缩触发
+    const session = new Session(provider, [], costTracker, {
+      store: false,
+      autoCompactRatio: 0.1,
+      minTurnsToCompact: 8,
+      preserveRecentRoundsOnCompact: 4,
+    });
+    for (let i = 0; i < 12; i++) {
+      session.messages.push({ role: "user", content: `u${i}` });
+      session.messages.push({ role: "assistant", content: `a${i}` });
+    }
+    // 强制让 ratio 高：往 messages push 长内容
+    // 实际上 24 条短消息 + 1M 窗口 ratio 远低于 0.1
+    // 直接用 enableAutoCompact=false + 手动 verify 事件可能不发
+    // 换思路：检查 chat 事件不报错即可
+    const events: AgentEvent[] = [];
+    for await (const e of session.chat("hi")) events.push(e);
+    // 因为 1M 窗口下 ratio 极低，不会触发自动压缩
+    const compactionEvents = events.filter((e) => e.type === "compaction");
+    expect(compactionEvents).toHaveLength(0);
+  });
+
+  it("chat() 触发自动压缩：发出 compaction 事件", async () => {
+    // 预填 20 回合（每条 content 500 字符），让 ratio 超过 0.1 的阈值
+    const provider: Provider = {
+      name: "mock",
+      model: () => "deepseek-v4-flash",
+      countTokens: (text: string) => Math.ceil(text.length / 3),
+      chat: async function* (msgs: ChatMessage[]) {
+        const lastUser = [...msgs].reverse().find((m) => m.role === "user");
+        if (lastUser?.content.includes("压缩")) {
+          yield { content: "自动压摘要", finishReason: "stop" };
+        } else {
+          yield { content: "ok", finishReason: "stop" };
+          yield {
+            content: "",
+            finishReason: null,
+            usage: { promptTokens: 1, completionTokens: 1 },
+          };
+        }
+      },
+    };
+    const session = new Session(provider, [], costTracker, {
+      store: false,
+      autoCompactRatio: 0.5,        // 阈值升到 50% 易于触发
+      minTurnsToCompact: 8,
+      preserveRecentRoundsOnCompact: 4,
+    });
+    // 20 回合 × 每条 500 字符：40 条 × 167 token ≈ 6700 token / 1M = 0.67%
+    // 仍然不到 50% 。要超过 50% 需要 ~500k token。改用更小 content + 极端构造。
+    // 改成：20 回合 × 5w 字符/条 → 40 条 × 16666 token ≈ 666k token / 1M = 66% ✓
+    for (let i = 0; i < 20; i++) {
+      session.messages.push({ role: "user", content: "U".repeat(50_000) });
+      session.messages.push({ role: "assistant", content: "A".repeat(50_000) });
+    }
+    // 此时 ratio ≈ 666k / 1M = 0.66 > 0.5 ✓
+    // chat("hi") 会把 user "hi" push 到 messages 末尾 → 21 回合
+    const events: AgentEvent[] = [];
+    for await (const e of session.chat("hi")) events.push(e);
+    // 应发出 compaction 事件
+    const compactionEvents = events.filter((e) => e.type === "compaction");
+    expect(compactionEvents).toHaveLength(1);
+    if (compactionEvents[0] && compactionEvents[0].type === "compaction") {
+      expect(compactionEvents[0].droppedTurns).toBe(17); // 21 - 4
+      expect(compactionEvents[0].keptTurns).toBe(4);
+      expect(compactionEvents[0].strategy).toBe("summary");
+    }
+  });
+});

@@ -6,6 +6,23 @@ import type { ProviderToolCall, UsageInfo } from "../provider/index.js";
 import type { ToolResult } from "../tool/types.js";
 import type { TodoItem } from "../harness/todo-list.js";
 
+/**
+ * 上下文压缩事件 — Session.chat() 在压缩完成时发出。
+ * @field droppedTurns — 被压缩掉的回合数
+ * @field keptTurns — 保留的完整回合数
+ * @field beforeTokens — 压缩前 token 估算
+ * @field afterTokens — 压缩后 token 估算
+ * @field strategy — "summary"=LLM 摘要（成功）；"fallback"=LLM 失败走本地兑底
+ */
+export type CompactionEvent = {
+  type: "compaction";
+  droppedTurns: number;
+  keptTurns: number;
+  beforeTokens: number;
+  afterTokens: number;
+  strategy: "summary" | "fallback";
+};
+
 /** Agent 事件 — Session.chat() 流式输出的每一步 */
 export type AgentEvent =
   | { type: "text_delta"; content: string }
@@ -13,6 +30,7 @@ export type AgentEvent =
   | { type: "tool_calls"; calls: ProviderToolCall[] }
   | { type: "tool_result"; name: string; result: ToolResult; todoSnapshot?: ReadonlyArray<TodoItem> }
   | { type: "usage"; usage: UsageInfo; model: string; cost?: number; estimated?: boolean }
+  | CompactionEvent
   | { type: "done"; elapsed: number }
   | { type: "error"; error: Error };
 

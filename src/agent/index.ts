@@ -21,13 +21,23 @@ import type {
   UsageInfo,
   ModelId,
 } from "../provider/index.js";
-import { CostTracker, calculateCost } from "../provider/index.js";
+import { CostTracker, calculateCost, getModelMeta } from "../provider/index.js";
 import type { AnyAgentTool } from "../tool/index.js";
 import type { Gate, ToolCallRecord } from "../tool/types.js";
 import { AlwaysAllowGate, ToolKind, eraseTool } from "../tool/types.js";
 import type { AgentEvent, SessionMode, SystemPromptOptions } from "./types.js";
 import { buildSystemPrompt, buildPlanSystemPrompt } from "./system-prompt.js";
 import { trimMessages, buildApiMessages } from "./message-builder.js";
+import {
+  compactContext,
+  getContextStats,
+  shouldAutoCompact,
+  DEFAULT_AUTO_COMPACT_RATIO,
+  DEFAULT_PRESERVE_ROUNDS,
+  DEFAULT_MIN_TURNS_TO_COMPACT,
+  type ContextStats,
+  type CompactionResult,
+} from "./compactor.js";
 import { ToolRegistry } from "../tool/registry.js";
 import { ToolExecutor } from "./tool-executor.js";
 import { StormDetector } from "./storm-detector.js";
@@ -86,6 +96,26 @@ export interface SessionOptions {
   enableReflection?: boolean;
   /** 是否启用 Harness（TodoList 规划 + 任务自检提示）。默认 true */
   enableHarness?: boolean;
+  /**
+   * 是否启用上下文自动压缩（默认 true）。
+   * 开启后：每轮 chat() 开始前若 estimatedTokens / contextWindow >= autoCompactRatio，
+   * 会调一次 LLM 把旧的回合摘要为一条 system 消息，插到 messages 顶部。
+   */
+  enableAutoCompact?: boolean;
+  /**
+   * 自动压缩阈值比例（0~1，默认 0.85）。
+   * 仅 enableAutoCompact=true 时生效。
+   */
+  autoCompactRatio?: number;
+  /**
+   * 压缩时强制保留的最近回合数（默认 6）。
+   * 仅在压缩动作发生时生效。
+   */
+  preserveRecentRoundsOnCompact?: number;
+  /**
+   * 触发压缩的最小回合数（默认 8）。少于此回合数不压缩。
+   */
+  minTurnsToCompact?: number;
 }
 
 /**
@@ -133,7 +163,13 @@ export class Session {
   readonly #options: Required<
     Pick<
       SessionOptions,
-      "cwd" | "maxToolRounds" | "reservedForOutput" | "preserveRecentRounds"
+      | "cwd"
+      | "maxToolRounds"
+      | "reservedForOutput"
+      | "preserveRecentRounds"
+      | "autoCompactRatio"
+      | "preserveRecentRoundsOnCompact"
+      | "minTurnsToCompact"
     >
   > & {
     projectContext?: string;
@@ -143,6 +179,7 @@ export class Session {
     enableLog: boolean;
     enableReflection: boolean;
     enableHarness: boolean;
+    enableAutoCompact: boolean;
   };
   /** 中止信号控制器（abort() 时触发，传递给 LLM 和工具） */
   readonly #abortController = new AbortController();
@@ -204,6 +241,10 @@ export class Session {
       maxToolRounds: options?.maxToolRounds ?? 20,
       reservedForOutput: options?.reservedForOutput ?? 4096,
       preserveRecentRounds: options?.preserveRecentRounds ?? 10,
+      autoCompactRatio: options?.autoCompactRatio ?? DEFAULT_AUTO_COMPACT_RATIO,
+      preserveRecentRoundsOnCompact:
+        options?.preserveRecentRoundsOnCompact ?? DEFAULT_PRESERVE_ROUNDS,
+      minTurnsToCompact: options?.minTurnsToCompact ?? DEFAULT_MIN_TURNS_TO_COMPACT,
       projectContext: options?.projectContext,
       gate: options?.gate ?? new AlwaysAllowGate(),
       writeRoots: options?.writeRoots ?? [options?.cwd ?? process.cwd()],
@@ -211,6 +252,7 @@ export class Session {
       enableLog: options?.enableLog ?? true,
       enableReflection: options?.enableReflection !== false,
       enableHarness: options?.enableHarness !== false,
+      enableAutoCompact: options?.enableAutoCompact !== false,
     };
     this.#sessionId = options?.sessionId ?? SessionStore.newId();
     this.#store =
@@ -316,6 +358,21 @@ export class Session {
         this.#checkpoints.set(userMsgIndex, checkpoint);
       } catch {
         /* swallow — checkpoint 失败不应阻塞对话 */
+      }
+    }
+
+    // 自动压缩：每轮 chat 入口检查；超过阈值则摘要压缩 history
+    if (this.#options.enableAutoCompact) {
+      const compaction = await this.#maybeAutoCompact();
+      if (compaction) {
+        yield {
+          type: "compaction",
+          droppedTurns: compaction.droppedTurns,
+          keptTurns: compaction.keptTurns,
+          beforeTokens: compaction.beforeTokens,
+          afterTokens: compaction.afterTokens,
+          strategy: compaction.strategy,
+        };
       }
     }
 
@@ -623,6 +680,87 @@ export class Session {
     this.#stormRecords = [];
     this.#checkpoints.clear();
     this.#lastRoundResults = null;
+  }
+
+  // -------------------------------------------------------------------------
+  // 上下文压缩（Compactor） — P0-1 实施
+  // -------------------------------------------------------------------------
+
+  /**
+   * 获取当前上下文的统计信息（消息数、估算 token、占窗口比例）。
+   * 用于 UI 状态栏展示和自动压缩阈值判断。
+   *
+   * @returns ContextStats；contextWindow 取自当前模型的 meta.contextWindow
+   *
+   * @pure 不修改任何状态
+   */
+  getContextStats(): ContextStats {
+    const meta = getModelMeta(this.#provider.model() as ModelId);
+    return getContextStats(this.#messages, meta.contextWindow);
+  }
+
+  /**
+   * 手动触发上下文压缩。
+   * 与自动压缩逻辑复用同一个 compactContext()；若回合数过少则返回空结果（droppedTurns=0）。
+   * 可被 UI 的 /compact 命令调用。
+   *
+   * @returns 压缩结果；droppedTurns=0 表示无实际压缩发生
+   *
+   * @sideEffect 可能调一次 provider.chat()（LLM 摘要）；成功后改写 #messages
+   */
+  async compact(): Promise<CompactionResult> {
+    const meta = getModelMeta(this.#provider.model() as ModelId);
+    const result = await compactContext(this.#messages, {
+      contextWindow: meta.contextWindow,
+      autoCompactRatio: this.#options.autoCompactRatio,
+      preserveRecentRounds: this.#options.preserveRecentRoundsOnCompact,
+      minTurnsToCompact: this.#options.minTurnsToCompact,
+      provider: this.#provider,
+      signal: this.#abortController.signal,
+    });
+    if (result.droppedTurns > 0) {
+      this.#messages.length = 0;
+      for (const m of result.messages) this.#messages.push(m);
+      // 压缩后 checkpoint Map 索引已变化，主动清空（rebuild 复杂的代价不值得）
+      this.#checkpoints.clear();
+      this.#persist();
+    }
+    return result;
+  }
+
+  /**
+   * chat() 入口调用的自动压缩检查。
+   * 仅在 enableAutoCompact=true 且应自动压缩时执行；否则返回 null。
+   * 策略与 compact() 相同；返回值额外补上 strategy（"summary" | "fallback"）供 chat 事件使用。
+   *
+   * @returns 压缩结果；未压缩时返回 null
+   *
+   * @sideEffect 同 compact()
+   */
+  async #maybeAutoCompact(): Promise<
+    (CompactionResult & { strategy: "summary" | "fallback" }) | null
+  > {
+    const meta = getModelMeta(this.#provider.model() as ModelId);
+    const opts = {
+      contextWindow: meta.contextWindow,
+      autoCompactRatio: this.#options.autoCompactRatio,
+      preserveRecentRounds: this.#options.preserveRecentRoundsOnCompact,
+      minTurnsToCompact: this.#options.minTurnsToCompact,
+      provider: this.#provider,
+      signal: this.#abortController.signal,
+    };
+    if (!shouldAutoCompact(this.#messages, opts)) return null;
+    const result = await compactContext(this.#messages, opts);
+    if (result.droppedTurns === 0) return null;
+    // 判断是 summary 还是 fallback：调一次 LLM 走完整流，看是否拿到非空字符串
+    // 简化：与原 fallback 比较，相同则为 fallback
+    const strategy: "summary" | "fallback" =
+      result.summary.includes("本地摘要") ? "fallback" : "summary";
+    this.#messages.length = 0;
+    for (const m of result.messages) this.#messages.push(m);
+    this.#checkpoints.clear();
+    this.#persist();
+    return { ...result, strategy };
   }
 
   /**
