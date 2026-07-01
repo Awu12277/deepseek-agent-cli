@@ -1556,11 +1556,6 @@ export function ChatSession({
           </Box>
         </Box>
 
-        {/* ========== 竖线分隔符 ========== */}
-        <Box width={1} flexShrink={0}>
-          <Text color="#444">{"│"}</Text>
-        </Box>
-
         {/* ========== 右侧面板（2/3 宽度，useMemo 避免思考时重绘导致抖动） ========== */}
         {useMemo(() => (
           <Box flexDirection="column" flexGrow={1}>
